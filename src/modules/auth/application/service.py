@@ -32,7 +32,7 @@ class AuthService:
     db: AsyncSession
 
     async def register(self, payload: RegisterRequest) -> AuthTokenResponse:
-        from src.infrastructure.database.models import UserModel, CredentialModel, SubscriptionModel, PlanModel
+        from src.infrastructure.database.models import UserModel, SubscriptionModel, PlanModel
 
         # Check for duplicate email
         existing = await self.db.scalar(
@@ -47,11 +47,11 @@ class AuthService:
         now = datetime.now(timezone.utc)
         user_id = uuid.uuid4()
 
-        # Create user
         user = UserModel(
             id=user_id,
             email=payload.email,
             full_name=payload.full_name,
+            hashed_password=_pwd_ctx.hash(payload.password),
             role="freelancer",
             status="active",
             locale="vi",
@@ -60,13 +60,6 @@ class AuthService:
             theme="light",
         )
         self.db.add(user)
-
-        # Create credential
-        credential = CredentialModel(
-            user_id=user_id,
-            hashed_password=_pwd_ctx.hash(payload.password),
-        )
-        self.db.add(credential)
 
         # Create free subscription
         free_plan = await self.db.scalar(select(PlanModel).where(PlanModel.name == "Free"))
