@@ -1,0 +1,3 @@
+from .proposal_status import ProposalStatus, TERMINAL_PROPOSAL_STATUSES, PROPOSAL_TRANSITIONS
+
+__all__ = ["ProposalStatus", "TERMINAL_PROPOSAL_STATUSES", "PROPOSAL_TRANSITIONS"]
