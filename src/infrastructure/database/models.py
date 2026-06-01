@@ -24,10 +24,89 @@ from sqlalchemy import (
     func,
     text,
 )
-from sqlalchemy.dialects.postgresql import ARRAY, INET, JSONB, UUID
+from sqlalchemy.dialects.postgresql import ARRAY, ENUM as PgEnum, INET, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.infrastructure.database.base import Base, SoftDeleteMixin, TimestampMixin, UUIDMixin
+
+# ---------------------------------------------------------------------------
+# PostgreSQL ENUM types (create_type=False — created by Alembic migrations)
+# ---------------------------------------------------------------------------
+_user_role = PgEnum("freelancer", "admin", name="user_role", create_type=False)
+_user_status = PgEnum("active", "suspended", "deleted", name="user_status", create_type=False)
+_notification_channel = PgEnum(
+    "email", "in_app", "both", name="notification_channel", create_type=False
+)
+_theme_preference = PgEnum("light", "dark", name="theme_preference", create_type=False)
+_subscription_status = PgEnum(
+    "active", "past_due", "suspended", "cancelled",
+    name="subscription_status", create_type=False,
+)
+_billing_event_type = PgEnum(
+    "subscription_created", "subscription_renewed", "subscription_cancelled",
+    "payment_succeeded", "payment_failed", "plan_upgraded", "plan_downgraded",
+    "trial_started", "trial_ended",
+    name="billing_event_type", create_type=False,
+)
+_client_type = PgEnum("individual", "company", name="client_type", create_type=False)
+_client_status = PgEnum(
+    "prospect", "active", "inactive", "archived", name="client_status", create_type=False
+)
+_comm_channel = PgEnum(
+    "email", "phone", "meeting", "message", name="comm_channel", create_type=False
+)
+_deal_stage = PgEnum(
+    "new_lead", "qualified", "proposal_sent", "negotiation",
+    "active", "completed_and_billed", "lost",
+    name="deal_stage", create_type=False,
+)
+_deal_source = PgEnum(
+    "inbound", "referral", "outreach", "platform", "other",
+    name="deal_source", create_type=False,
+)
+_deal_activity_type = PgEnum(
+    "stage_change", "note_added", "proposal_created", "proposal_sent",
+    "contract_created", "invoice_created", "reminder_set", "ai_qualified",
+    name="deal_activity_type", create_type=False,
+)
+_ai_recommendation = PgEnum("qualify", "pass", name="ai_recommendation", create_type=False)
+_proposal_status = PgEnum(
+    "draft", "sent", "accepted", "rejected", "expired",
+    name="proposal_status", create_type=False,
+)
+_contract_status = PgEnum(
+    "draft", "pending_signatures", "active", "completed", "cancelled", "amended",
+    name="contract_status", create_type=False,
+)
+_invoice_status = PgEnum(
+    "draft", "sent", "partially_paid", "paid", "overdue", "voided",
+    name="invoice_status", create_type=False,
+)
+_payment_method = PgEnum(
+    "bank_transfer", "cash", "online", "other", name="payment_method", create_type=False
+)
+_reminder_target_type = PgEnum(
+    "deal", "client", "invoice", "contract", name="reminder_target_type", create_type=False
+)
+_reminder_type_enum = PgEnum(
+    "follow_up", "payment_due", "contract_expiry", "proposal_expiry",
+    "meeting", "check_in", "custom",
+    name="reminder_type_enum", create_type=False,
+)
+_reminder_status = PgEnum(
+    "pending", "sent", "failed", "cancelled", "skipped",
+    name="reminder_status", create_type=False,
+)
+_reminder_outcome = PgEnum("success", "failure", name="reminder_outcome", create_type=False)
+_period_type = PgEnum("monthly", "quarterly", "yearly", name="period_type", create_type=False)
+_template_type = PgEnum("proposal", "contract", name="template_type", create_type=False)
+_ai_module_type = PgEnum(
+    "lead_qualifier", "proposal_generator", "contract_generator", "followup_generator",
+    name="ai_module_type", create_type=False,
+)
+_ai_generation_status = PgEnum(
+    "pending", "completed", "failed", name="ai_generation_status", create_type=False
+)
 
 
 # =============================================================================
@@ -39,8 +118,8 @@ class UserModel(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
 
     email: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
     full_name: Mapped[str] = mapped_column(String(255), nullable=False)
-    role: Mapped[str] = mapped_column(String(20), nullable=False, server_default="freelancer")
-    status: Mapped[str] = mapped_column(String(20), nullable=False, server_default="active")
+    role: Mapped[str] = mapped_column(_user_role, nullable=False, server_default="freelancer")
+    status: Mapped[str] = mapped_column(_user_status, nullable=False, server_default="active")
     hashed_password: Mapped[str | None] = mapped_column(String(255), nullable=True)
     avatar_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     bio: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -64,9 +143,9 @@ class UserModel(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
         String(100), nullable=False, server_default="Asia/Ho_Chi_Minh"
     )
     notification_channel: Mapped[str] = mapped_column(
-        String(20), nullable=False, server_default="both"
+        _notification_channel, nullable=False, server_default="both"
     )
-    theme: Mapped[str] = mapped_column(String(20), nullable=False, server_default="light")
+    theme: Mapped[str] = mapped_column(_theme_preference, nullable=False, server_default="light")
 
     # Zalo OA integration
     zalo_oa_app_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
@@ -188,7 +267,9 @@ class SubscriptionModel(UUIDMixin, TimestampMixin, Base):
     plan_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("subscription_plans.id"), nullable=False
     )
-    status: Mapped[str] = mapped_column(String(20), nullable=False, server_default="active")
+    status: Mapped[str] = mapped_column(
+        _subscription_status, nullable=False, server_default="active"
+    )
     current_period_start: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
     )
@@ -251,7 +332,7 @@ class BillingEventModel(UUIDMixin, Base):
     subscription_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("subscriptions.id"), nullable=False
     )
-    event_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    event_type: Mapped[str] = mapped_column(_billing_event_type, nullable=False)
     amount: Mapped[Decimal | None] = mapped_column(Numeric(10, 2), nullable=True)
     currency: Mapped[str | None] = mapped_column(String(3), nullable=True)
     stripe_event_id: Mapped[str | None] = mapped_column(String(255), nullable=True, unique=True)
@@ -276,7 +357,7 @@ class ClientModel(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     owner_user_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id"), nullable=False
     )
-    type: Mapped[str] = mapped_column(String(20), nullable=False, server_default="individual")
+    type: Mapped[str] = mapped_column(_client_type, nullable=False, server_default="individual")
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     email: Mapped[str | None] = mapped_column(String(255), nullable=True)
     phone: Mapped[str | None] = mapped_column(String(50), nullable=True)
@@ -284,7 +365,7 @@ class ClientModel(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     linkedin_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     address_city: Mapped[str | None] = mapped_column(String(100), nullable=True)
     address_country: Mapped[str | None] = mapped_column(String(100), nullable=True)
-    status: Mapped[str] = mapped_column(String(20), nullable=False, server_default="prospect")
+    status: Mapped[str] = mapped_column(_client_status, nullable=False, server_default="prospect")
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     __table_args__ = (
@@ -319,7 +400,7 @@ class ClientCommunicationLogModel(UUIDMixin, Base):
     owner_user_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id"), nullable=False
     )
-    channel: Mapped[str] = mapped_column(String(20), nullable=False)
+    channel: Mapped[str] = mapped_column(_comm_channel, nullable=False)
     summary: Mapped[str] = mapped_column(Text, nullable=False)
     communicated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
@@ -346,15 +427,15 @@ class DealModel(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
         UUID(as_uuid=True), ForeignKey("clients.id"), nullable=False
     )
     title: Mapped[str] = mapped_column(String(500), nullable=False)
-    stage: Mapped[str] = mapped_column(String(30), nullable=False, server_default="new_lead")
-    source: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    stage: Mapped[str] = mapped_column(_deal_stage, nullable=False, server_default="new_lead")
+    source: Mapped[str | None] = mapped_column(_deal_source, nullable=True)
     estimated_value: Mapped[Decimal | None] = mapped_column(Numeric(15, 2), nullable=True)
     actual_value: Mapped[Decimal | None] = mapped_column(Numeric(15, 2), nullable=True)
     currency: Mapped[str] = mapped_column(String(3), nullable=False, server_default="VND")
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     ai_qualification_score: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
     ai_qualification_recommendation: Mapped[str | None] = mapped_column(
-        String(20), nullable=True
+        _ai_recommendation, nullable=True
     )
     closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
@@ -380,10 +461,10 @@ class DealActivityEntryModel(UUIDMixin, Base):
     owner_user_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id"), nullable=False
     )
-    entry_type: Mapped[str] = mapped_column(String(30), nullable=False)
+    entry_type: Mapped[str] = mapped_column(_deal_activity_type, nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=False)
-    previous_stage: Mapped[str | None] = mapped_column(String(30), nullable=True)
-    new_stage: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    previous_stage: Mapped[str | None] = mapped_column(_deal_stage, nullable=True)
+    new_stage: Mapped[str | None] = mapped_column(_deal_stage, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -408,7 +489,7 @@ class ProposalModel(UUIDMixin, TimestampMixin, Base):
         UUID(as_uuid=True), ForeignKey("users.id"), nullable=False
     )
     version_number: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
-    status: Mapped[str] = mapped_column(String(20), nullable=False, server_default="draft")
+    status: Mapped[str] = mapped_column(_proposal_status, nullable=False, server_default="draft")
     content: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default=text("'{}'"))
     share_token: Mapped[str | None] = mapped_column(String(255), nullable=True)
     share_expires_at: Mapped[datetime | None] = mapped_column(
@@ -447,7 +528,7 @@ class ContractModel(UUIDMixin, TimestampMixin, Base):
         UUID(as_uuid=True), ForeignKey("users.id"), nullable=False
     )
     version_number: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
-    status: Mapped[str] = mapped_column(String(25), nullable=False, server_default="draft")
+    status: Mapped[str] = mapped_column(_contract_status, nullable=False, server_default="draft")
     content: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default=text("'{}'"))
     client_snapshot: Mapped[dict] = mapped_column(
         JSONB, nullable=False, server_default=text("'{}'")
@@ -519,7 +600,7 @@ class InvoiceModel(UUIDMixin, TimestampMixin, Base):
         UUID(as_uuid=True), ForeignKey("deals.id"), nullable=True
     )
     invoice_number: Mapped[str] = mapped_column(String(100), nullable=False)
-    status: Mapped[str] = mapped_column(String(20), nullable=False, server_default="draft")
+    status: Mapped[str] = mapped_column(_invoice_status, nullable=False, server_default="draft")
     issue_date: Mapped[date] = mapped_column(Date, nullable=False)
     due_date: Mapped[date] = mapped_column(Date, nullable=False)
     currency: Mapped[str] = mapped_column(String(3), nullable=False, server_default="VND")
@@ -586,7 +667,7 @@ class InvoicePaymentRecordModel(UUIDMixin, Base):
     amount: Mapped[Decimal] = mapped_column(Numeric(15, 2), nullable=False)
     payment_date: Mapped[date] = mapped_column(Date, nullable=False)
     payment_method: Mapped[str] = mapped_column(
-        String(20), nullable=False, server_default="other"
+        _payment_method, nullable=False, server_default="other"
     )
     reference_note: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
@@ -609,11 +690,15 @@ class ReminderModel(UUIDMixin, TimestampMixin, Base):
     owner_user_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id"), nullable=False
     )
-    target_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    target_type: Mapped[str] = mapped_column(_reminder_target_type, nullable=False)
     target_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
-    reminder_type: Mapped[str] = mapped_column(String(30), nullable=False)
-    channel: Mapped[str] = mapped_column(String(20), nullable=False, server_default="both")
-    status: Mapped[str] = mapped_column(String(20), nullable=False, server_default="pending")
+    reminder_type: Mapped[str] = mapped_column(_reminder_type_enum, nullable=False)
+    channel: Mapped[str] = mapped_column(
+        _notification_channel, nullable=False, server_default="both"
+    )
+    status: Mapped[str] = mapped_column(
+        _reminder_status, nullable=False, server_default="pending"
+    )
     scheduled_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     message_preview: Mapped[str | None] = mapped_column(Text, nullable=True)
     recurrence_rule: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -641,8 +726,8 @@ class ReminderDeliveryRecordModel(UUIDMixin, Base):
     attempted_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
-    channel: Mapped[str] = mapped_column(String(20), nullable=False)
-    outcome: Mapped[str] = mapped_column(String(20), nullable=False)
+    channel: Mapped[str] = mapped_column(_notification_channel, nullable=False)
+    outcome: Mapped[str] = mapped_column(_reminder_outcome, nullable=False)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     __table_args__ = (
@@ -660,7 +745,7 @@ class RevenueSnapshotModel(UUIDMixin, Base):
     owner_user_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id"), nullable=False
     )
-    period_type: Mapped[str] = mapped_column(String(15), nullable=False)
+    period_type: Mapped[str] = mapped_column(_period_type, nullable=False)
     period_start: Mapped[date] = mapped_column(Date, nullable=False)
     period_end: Mapped[date] = mapped_column(Date, nullable=False)
     total_invoiced: Mapped[Decimal] = mapped_column(
@@ -693,7 +778,7 @@ class PipelineSnapshotModel(UUIDMixin, Base):
     owner_user_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id"), nullable=False
     )
-    stage: Mapped[str] = mapped_column(String(30), nullable=False)
+    stage: Mapped[str] = mapped_column(_deal_stage, nullable=False)
     deal_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     total_value: Mapped[Decimal] = mapped_column(
         Numeric(15, 2), nullable=False, server_default="0"
@@ -741,7 +826,7 @@ class AuditLogEntryModel(UUIDMixin, Base):
 class SystemTemplateModel(UUIDMixin, TimestampMixin, Base):
     __tablename__ = "system_templates"
 
-    template_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    template_type: Mapped[str] = mapped_column(_template_type, nullable=False)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     content: Mapped[dict] = mapped_column(JSONB, nullable=False)
     plan_tier_required: Mapped[str | None] = mapped_column(String(50), nullable=True)
@@ -786,14 +871,16 @@ class AiCostRecordModel(UUIDMixin, Base):
     user_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id"), nullable=False
     )
-    ai_module: Mapped[str] = mapped_column(String(30), nullable=False)
+    ai_module: Mapped[str] = mapped_column(_ai_module_type, nullable=False)
     model_used: Mapped[str] = mapped_column(String(100), nullable=False)
     input_tokens: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     output_tokens: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     estimated_cost_usd: Mapped[Decimal] = mapped_column(
         Numeric(10, 6), nullable=False, server_default="0"
     )
-    status: Mapped[str] = mapped_column(String(20), nullable=False, server_default="completed")
+    status: Mapped[str] = mapped_column(
+        _ai_generation_status, nullable=False, server_default="completed"
+    )
     input_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     occurred_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False

@@ -15,16 +15,14 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 from jose import jwt
-from passlib.context import CryptContext
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config.settings import settings
 from src.shared.exceptions.domain import AlreadyExistsError
+from src.shared.security.passwords import hash_password
 from src.modules.auth.schemas.request import RegisterRequest
 from src.modules.auth.schemas.response import AuthTokenResponse
-
-_pwd_ctx = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
 @dataclass
@@ -51,7 +49,7 @@ class AuthService:
             id=user_id,
             email=payload.email,
             full_name=payload.full_name,
-            hashed_password=_pwd_ctx.hash(payload.password),
+            hashed_password=hash_password(payload.password),
             role="freelancer",
             status="active",
             locale="vi",

@@ -7,14 +7,12 @@ Creates admin@solodesk.dev if the account does not already exist.
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from passlib.context import CryptContext
 from sqlalchemy import select, text
 
 from src.infrastructure.database.models import PlanModel, SubscriptionModel, UserModel
+from src.shared.security.passwords import hash_password
 
 from .base import BaseSeeder
-
-_pwd_ctx = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 ADMIN_EMAIL = "admin@solodesk.dev"
 ADMIN_PASSWORD = "Admin@SoloDesk2025!"
@@ -43,7 +41,7 @@ class AdminSeeder(BaseSeeder):
             full_name=ADMIN_FULL_NAME,
             role="admin",
             status="active",
-            hashed_password=_pwd_ctx.hash(ADMIN_PASSWORD),
+            hashed_password=hash_password(ADMIN_PASSWORD),
             locale="vi",
             timezone="Asia/Ho_Chi_Minh",
             notification_channel="email",
