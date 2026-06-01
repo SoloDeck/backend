@@ -1,4 +1,4 @@
-.PHONY: help install dev up down logs migrate revision seed bootstrap reset-db test lint fmt typecheck clean
+.PHONY: help install dev up down logs migrate revision migrate-docker seed-docker db-init seed bootstrap reset-db test lint fmt typecheck clean
 
 # ---------------------------------------------------------------------------
 # Help
@@ -34,7 +34,7 @@ logs-worker: ## Tail Celery worker logs
 # ---------------------------------------------------------------------------
 # Database
 # ---------------------------------------------------------------------------
-migrate: ## Apply pending Alembic migrations
+migrate: ## Apply pending Alembic migrations (local, requires local DB)
 	alembic upgrade head
 
 revision: ## Create a new Alembic migration (use: make revision msg="describe change")
@@ -43,16 +43,25 @@ revision: ## Create a new Alembic migration (use: make revision msg="describe ch
 downgrade: ## Rollback one migration
 	alembic downgrade -1
 
-db-shell: ## Open psql shell
+db-shell: ## Open psql shell inside Docker
 	docker compose exec db psql -U solodesk -d solodesk
 
-seed: ## Run all seeders (idempotent — safe to call repeatedly)
+migrate-docker: ## Apply migrations via Docker (requires: docker compose up -d db)
+	docker compose run --rm migrate alembic upgrade head
+
+seed-docker: ## Run seeders via Docker (requires: docker compose up -d db)
+	docker compose run --rm migrate python scripts/seed.py
+
+db-init: ## Apply migrations + seed via Docker — full DB init (requires: docker compose up -d db)
+	docker compose run --rm migrate python scripts/bootstrap.py
+
+seed: ## Run seeders locally (requires local DB + installed deps)
 	python scripts/seed.py
 
-bootstrap: ## Run migrations then seed (idempotent — safe on every deploy)
+bootstrap: ## Run migrations + seed locally (requires local DB + installed deps)
 	python scripts/bootstrap.py
 
-reset-db: ## DROP all tables, re-migrate, re-seed (dev/CI only — destructive)
+reset-db: ## DROP all tables, re-migrate, re-seed — DESTRUCTIVE, dev/CI only
 	python scripts/reset_db.py
 
 # ---------------------------------------------------------------------------

@@ -1,4 +1,4 @@
-"""Seed subscription plans: Free, Pro, Business."""
+"""Seed subscription plans: Free, Pro, Agency."""
 
 from dataclasses import dataclass
 from decimal import Decimal
@@ -45,8 +45,8 @@ _PLANS: list[_PlanDef] = [
         max_deals=None,
     ),
     _PlanDef(
-        name="Business",
-        slug="business",
+        name="Agency",
+        slug="agency",
         price_monthly=Decimal("29.99"),
         currency="USD",
         max_ai_generations_per_month=500,
