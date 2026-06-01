@@ -71,6 +71,52 @@ class CreateDealRequest(BaseModel):
     def check_subscription(cls, v): ...  # ← belongs in service
 ```
 
+## API Response Envelope
+
+Every router must return the standard envelope. Raw entities, raw lists, and ad-hoc dicts are forbidden.
+
+```python
+from src.shared.responses import ApiResponse, PaginatedResponse
+
+# CORRECT — single resource
+@router.get("/{deal_id}", response_model=ApiResponse[DealResponse])
+async def get_deal(...) -> ApiResponse[DealResponse]:
+    deal = await DealsService(db=db).get(deal_id, user_id)
+    return ApiResponse.ok(DealResponse.model_validate(deal))
+
+# CORRECT — collection
+@router.get("/", response_model=PaginatedResponse[DealResponse])
+async def list_deals(...) -> PaginatedResponse[DealResponse]:
+    items, total = await DealsService(db=db).list(user_id, page=page, page_size=page_size)
+    return PaginatedResponse.ok(
+        [DealResponse.model_validate(d) for d in items],
+        total=total, page=page, page_size=page_size,
+    )
+
+# WRONG
+return deal                    # raw ORM model
+return items                   # raw list
+return {"message": "created"}  # ad-hoc dict
+raise HTTPException(...)       # use domain exceptions
+```
+
+Error responses are handled automatically by `setup_exception_handlers`. Raise domain exceptions
+in services; they are converted to `ApiError` with the correct `ErrorCode`.
+
+Required error codes (`src/shared/responses/error.py` → `ErrorCode`):
+
+| Code | HTTP | When |
+|---|---|---|
+| `VALIDATION_FAILED` | 422 | Request schema invalid (auto-handled) |
+| `UNAUTHORIZED` | 401 | Missing/invalid token |
+| `FORBIDDEN` | 403 | Authenticated but not permitted |
+| `NOT_FOUND` | 404 | Resource not found |
+| `CONFLICT` | 409 | Duplicate or invalid state |
+| `BUSINESS_RULE_VIOLATION` | 409 | Domain rule broken |
+| `SUBSCRIPTION_REQUIRED` | 402 | Plan entitlement missing |
+| `AI_QUOTA_EXCEEDED` | 502 | AI generation failed |
+| `INTERNAL_SERVER_ERROR` | 500 | Unhandled exception |
+
 ## Error Handling
 
 Services raise domain exceptions, never `HTTPException`:

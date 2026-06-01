@@ -44,6 +44,61 @@ Key reference documents:
 
 ---
 
+## API Response Standard
+
+**All REST API responses must use the standard envelope. No exceptions.**
+
+### Success — single resource
+```json
+{ "success": true, "code": 200, "timestamp": "...", "data": {} }
+```
+
+### Success — collection
+```json
+{ "success": true, "code": 200, "timestamp": "...", "data": [], "pagination": {} }
+```
+
+### Error — any 4xx / 5xx
+```json
+{ "success": false, "code": 400, "timestamp": "...", "error": { "message": "...", "code": "VALIDATION_FAILED", "details": [] } }
+```
+
+**Use the helpers from `src/shared/responses/`:**
+```python
+from src.shared.responses import ApiResponse, PaginatedResponse
+
+# Single resource
+return ApiResponse.ok(result)          # 200
+return ApiResponse.created(result)     # 201
+
+# Collection
+return PaginatedResponse.ok(items, total=total, page=page, page_size=page_size)
+```
+
+**Forbidden — reviewer will reject immediately:**
+```python
+return entity                          # raw ORM model
+return list_of_items                   # raw list
+return {"message": "success"}          # ad-hoc dict
+raise HTTPException(...)               # use domain exceptions instead
+```
+
+**Required error codes** (defined in `src/shared/responses/error.py` → `ErrorCode`):
+
+| Code | When |
+|---|---|
+| `VALIDATION_FAILED` | Request schema violation (422) |
+| `UNAUTHORIZED` | Missing / invalid token (401) |
+| `FORBIDDEN` | Authenticated but not permitted (403) |
+| `NOT_FOUND` | Resource not found (404) |
+| `CONFLICT` | Duplicate or invalid state (409) |
+| `BUSINESS_RULE_VIOLATION` | Domain rule broken (409) |
+| `SUBSCRIPTION_REQUIRED` | Plan entitlement missing (402) |
+| `AI_QUOTA_EXCEEDED` | AI generation failed / quota (502) |
+| `INTERNAL_SERVER_ERROR` | Unhandled exception (500) |
+
+---
+
 ## Architecture Style
 
 Use Modular Monolith Architecture.
@@ -209,6 +264,14 @@ A feature is complete **only when all of the following are true**:
 
 Before submitting code, verify:
 
+**Response envelope compliance**
+- [ ] Every endpoint returns `ApiResponse[T]` (single) or `PaginatedResponse[T]` (collection)
+- [ ] No raw entity, raw list, or ad-hoc dict returned from any router
+- [ ] All error responses use the `ApiError` envelope via `setup_exception_handlers`
+- [ ] Error `code` field uses one of the `ErrorCode` enum values
+- [ ] 422 validation errors include `details` array with field-level breakdown
+- [ ] No `HTTPException` raised anywhere in the codebase — domain exceptions only
+
 **Architecture compliance**
 - [ ] No business logic in router or model
 - [ ] No repository access from router
@@ -224,10 +287,11 @@ Before submitting code, verify:
 - [ ] Unit test for every new service method
 - [ ] Integration test for every new endpoint
 - [ ] Edge cases and error paths covered
+- [ ] Integration tests assert response envelope shape (`success`, `code`, `data`, `error`)
 
 **OpenAPI alignment**
 - [ ] Request body matches `contracts/openapi.yaml`
-- [ ] Response schema matches `contracts/openapi.yaml`
+- [ ] Response uses `ApiResponse` / `PaginatedResponse` / `ApiError` refs in the contract
 - [ ] Status codes match `contracts/openapi.yaml`
 
 **Domain consistency**
