@@ -5,6 +5,13 @@ Idempotent — safe to run on every deploy or container start.
 
 Usage:
     python scripts/bootstrap.py
+
+Design note:
+    Alembic's async env.py calls asyncio.run() internally when applying
+    migrations.  Therefore _run_migrations() must be called at the top
+    level with no event loop active — never from inside asyncio.run().
+    Seeders are async, so they run in a separate asyncio.run() call after
+    migrations complete.
 """
 
 import asyncio
@@ -31,13 +38,20 @@ logger = structlog.get_logger(__name__)
 
 
 def _run_migrations() -> None:
+    """Run Alembic migrations synchronously.
+
+    Must be called with no active event loop.  Alembic's async env.py
+    calls asyncio.run() itself; nesting that inside another asyncio.run()
+    raises RuntimeError.
+    """
     root = Path(__file__).parent.parent
     cfg = Config(str(root / "alembic.ini"))
     cfg.set_main_option("script_location", str(root / "alembic"))
     command.upgrade(cfg, "head")
 
 
-async def _seed(db_url: str) -> None:
+async def _run_seeders() -> None:
+    db_url = str(settings.database_url)
     engine = create_async_engine(db_url, echo=False)
     factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
     async with factory() as session:
@@ -45,20 +59,19 @@ async def _seed(db_url: str) -> None:
     await engine.dispose()
 
 
-async def main() -> None:
-    db_url = str(settings.database_url)
-    log = logger.bind(env=settings.app_env, db=db_url.split("@")[-1])
+def main() -> None:
+    log = logger.bind(env=settings.app_env)
 
     log.info("bootstrap.migrate_start")
     _run_migrations()
     log.info("bootstrap.migrate_done")
 
     log.info("bootstrap.seed_start")
-    await _seed(db_url)
+    asyncio.run(_run_seeders())
     log.info("bootstrap.seed_done")
 
     log.info("bootstrap.complete")
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()

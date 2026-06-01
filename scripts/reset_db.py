@@ -2,19 +2,18 @@
 """Drop all tables, re-run migrations, and re-seed.
 
 DESTRUCTIVE — development / CI only.
-Refuses to run in production.
+Refuses to run in production or staging.
 
 Usage:
     python scripts/reset_db.py [--no-seed]
 """
 
 import asyncio
+import argparse
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
-
-import argparse
 
 import structlog
 from alembic import command
@@ -37,10 +36,8 @@ _BLOCKED_ENVS = ("production", "staging")
 
 
 async def _drop_all(db_url: str) -> None:
-    """Drop every user-created table and enum using CASCADE."""
     engine = create_async_engine(db_url, echo=False)
     async with engine.begin() as conn:
-        # Terminate other connections so we can drop objects cleanly
         await conn.execute(
             text(
                 "SELECT pg_terminate_backend(pid) FROM pg_stat_activity"
@@ -54,13 +51,14 @@ async def _drop_all(db_url: str) -> None:
 
 
 def _run_migrations() -> None:
+    """Run migrations synchronously — must not be called inside asyncio.run()."""
     root = Path(__file__).parent.parent
     cfg = Config(str(root / "alembic.ini"))
     cfg.set_main_option("script_location", str(root / "alembic"))
     command.upgrade(cfg, "head")
 
 
-async def _seed(db_url: str) -> None:
+async def _run_seeders(db_url: str) -> None:
     engine = create_async_engine(db_url, echo=False)
     factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
     async with factory() as session:
@@ -68,7 +66,7 @@ async def _seed(db_url: str) -> None:
     await engine.dispose()
 
 
-async def main(no_seed: bool = False) -> None:
+def main(no_seed: bool = False) -> None:
     if settings.app_env in _BLOCKED_ENVS:
         logger.error(
             "reset_db.blocked",
@@ -81,7 +79,7 @@ async def main(no_seed: bool = False) -> None:
     log = logger.bind(env=settings.app_env, db=db_url.split("@")[-1])
 
     log.info("reset_db.drop_start")
-    await _drop_all(db_url)
+    asyncio.run(_drop_all(db_url))
     log.info("reset_db.drop_done")
 
     log.info("reset_db.migrate_start")
@@ -90,7 +88,7 @@ async def main(no_seed: bool = False) -> None:
 
     if not no_seed:
         log.info("reset_db.seed_start")
-        await _seed(db_url)
+        asyncio.run(_run_seeders(db_url))
         log.info("reset_db.seed_done")
 
     log.info("reset_db.complete")
@@ -98,8 +96,6 @@ async def main(no_seed: bool = False) -> None:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Drop, migrate, and re-seed the database")
-    parser.add_argument(
-        "--no-seed", action="store_true", help="Skip seeding after migration"
-    )
+    parser.add_argument("--no-seed", action="store_true", help="Skip seeding after migration")
     args = parser.parse_args()
-    asyncio.run(main(no_seed=args.no_seed))
+    main(no_seed=args.no_seed)
