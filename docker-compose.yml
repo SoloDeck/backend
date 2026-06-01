@@ -1,0 +1,128 @@
+version: "3.9"
+
+# ===========================================================================
+# SoloDesk — Local development stack
+# ===========================================================================
+
+services:
+
+  # -------------------------------------------------------------------------
+  # PostgreSQL
+  # -------------------------------------------------------------------------
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: solodesk
+      POSTGRES_PASSWORD: solodesk
+      POSTGRES_DB: solodesk
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U solodesk"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # -------------------------------------------------------------------------
+  # Redis
+  # -------------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # -------------------------------------------------------------------------
+  # FastAPI app
+  # -------------------------------------------------------------------------
+  api:
+    build:
+      context: .
+      target: runtime
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://solodesk:solodesk@db:5432/solodesk
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./src:/app/src          # hot-reload in dev
+      - ./contracts:/app/contracts:ro
+      - ./alembic:/app/alembic
+    command: >
+      uvicorn src.main:app
+        --host 0.0.0.0
+        --port 8000
+        --reload
+
+  # -------------------------------------------------------------------------
+  # Celery worker
+  # -------------------------------------------------------------------------
+  worker:
+    build:
+      context: .
+      target: worker
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://solodesk:solodesk@db:5432/solodesk
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./src:/app/src
+      - ./contracts:/app/contracts:ro
+
+  # -------------------------------------------------------------------------
+  # Celery beat (scheduler)
+  # -------------------------------------------------------------------------
+  beat:
+    build:
+      context: .
+      target: beat
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://solodesk:solodesk@db:5432/solodesk
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+    depends_on:
+      - redis
+    volumes:
+      - ./src:/app/src
+      - ./contracts:/app/contracts:ro
+
+  # -------------------------------------------------------------------------
+  # Mailpit — local SMTP / email UI
+  # -------------------------------------------------------------------------
+  mailpit:
+    image: axllent/mailpit:latest
+    restart: unless-stopped
+    ports:
+      - "1025:1025"   # SMTP
+      - "8025:8025"   # Web UI
+
+
+volumes:
+  postgres_data:

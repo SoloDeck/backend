@@ -1,0 +1,1 @@
+"""uinvoices domain entities — skeleton."""

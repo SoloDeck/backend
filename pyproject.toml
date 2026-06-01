@@ -1,0 +1,111 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "solodesk-backend"
+version = "0.1.0"
+description = "AI-powered CRM and deal management platform for Vietnamese freelancers"
+requires-python = ">=3.13"
+dependencies = [
+    # Web framework
+    "fastapi[standard]>=0.115",
+    "uvicorn[standard]>=0.34",
+    # Database
+    "sqlalchemy[asyncio]>=2.0",
+    "alembic>=1.14",
+    "asyncpg>=0.30",
+    # Validation
+    "pydantic>=2.10",
+    "pydantic-settings>=2.7",
+    "pydantic-extra-types>=2.10",
+    # Auth
+    "python-jose[cryptography]>=3.3",
+    "passlib[bcrypt]>=1.7",
+    "python-multipart>=0.0.20",
+    # Cache / Queue
+    "redis[hiredis]>=5.2",
+    "celery[redis]>=5.4",
+    # AI
+    "langchain>=0.3",
+    "langchain-openai>=0.3",
+    "openai>=1.59",
+    # HTTP client
+    "httpx>=0.28",
+    # Observability
+    "structlog>=25.1",
+    # Resilience
+    "tenacity>=9.0",
+    # Env
+    "python-dotenv>=1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.25",
+    "pytest-cov>=6.0",
+    "httpx>=0.28",
+    "factory-boy>=3.3",
+    "asgi-lifespan>=2.1",
+    "ruff>=0.9",
+    "black>=25.1",
+    "mypy>=1.14",
+    "types-passlib>=1.7",
+    "types-python-jose>=3.3",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src"]
+
+# ---------------------------------------------------------------------------
+# Ruff
+# ---------------------------------------------------------------------------
+[tool.ruff]
+target-version = "py313"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP", "B", "SIM"]
+ignore = ["B008"]  # FastAPI Depends() calls in function defaults
+
+[tool.ruff.lint.isort]
+known-first-party = ["src"]
+
+# ---------------------------------------------------------------------------
+# Black
+# ---------------------------------------------------------------------------
+[tool.black]
+target-version = ["py313"]
+line-length = 100
+
+# ---------------------------------------------------------------------------
+# Pytest
+# ---------------------------------------------------------------------------
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+filterwarnings = ["error", "ignore::DeprecationWarning"]
+
+# ---------------------------------------------------------------------------
+# Mypy
+# ---------------------------------------------------------------------------
+[tool.mypy]
+python_version = "3.13"
+strict = true
+plugins = ["pydantic.mypy", "sqlalchemy.ext.mypy.plugin"]
+ignore_missing_imports = true
+
+# ---------------------------------------------------------------------------
+# Coverage
+# ---------------------------------------------------------------------------
+[tool.coverage.run]
+source = ["src"]
+omit = ["*/migrations/*", "*/alembic/*"]
+
+[tool.coverage.report]
+fail_under = 80
+show_missing = true

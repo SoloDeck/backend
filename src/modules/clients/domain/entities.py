@@ -1,0 +1,1 @@
+"""uclients domain entities — skeleton."""

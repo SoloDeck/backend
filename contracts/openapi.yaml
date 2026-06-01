@@ -1,0 +1,4945 @@
+openapi: 3.1.0
+info:
+  title: SoloDesk API
+  description: AI-powered CRM and deal management platform for Vietnamese freelancers.
+  version: 1.0.0
+  contact:
+    email: solodeskai@gmail.com
+
+servers:
+  - url: /api/v1
+    description: Current version
+
+security:
+  - BearerAuth: []
+
+tags:
+  - name: Auth
+  - name: Users
+  - name: Subscriptions
+  - name: Clients
+  - name: Deals
+  - name: Proposals
+  - name: Contracts
+  - name: Invoices
+  - name: Payments
+  - name: Reminders
+  - name: Analytics
+  - name: AI
+  - name: Admin
+  - name: Public
+
+# ===========================================================================
+# PATHS
+# ===========================================================================
+paths:
+
+  # -------------------------------------------------------------------------
+  # AUTH
+  # -------------------------------------------------------------------------
+  /auth/register:
+    post:
+      tags: [Auth]
+      summary: Register a new freelancer account
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+      responses:
+        '201':
+          description: Account created — returns access and refresh tokens
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthTokenResponse'
+        '409':
+          description: Email already registered
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          $ref: '#/components/responses/BadRequest'
+
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: Login with email and password
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Tokens issued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthTokenResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+
+  /auth/refresh:
+    post:
+      tags: [Auth]
+      summary: Rotate refresh token and obtain new access token
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefreshRequest'
+      responses:
+        '200':
+          description: New tokens issued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthTokenResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /auth/logout:
+    post:
+      tags: [Auth]
+      summary: Invalidate current session
+      responses:
+        '204':
+          description: Logged out
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /auth/google:
+    get:
+      tags: [Auth]
+      summary: Initiate Google OAuth 2.0 flow
+      security: []
+      responses:
+        '302':
+          description: Redirect to Google authorization endpoint
+
+  /auth/google/callback:
+    get:
+      tags: [Auth]
+      summary: Handle Google OAuth callback
+      security: []
+      parameters:
+        - name: code
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: state
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Tokens issued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthTokenResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /auth/password-reset/request:
+    post:
+      tags: [Auth]
+      summary: Request a password reset email
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PasswordResetRequestBody'
+      responses:
+        '204':
+          description: Reset email sent (always 204 regardless of whether email exists)
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+
+  /auth/password-reset/confirm:
+    post:
+      tags: [Auth]
+      summary: Apply new password using reset token
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PasswordResetConfirmRequest'
+      responses:
+        '204':
+          description: Password updated
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '410':
+          description: Token expired or already used
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # -------------------------------------------------------------------------
+  # USERS
+  # -------------------------------------------------------------------------
+  /users/me:
+    get:
+      tags: [Users]
+      summary: Get current user profile
+      responses:
+        '200':
+          description: User profile
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    patch:
+      tags: [Users]
+      summary: Update current user identity fields
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateUserRequest'
+      responses:
+        '200':
+          description: Updated user
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          description: Email already in use
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    delete:
+      tags: [Users]
+      summary: Request soft-deletion of own account
+      responses:
+        '204':
+          description: Account scheduled for deletion
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /users/me/professional-profile:
+    patch:
+      tags: [Users]
+      summary: Update professional profile (skills, rate, portfolio…)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateProfessionalProfileRequest'
+      responses:
+        '200':
+          description: Updated profile
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /users/me/preferences:
+    patch:
+      tags: [Users]
+      summary: Update notification, locale, and theme preferences
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdatePreferencesRequest'
+      responses:
+        '200':
+          description: Updated preferences
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserResponse'
+
+  # -------------------------------------------------------------------------
+  # SUBSCRIPTIONS
+  # -------------------------------------------------------------------------
+  /subscriptions/plans:
+    get:
+      tags: [Subscriptions]
+      summary: List all active subscription plans
+      security: []
+      responses:
+        '200':
+          description: Plan catalog
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/SubscriptionPlanResponse'
+
+  /subscriptions/plans/{plan_id}:
+    get:
+      tags: [Subscriptions]
+      summary: Get a single plan
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/PlanId'
+      responses:
+        '200':
+          description: Plan detail
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SubscriptionPlanResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /subscriptions/me:
+    get:
+      tags: [Subscriptions]
+      summary: Get current user subscription
+      responses:
+        '200':
+          description: Subscription detail
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SubscriptionResponse'
+
+  /subscriptions/me/upgrade:
+    post:
+      tags: [Subscriptions]
+      summary: Upgrade to a higher plan (takes effect immediately)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChangePlanRequest'
+      responses:
+        '200':
+          description: Updated subscription
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SubscriptionResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /subscriptions/me/downgrade:
+    post:
+      tags: [Subscriptions]
+      summary: Downgrade to a lower plan (takes effect at period end)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChangePlanRequest'
+      responses:
+        '200':
+          description: Updated subscription
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SubscriptionResponse'
+
+  /subscriptions/me/cancel:
+    post:
+      tags: [Subscriptions]
+      summary: Cancel subscription at period end
+      responses:
+        '200':
+          description: Subscription scheduled for cancellation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SubscriptionResponse'
+
+  /subscriptions/me/usage:
+    get:
+      tags: [Subscriptions]
+      summary: Get usage counters for current billing period
+      responses:
+        '200':
+          description: Usage record
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UsageRecordResponse'
+
+  # -------------------------------------------------------------------------
+  # CLIENTS
+  # -------------------------------------------------------------------------
+  /clients:
+    get:
+      tags: [Clients]
+      summary: List clients
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - name: status
+          in: query
+          schema:
+            $ref: '#/components/schemas/ClientStatus'
+        - name: type
+          in: query
+          schema:
+            $ref: '#/components/schemas/ClientType'
+        - name: search
+          in: query
+          description: Full-text search on name and email
+          schema:
+            type: string
+        - name: tag
+          in: query
+          description: Filter by tag (exact match, lowercase)
+          schema:
+            type: string
+        - name: sort_by
+          in: query
+          schema:
+            type: string
+            enum: [name, created_at, updated_at, status]
+            default: created_at
+        - $ref: '#/components/parameters/SortOrder'
+      responses:
+        '200':
+          description: Paginated client list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClientPage'
+
+    post:
+      tags: [Clients]
+      summary: Create a client
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateClientRequest'
+      responses:
+        '201':
+          description: Created client
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClientResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          description: Email already exists for this user
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /clients/{client_id}:
+    parameters:
+      - $ref: '#/components/parameters/ClientId'
+    get:
+      tags: [Clients]
+      summary: Get client detail
+      responses:
+        '200':
+          description: Client detail
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClientResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      tags: [Clients]
+      summary: Update client
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateClientRequest'
+      responses:
+        '200':
+          description: Updated client
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClientResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      tags: [Clients]
+      summary: Soft-delete (archive) a client
+      responses:
+        '204':
+          description: Client archived
+        '409':
+          description: Client has active deals, contracts or invoices
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /clients/{client_id}/communication-logs:
+    parameters:
+      - $ref: '#/components/parameters/ClientId'
+    get:
+      tags: [Clients]
+      summary: List communication log entries for a client
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - name: channel
+          in: query
+          schema:
+            $ref: '#/components/schemas/CommChannel'
+        - name: from_date
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: to_date
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: sort_by
+          in: query
+          schema:
+            type: string
+            enum: [communicated_at, created_at]
+            default: communicated_at
+        - $ref: '#/components/parameters/SortOrder'
+      responses:
+        '200':
+          description: Paginated log entries
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommunicationLogPage'
+    post:
+      tags: [Clients]
+      summary: Append a communication log entry (append-only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateCommunicationLogRequest'
+      responses:
+        '201':
+          description: Log entry created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommunicationLogResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /clients/{client_id}/tags:
+    parameters:
+      - $ref: '#/components/parameters/ClientId'
+    get:
+      tags: [Clients]
+      summary: List tags on a client
+      responses:
+        '200':
+          description: Tag list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ClientTagResponse'
+    post:
+      tags: [Clients]
+      summary: Add a tag to a client
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AddTagRequest'
+      responses:
+        '201':
+          description: Tag added
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClientTagResponse'
+        '409':
+          description: Tag already exists or client has 10 tags
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /clients/{client_id}/tags/{tag}:
+    parameters:
+      - $ref: '#/components/parameters/ClientId'
+      - name: tag
+        in: path
+        required: true
+        schema:
+          type: string
+    delete:
+      tags: [Clients]
+      summary: Remove a tag from a client
+      responses:
+        '204':
+          description: Tag removed
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # -------------------------------------------------------------------------
+  # DEALS
+  # -------------------------------------------------------------------------
+  /deals:
+    get:
+      tags: [Deals]
+      summary: List deals
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - name: stage
+          in: query
+          schema:
+            $ref: '#/components/schemas/DealStage'
+        - name: client_id
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: source
+          in: query
+          schema:
+            $ref: '#/components/schemas/DealSource'
+        - name: from_date
+          in: query
+          description: Filter by created_at >=
+          schema:
+            type: string
+            format: date-time
+        - name: to_date
+          in: query
+          description: Filter by created_at <=
+          schema:
+            type: string
+            format: date-time
+        - name: min_value
+          in: query
+          schema:
+            type: number
+        - name: max_value
+          in: query
+          schema:
+            type: number
+        - name: search
+          in: query
+          description: Full-text search on title and notes
+          schema:
+            type: string
+        - name: sort_by
+          in: query
+          schema:
+            type: string
+            enum: [created_at, updated_at, estimated_value, actual_value, closed_at]
+            default: created_at
+        - $ref: '#/components/parameters/SortOrder'
+      responses:
+        '200':
+          description: Paginated deal list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DealPage'
+
+    post:
+      tags: [Deals]
+      summary: Create a deal
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateDealRequest'
+      responses:
+        '201':
+          description: Created deal
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DealResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /deals/{deal_id}:
+    parameters:
+      - $ref: '#/components/parameters/DealId'
+    get:
+      tags: [Deals]
+      summary: Get deal detail
+      responses:
+        '200':
+          description: Deal detail
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DealResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      tags: [Deals]
+      summary: Update deal (blocked on terminal stages)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateDealRequest'
+      responses:
+        '200':
+          description: Updated deal
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DealResponse'
+        '409':
+          description: Deal is in a terminal stage
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    delete:
+      tags: [Deals]
+      summary: Soft-delete a deal
+      responses:
+        '204':
+          description: Deal deleted
+
+  /deals/{deal_id}/stage-transition:
+    parameters:
+      - $ref: '#/components/parameters/DealId'
+    post:
+      tags: [Deals]
+      summary: Advance deal to next pipeline stage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StageTransitionRequest'
+      responses:
+        '200':
+          description: Deal with updated stage
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DealResponse'
+        '400':
+          description: Invalid transition or missing prerequisites
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /deals/{deal_id}/qualify:
+    parameters:
+      - $ref: '#/components/parameters/DealId'
+    post:
+      tags: [Deals]
+      summary: Trigger AI lead qualification for a deal
+      responses:
+        '200':
+          description: Qualification result applied to deal
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LeadQualificationResponse'
+        '402':
+          $ref: '#/components/responses/PaymentRequired'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /deals/{deal_id}/activity:
+    parameters:
+      - $ref: '#/components/parameters/DealId'
+    get:
+      tags: [Deals]
+      summary: List activity timeline for a deal
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - name: entry_type
+          in: query
+          schema:
+            $ref: '#/components/schemas/DealActivityType'
+        - name: sort_by
+          in: query
+          schema:
+            type: string
+            enum: [created_at]
+            default: created_at
+        - $ref: '#/components/parameters/SortOrder'
+      responses:
+        '200':
+          description: Paginated activity entries
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DealActivityPage'
+
+  /deals/{deal_id}/notes:
+    parameters:
+      - $ref: '#/components/parameters/DealId'
+    post:
+      tags: [Deals]
+      summary: Append a note to a deal activity log
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AddNoteRequest'
+      responses:
+        '201':
+          description: Note added
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DealActivityEntryResponse'
+
+  # -------------------------------------------------------------------------
+  # PROPOSALS
+  # -------------------------------------------------------------------------
+  /proposals:
+    get:
+      tags: [Proposals]
+      summary: List proposals
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - name: deal_id
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: status
+          in: query
+          schema:
+            $ref: '#/components/schemas/ProposalStatus'
+        - name: ai_generated
+          in: query
+          schema:
+            type: boolean
+        - name: from_date
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: to_date
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: sort_by
+          in: query
+          schema:
+            type: string
+            enum: [created_at, sent_at, version_number]
+            default: created_at
+        - $ref: '#/components/parameters/SortOrder'
+      responses:
+        '200':
+          description: Paginated proposal list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProposalPage'
+
+    post:
+      tags: [Proposals]
+      summary: Create a proposal draft
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateProposalRequest'
+      responses:
+        '201':
+          description: Created proposal
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProposalResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /proposals/{proposal_id}:
+    parameters:
+      - $ref: '#/components/parameters/ProposalId'
+    get:
+      tags: [Proposals]
+      summary: Get proposal detail
+      responses:
+        '200':
+          description: Proposal detail
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProposalResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      tags: [Proposals]
+      summary: Update proposal (draft only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateProposalRequest'
+      responses:
+        '200':
+          description: Updated proposal
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProposalResponse'
+        '409':
+          description: Proposal is not in draft status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    delete:
+      tags: [Proposals]
+      summary: Delete a draft proposal
+      responses:
+        '204':
+          description: Proposal deleted
+        '409':
+          description: Only draft proposals can be deleted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /proposals/{proposal_id}/send:
+    parameters:
+      - $ref: '#/components/parameters/ProposalId'
+    post:
+      tags: [Proposals]
+      summary: Send proposal to client (generates share link, locks content)
+      responses:
+        '200':
+          description: Proposal sent with share_token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProposalResponse'
+        '400':
+          description: Pricing total mismatch or missing required fields
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /proposals/{proposal_id}/generate:
+    parameters:
+      - $ref: '#/components/parameters/ProposalId'
+    post:
+      tags: [Proposals]
+      summary: Trigger AI generation to fill/replace proposal content (returns draft)
+      responses:
+        '200':
+          description: Proposal updated with AI-generated draft content
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProposalResponse'
+        '402':
+          $ref: '#/components/responses/PaymentRequired'
+
+  # Public — no auth required
+  /proposals/public/{share_token}:
+    parameters:
+      - $ref: '#/components/parameters/ShareToken'
+    get:
+      tags: [Public]
+      summary: View a proposal via shareable link (client-facing, no auth)
+      security: []
+      responses:
+        '200':
+          description: Proposal read-only view
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicProposalResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '410':
+          description: Share link expired
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /proposals/public/{share_token}/respond:
+    parameters:
+      - $ref: '#/components/parameters/ShareToken'
+    post:
+      tags: [Public]
+      summary: Client submits accept or reject response
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProposalRespondRequest'
+      responses:
+        '200':
+          description: Response recorded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicProposalResponse'
+        '409':
+          description: Proposal already responded or expired
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # -------------------------------------------------------------------------
+  # CONTRACTS
+  # -------------------------------------------------------------------------
+  /contracts:
+    get:
+      tags: [Contracts]
+      summary: List contracts
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - name: deal_id
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: client_id
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: status
+          in: query
+          schema:
+            $ref: '#/components/schemas/ContractStatus'
+        - name: from_date
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: to_date
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: sort_by
+          in: query
+          schema:
+            type: string
+            enum: [created_at, effective_date, end_date]
+            default: created_at
+        - $ref: '#/components/parameters/SortOrder'
+      responses:
+        '200':
+          description: Paginated contract list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ContractPage'
+
+    post:
+      tags: [Contracts]
+      summary: Create a contract from an accepted proposal
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateContractRequest'
+      responses:
+        '201':
+          description: Contract draft created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ContractResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          description: Proposal not accepted or active contract already exists
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /contracts/{contract_id}:
+    parameters:
+      - $ref: '#/components/parameters/ContractId'
+    get:
+      tags: [Contracts]
+      summary: Get contract detail
+      responses:
+        '200':
+          description: Contract detail
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ContractResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      tags: [Contracts]
+      summary: Update contract content (draft only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateContractRequest'
+      responses:
+        '200':
+          description: Updated contract
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ContractResponse'
+        '409':
+          description: Contract is not in draft status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /contracts/{contract_id}/send:
+    parameters:
+      - $ref: '#/components/parameters/ContractId'
+    post:
+      tags: [Contracts]
+      summary: Move contract to pending_signatures and generate share link
+      responses:
+        '200':
+          description: Contract sent for signatures
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ContractResponse'
+
+  /contracts/{contract_id}/sign:
+    parameters:
+      - $ref: '#/components/parameters/ContractId'
+    post:
+      tags: [Contracts]
+      summary: Record freelancer signature
+      responses:
+        '200':
+          description: Signature recorded; activates if both parties have signed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ContractResponse'
+
+  /contracts/{contract_id}/amend:
+    parameters:
+      - $ref: '#/components/parameters/ContractId'
+    post:
+      tags: [Contracts]
+      summary: Create an amendment (new version) of an active contract
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateContractRequest'
+      responses:
+        '201':
+          description: New contract version created as draft; previous archived
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ContractResponse'
+        '409':
+          description: Contract is not in active status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /contracts/{contract_id}/terminate:
+    parameters:
+      - $ref: '#/components/parameters/ContractId'
+    post:
+      tags: [Contracts]
+      summary: Terminate a contract
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ContractTerminateRequest'
+      responses:
+        '200':
+          description: Contract terminated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ContractResponse'
+
+  /contracts/{contract_id}/generate:
+    parameters:
+      - $ref: '#/components/parameters/ContractId'
+    post:
+      tags: [Contracts]
+      summary: Trigger AI generation to fill contract content (draft only)
+      responses:
+        '200':
+          description: Contract updated with AI-generated draft content
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ContractResponse'
+        '402':
+          $ref: '#/components/responses/PaymentRequired'
+
+  /contracts/{contract_id}/milestones:
+    parameters:
+      - $ref: '#/components/parameters/ContractId'
+    get:
+      tags: [Contracts]
+      summary: List payment milestones for a contract
+      responses:
+        '200':
+          description: Milestone list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/PaymentMilestoneResponse'
+    post:
+      tags: [Contracts]
+      summary: Add a payment milestone (draft only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreatePaymentMilestoneRequest'
+      responses:
+        '201':
+          description: Milestone created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaymentMilestoneResponse'
+
+  /contracts/{contract_id}/milestones/{milestone_id}:
+    parameters:
+      - $ref: '#/components/parameters/ContractId'
+      - name: milestone_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    patch:
+      tags: [Contracts]
+      summary: Update a milestone (draft contract only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdatePaymentMilestoneRequest'
+      responses:
+        '200':
+          description: Updated milestone
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaymentMilestoneResponse'
+    delete:
+      tags: [Contracts]
+      summary: Delete a milestone (draft contract only)
+      responses:
+        '204':
+          description: Milestone deleted
+
+  /contracts/public/{share_token}:
+    parameters:
+      - $ref: '#/components/parameters/ShareToken'
+    get:
+      tags: [Public]
+      summary: View a contract via shareable link (client-facing, no auth)
+      security: []
+      responses:
+        '200':
+          description: Contract read-only view
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicContractResponse'
+        '410':
+          description: Share link expired
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /contracts/public/{share_token}/sign:
+    parameters:
+      - $ref: '#/components/parameters/ShareToken'
+    post:
+      tags: [Public]
+      summary: Client submits signature via share link
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ClientSignRequest'
+      responses:
+        '200':
+          description: Signature recorded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicContractResponse'
+
+  # -------------------------------------------------------------------------
+  # INVOICES
+  # -------------------------------------------------------------------------
+  /invoices:
+    get:
+      tags: [Invoices]
+      summary: List invoices
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - name: status
+          in: query
+          schema:
+            $ref: '#/components/schemas/InvoiceStatus'
+        - name: client_id
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: deal_id
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: contract_id
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: from_issue_date
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: to_issue_date
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: from_due_date
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: to_due_date
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: overdue_only
+          in: query
+          schema:
+            type: boolean
+        - name: sort_by
+          in: query
+          schema:
+            type: string
+            enum: [issue_date, due_date, total, created_at]
+            default: issue_date
+        - $ref: '#/components/parameters/SortOrder'
+      responses:
+        '200':
+          description: Paginated invoice list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InvoicePage'
+
+    post:
+      tags: [Invoices]
+      summary: Create an invoice
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateInvoiceRequest'
+      responses:
+        '201':
+          description: Created invoice
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InvoiceResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /invoices/{invoice_id}:
+    parameters:
+      - $ref: '#/components/parameters/InvoiceId'
+    get:
+      tags: [Invoices]
+      summary: Get invoice detail
+      responses:
+        '200':
+          description: Invoice detail with line items
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InvoiceResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      tags: [Invoices]
+      summary: Update invoice (draft only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateInvoiceRequest'
+      responses:
+        '200':
+          description: Updated invoice
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InvoiceResponse'
+        '409':
+          description: Invoice is not in draft status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /invoices/{invoice_id}/send:
+    parameters:
+      - $ref: '#/components/parameters/InvoiceId'
+    post:
+      tags: [Invoices]
+      summary: Send invoice to client
+      responses:
+        '200':
+          description: Invoice sent
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InvoiceResponse'
+
+  /invoices/{invoice_id}/void:
+    parameters:
+      - $ref: '#/components/parameters/InvoiceId'
+    post:
+      tags: [Invoices]
+      summary: Void an invoice (not permitted on paid invoices)
+      responses:
+        '200':
+          description: Invoice voided
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InvoiceResponse'
+        '409':
+          description: Invoice is paid and cannot be voided
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /invoices/{invoice_id}/payments:
+    parameters:
+      - $ref: '#/components/parameters/InvoiceId'
+    get:
+      tags: [Invoices]
+      summary: List payment records for an invoice
+      responses:
+        '200':
+          description: Payment records
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/PaymentRecordResponse'
+    post:
+      tags: [Invoices]
+      summary: Record a payment against an invoice
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RecordPaymentRequest'
+      responses:
+        '201':
+          description: Payment recorded; invoice status updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InvoiceResponse'
+        '400':
+          description: Payment would exceed invoice total
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /invoices/{invoice_id}/payment-link:
+    parameters:
+      - $ref: '#/components/parameters/InvoiceId'
+    post:
+      tags: [Payments]
+      summary: Create a client payment link for an invoice
+      description: Generates a Vietnam-friendly payment instruction or checkout link, such as MoMo deep link or bank-transfer QR, for use in invoice reminders.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreatePaymentLinkRequest'
+      responses:
+        '201':
+          description: Payment link created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaymentIntentResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Invoice is already paid or cannot accept payments
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /payments/methods:
+    get:
+      tags: [Payments]
+      summary: List enabled payment methods for the current user
+      responses:
+        '200':
+          description: Enabled payment methods and account instructions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/PaymentMethodConfigResponse'
+
+  /payments/intents/{payment_intent_id}:
+    parameters:
+      - $ref: '#/components/parameters/PaymentIntentId'
+    get:
+      tags: [Payments]
+      summary: Get payment intent status
+      responses:
+        '200':
+          description: Payment intent detail
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaymentIntentResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /payments/intents/{payment_intent_id}/cancel:
+    parameters:
+      - $ref: '#/components/parameters/PaymentIntentId'
+    post:
+      tags: [Payments]
+      summary: Cancel an unpaid payment intent
+      responses:
+        '200':
+          description: Payment intent cancelled
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaymentIntentResponse'
+        '409':
+          description: Payment intent is already completed or expired
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /payments/webhooks/{provider}:
+    post:
+      tags: [Payments]
+      summary: Receive payment provider webhook callback
+      security: []
+      parameters:
+        - name: provider
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/PaymentProvider'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PaymentWebhookRequest'
+      responses:
+        '202':
+          description: Webhook accepted for asynchronous verification
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaymentWebhookAcceptedResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /invoices/public/{share_token}:
+    parameters:
+      - $ref: '#/components/parameters/ShareToken'
+    get:
+      tags: [Public]
+      summary: View an invoice via shareable link (client-facing, no auth)
+      security: []
+      responses:
+        '200':
+          description: Invoice read-only view
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicInvoiceResponse'
+        '410':
+          description: Share link expired
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /invoices/public/{share_token}/payment-options:
+    parameters:
+      - $ref: '#/components/parameters/ShareToken'
+    get:
+      tags: [Invoices, Payments, Public]
+      summary: List client-facing payment options for a shared invoice
+      security: []
+      responses:
+        '200':
+          description: Payment options available to the invoice recipient
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicPaymentOptionsResponse'
+        '410':
+          description: Share link expired
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # -------------------------------------------------------------------------
+  # REMINDERS
+  # -------------------------------------------------------------------------
+  /reminders:
+    get:
+      tags: [Reminders]
+      summary: List reminders
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - name: status
+          in: query
+          schema:
+            $ref: '#/components/schemas/ReminderStatus'
+        - name: target_type
+          in: query
+          schema:
+            $ref: '#/components/schemas/ReminderTargetType'
+        - name: target_id
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: reminder_type
+          in: query
+          schema:
+            $ref: '#/components/schemas/ReminderType'
+        - name: from_scheduled_at
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: to_scheduled_at
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: sort_by
+          in: query
+          schema:
+            type: string
+            enum: [scheduled_at, created_at]
+            default: scheduled_at
+        - $ref: '#/components/parameters/SortOrder'
+      responses:
+        '200':
+          description: Paginated reminder list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReminderPage'
+
+    post:
+      tags: [Reminders]
+      summary: Create a reminder
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateReminderRequest'
+      responses:
+        '201':
+          description: Reminder created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReminderResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /reminders/{reminder_id}:
+    parameters:
+      - $ref: '#/components/parameters/ReminderId'
+    get:
+      tags: [Reminders]
+      summary: Get reminder detail
+      responses:
+        '200':
+          description: Reminder detail
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReminderResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      tags: [Reminders]
+      summary: Update a pending reminder
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateReminderRequest'
+      responses:
+        '200':
+          description: Updated reminder
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReminderResponse'
+        '409':
+          description: Reminder is not in pending status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    delete:
+      tags: [Reminders]
+      summary: Cancel a pending reminder
+      responses:
+        '204':
+          description: Reminder cancelled
+
+  # -------------------------------------------------------------------------
+  # ANALYTICS
+  # -------------------------------------------------------------------------
+  /analytics/dashboard:
+    get:
+      tags: [Analytics]
+      summary: Pre-computed dashboard summary (active deals, pipeline value, MRR, overdue count, win rate)
+      responses:
+        '200':
+          description: Dashboard summary
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DashboardSummaryResponse'
+
+  /analytics/revenue:
+    get:
+      tags: [Analytics]
+      summary: Revenue metrics snapshot for a given period
+      parameters:
+        - name: period_type
+          in: query
+          required: true
+          schema:
+            $ref: '#/components/schemas/PeriodType'
+        - name: from_date
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+        - name: to_date
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+      responses:
+        '200':
+          description: Revenue metrics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RevenueMetricsResponse'
+
+  /analytics/pipeline:
+    get:
+      tags: [Analytics]
+      summary: Pipeline distribution snapshot
+      parameters:
+        - name: snapshot_date
+          in: query
+          schema:
+            type: string
+            format: date
+      responses:
+        '200':
+          description: Pipeline metrics by stage
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PipelineMetricsResponse'
+
+  /analytics/win-rate:
+    get:
+      tags: [Analytics]
+      summary: Win rate and funnel conversion rates
+      parameters:
+        - name: from_date
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: to_date
+          in: query
+          schema:
+            type: string
+            format: date
+      responses:
+        '200':
+          description: Win rate metrics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WinRateResponse'
+
+  /analytics/clients/top:
+    get:
+      tags: [Analytics]
+      summary: Top clients by revenue
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 10
+            maximum: 50
+        - name: from_date
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: to_date
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: metric
+          in: query
+          schema:
+            type: string
+            enum: [total_invoiced, total_collected]
+            default: total_collected
+      responses:
+        '200':
+          description: Top client list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TopClientsResponse'
+
+  /analytics/ai-usage:
+    get:
+      tags: [Analytics]
+      summary: AI generation usage counters for current user
+      parameters:
+        - name: from_date
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: to_date
+          in: query
+          schema:
+            type: string
+            format: date
+      responses:
+        '200':
+          description: AI usage metrics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AIUsageMetricsResponse'
+
+  # -------------------------------------------------------------------------
+  # AI
+  # -------------------------------------------------------------------------
+  /ai/leads/qualify:
+    post:
+      tags: [AI]
+      summary: Qualify a lead (standalone; also available via /deals/{id}/qualify)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LeadQualificationRequest'
+      responses:
+        '200':
+          description: Qualification result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LeadQualificationResponse'
+        '402':
+          $ref: '#/components/responses/PaymentRequired'
+
+  /ai/proposals/generate:
+    post:
+      tags: [AI]
+      summary: Generate a proposal draft for a deal
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProposalGenerationRequest'
+      responses:
+        '200':
+          description: AI-generated proposal draft content
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProposalGenerationResponse'
+        '402':
+          $ref: '#/components/responses/PaymentRequired'
+
+  /ai/contracts/generate:
+    post:
+      tags: [AI]
+      summary: Generate a contract draft from an accepted proposal
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ContractGenerationRequest'
+      responses:
+        '200':
+          description: AI-generated contract draft content
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ContractGenerationResponse'
+        '402':
+          $ref: '#/components/responses/PaymentRequired'
+
+  /ai/followups/generate:
+    post:
+      tags: [AI]
+      summary: Generate a follow-up message draft
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FollowUpGenerationRequest'
+      responses:
+        '200':
+          description: AI-generated follow-up message
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FollowUpGenerationResponse'
+        '402':
+          $ref: '#/components/responses/PaymentRequired'
+
+  # -------------------------------------------------------------------------
+  # ADMIN — requires role: admin
+  # -------------------------------------------------------------------------
+  /admin/users:
+    get:
+      tags: [Admin]
+      summary: List all platform users
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - name: status
+          in: query
+          schema:
+            $ref: '#/components/schemas/UserStatus'
+        - name: role
+          in: query
+          schema:
+            $ref: '#/components/schemas/UserRole'
+        - name: search
+          in: query
+          description: Search by name or email
+          schema:
+            type: string
+        - name: plan_slug
+          in: query
+          schema:
+            type: string
+        - name: sort_by
+          in: query
+          schema:
+            type: string
+            enum: [created_at, email, full_name, status]
+            default: created_at
+        - $ref: '#/components/parameters/SortOrder'
+      responses:
+        '200':
+          description: Paginated user list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminUserPage'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /admin/users/{user_id}:
+    parameters:
+      - $ref: '#/components/parameters/UserId'
+    get:
+      tags: [Admin]
+      summary: Get any user profile (read-only)
+      responses:
+        '200':
+          description: User detail
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminUserResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      tags: [Admin]
+      summary: Update user role or status
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminUpdateUserRequest'
+      responses:
+        '200':
+          description: Updated user
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminUserResponse'
+
+  /admin/users/{user_id}/suspend:
+    parameters:
+      - $ref: '#/components/parameters/UserId'
+    post:
+      tags: [Admin]
+      summary: Suspend a user account
+      responses:
+        '200':
+          description: User suspended
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminUserResponse'
+        '409':
+          description: Cannot suspend the last admin
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /admin/users/{user_id}/reinstate:
+    parameters:
+      - $ref: '#/components/parameters/UserId'
+    post:
+      tags: [Admin]
+      summary: Reinstate a suspended user
+      responses:
+        '200':
+          description: User reinstated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminUserResponse'
+
+  /admin/users/{user_id}/sessions:
+    parameters:
+      - $ref: '#/components/parameters/UserId'
+    delete:
+      tags: [Admin]
+      summary: Revoke all active sessions for a user
+      responses:
+        '204':
+          description: Sessions revoked
+
+  /admin/subscriptions:
+    get:
+      tags: [Admin]
+      summary: List all platform subscriptions
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - name: status
+          in: query
+          schema:
+            $ref: '#/components/schemas/SubscriptionStatus'
+        - name: plan_slug
+          in: query
+          schema:
+            type: string
+        - name: sort_by
+          in: query
+          schema:
+            type: string
+            enum: [created_at, current_period_end]
+            default: created_at
+        - $ref: '#/components/parameters/SortOrder'
+      responses:
+        '200':
+          description: Paginated subscription list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminSubscriptionPage'
+
+  /admin/subscriptions/{subscription_id}/override:
+    parameters:
+      - name: subscription_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    patch:
+      tags: [Admin]
+      summary: Manually override a user's subscription plan or status
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminSubscriptionOverrideRequest'
+      responses:
+        '200':
+          description: Subscription overridden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SubscriptionResponse'
+
+  /admin/plans:
+    get:
+      tags: [Admin]
+      summary: List all plans including inactive
+      responses:
+        '200':
+          description: All plans
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/SubscriptionPlanResponse'
+    post:
+      tags: [Admin]
+      summary: Create a new subscription plan
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminCreatePlanRequest'
+      responses:
+        '201':
+          description: Plan created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SubscriptionPlanResponse'
+
+  /admin/plans/{plan_id}:
+    parameters:
+      - $ref: '#/components/parameters/PlanId'
+    patch:
+      tags: [Admin]
+      summary: Update a plan (deactivate or change limits; existing subscribers unaffected)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminUpdatePlanRequest'
+      responses:
+        '200':
+          description: Updated plan
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SubscriptionPlanResponse'
+
+  /admin/ai-costs:
+    get:
+      tags: [Admin]
+      summary: Platform-wide AI cost records
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - name: user_id
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: ai_module
+          in: query
+          schema:
+            $ref: '#/components/schemas/AIModuleType'
+        - name: from_date
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: to_date
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: sort_by
+          in: query
+          schema:
+            type: string
+            enum: [occurred_at, estimated_cost_usd]
+            default: occurred_at
+        - $ref: '#/components/parameters/SortOrder'
+      responses:
+        '200':
+          description: AI cost records with aggregate totals
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AICostPage'
+
+  /admin/audit-logs:
+    get:
+      tags: [Admin]
+      summary: Platform audit log
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - name: actor_user_id
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: event_type
+          in: query
+          schema:
+            type: string
+        - name: target_type
+          in: query
+          schema:
+            type: string
+        - name: target_id
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: from_date
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: to_date
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: sort_by
+          in: query
+          schema:
+            type: string
+            enum: [occurred_at]
+            default: occurred_at
+        - $ref: '#/components/parameters/SortOrder'
+      responses:
+        '200':
+          description: Audit log entries
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuditLogPage'
+
+  /admin/templates:
+    get:
+      tags: [Admin]
+      summary: List system templates
+      parameters:
+        - name: template_type
+          in: query
+          schema:
+            $ref: '#/components/schemas/TemplateType'
+        - name: is_active
+          in: query
+          schema:
+            type: boolean
+      responses:
+        '200':
+          description: Template list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/SystemTemplateResponse'
+    post:
+      tags: [Admin]
+      summary: Create a system template
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateSystemTemplateRequest'
+      responses:
+        '201':
+          description: Template created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SystemTemplateResponse'
+
+  /admin/templates/{template_id}:
+    parameters:
+      - name: template_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    patch:
+      tags: [Admin]
+      summary: Activate, deactivate, or update a template
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateSystemTemplateRequest'
+      responses:
+        '200':
+          description: Updated template
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SystemTemplateResponse'
+
+  /admin/feature-flags:
+    get:
+      tags: [Admin]
+      summary: List all feature flags
+      responses:
+        '200':
+          description: Feature flags
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/FeatureFlagResponse'
+
+  /admin/feature-flags/{flag_name}:
+    parameters:
+      - name: flag_name
+        in: path
+        required: true
+        schema:
+          type: string
+    patch:
+      tags: [Admin]
+      summary: Update a feature flag
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateFeatureFlagRequest'
+      responses:
+        '200':
+          description: Updated flag
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FeatureFlagResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /admin/platform-metrics:
+    get:
+      tags: [Admin]
+      summary: Platform-wide health metrics snapshot
+      responses:
+        '200':
+          description: Platform metrics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlatformMetricsResponse'
+
+# ===========================================================================
+# COMPONENTS
+# ===========================================================================
+components:
+
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  # -------------------------------------------------------------------------
+  # Reusable Parameters
+  # -------------------------------------------------------------------------
+  parameters:
+    Page:
+      name: page
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        default: 1
+    PageSize:
+      name: page_size
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+    SortOrder:
+      name: sort_order
+      in: query
+      schema:
+        type: string
+        enum: [asc, desc]
+        default: desc
+    ShareToken:
+      name: share_token
+      in: path
+      required: true
+      schema:
+        type: string
+    ClientId:
+      name: client_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    DealId:
+      name: deal_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    ProposalId:
+      name: proposal_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    ContractId:
+      name: contract_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    InvoiceId:
+      name: invoice_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    PaymentIntentId:
+      name: payment_intent_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    ReminderId:
+      name: reminder_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    UserId:
+      name: user_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    PlanId:
+      name: plan_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+
+  # -------------------------------------------------------------------------
+  # Reusable Responses
+  # -------------------------------------------------------------------------
+  responses:
+    BadRequest:
+      description: Validation error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ValidationErrorResponse'
+    Unauthorized:
+      description: Missing or invalid authentication token
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Forbidden:
+      description: Authenticated but not authorized for this action
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    PaymentRequired:
+      description: Subscription does not include this feature or usage limit reached
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/EntitlementErrorResponse'
+    TooManyRequests:
+      description: Rate limit exceeded
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+  # -------------------------------------------------------------------------
+  # Schemas
+  # -------------------------------------------------------------------------
+  schemas:
+
+    # --- Enums ---
+    UserRole:
+      type: string
+      enum: [freelancer, admin]
+
+    UserStatus:
+      type: string
+      enum: [active, suspended, deleted]
+
+    NotificationChannel:
+      type: string
+      enum: [email, in_app, both]
+
+    ThemePreference:
+      type: string
+      enum: [light, dark]
+
+    SubscriptionStatus:
+      type: string
+      enum: [active, past_due, suspended, cancelled]
+
+    ClientType:
+      type: string
+      enum: [individual, company]
+
+    ClientStatus:
+      type: string
+      enum: [prospect, active, inactive, archived]
+
+    CommChannel:
+      type: string
+      enum: [email, phone, meeting, message]
+
+    DealStage:
+      type: string
+      enum: [new_lead, qualified, proposal_sent, in_negotiation, active, completed_and_billed, lost]
+
+    DealSource:
+      type: string
+      enum: [inbound, referral, outreach, platform, other]
+
+    DealActivityType:
+      type: string
+      enum: [stage_change, note_added, document_attached, ai_qualification]
+
+    ProposalStatus:
+      type: string
+      enum: [draft, sent, accepted, rejected, expired, superseded]
+
+    ContractStatus:
+      type: string
+      enum: [draft, pending_signatures, active, completed, terminated, expired]
+
+    InvoiceStatus:
+      type: string
+      enum: [draft, sent, partially_paid, paid, overdue, void]
+
+    PaymentMethod:
+      type: string
+      enum: [bank_transfer, cash, online, other]
+
+    PaymentProvider:
+      type: string
+      enum: [momo, bank_transfer, vnpay, manual]
+
+    PaymentIntentStatus:
+      type: string
+      enum: [pending, processing, succeeded, failed, expired, cancelled]
+
+    PaymentLinkType:
+      type: string
+      enum: [checkout_url, deep_link, qr_code, bank_transfer_instruction]
+
+    ReminderTargetType:
+      type: string
+      enum: [deal, client, invoice, contract]
+
+    ReminderType:
+      type: string
+      enum: [follow_up, proposal_follow_up, contract_signing_nudge, payment_due, payment_overdue, re_engagement, custom]
+
+    ReminderStatus:
+      type: string
+      enum: [pending, sent, failed, cancelled, skipped]
+
+    TemplateType:
+      type: string
+      enum: [proposal, contract]
+
+    AIModuleType:
+      type: string
+      enum: [lead_qualifier, proposal_generator, contract_generator, followup_generator]
+
+    PeriodType:
+      type: string
+      enum: [monthly, quarterly, yearly]
+
+    # --- Error Schemas ---
+    ErrorResponse:
+      type: object
+      required: [error, message]
+      properties:
+        error:
+          type: string
+          description: Machine-readable error code (e.g. NOT_FOUND, UNAUTHORIZED)
+          example: NOT_FOUND
+        message:
+          type: string
+          description: Human-readable explanation
+          example: Deal not found
+        request_id:
+          type: string
+          description: Correlation ID for support tracing
+
+    ValidationErrorResponse:
+      type: object
+      required: [error, message, details]
+      properties:
+        error:
+          type: string
+          example: VALIDATION_ERROR
+        message:
+          type: string
+          example: Request body contains invalid fields
+        details:
+          type: array
+          items:
+            type: object
+            required: [field, message]
+            properties:
+              field:
+                type: string
+                example: estimated_value
+              message:
+                type: string
+                example: Must be a positive number
+        request_id:
+          type: string
+
+    EntitlementErrorResponse:
+      type: object
+      required: [error, message, entitlement]
+      properties:
+        error:
+          type: string
+          example: ENTITLEMENT_REQUIRED
+        message:
+          type: string
+          example: Your plan does not include AI generation. Upgrade to Pro.
+        entitlement:
+          type: string
+          description: The specific entitlement flag that was missing
+          example: can_use_ai
+        upgrade_url:
+          type: string
+          example: /subscriptions/plans
+
+    # --- Pagination Wrapper ---
+    PaginationMeta:
+      type: object
+      required: [total, page, page_size, total_pages]
+      properties:
+        total:
+          type: integer
+        page:
+          type: integer
+        page_size:
+          type: integer
+        total_pages:
+          type: integer
+
+    # --- Auth ---
+    RegisterRequest:
+      type: object
+      required: [email, password, full_name]
+      properties:
+        email:
+          type: string
+          format: email
+          example: jane@example.com
+        password:
+          type: string
+          format: password
+          minLength: 8
+          example: s3cretPass!
+        full_name:
+          type: string
+          minLength: 1
+          example: Nguyễn Văn A
+
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          format: password
+          minLength: 8
+
+    RefreshRequest:
+      type: object
+      required: [refresh_token]
+      properties:
+        refresh_token:
+          type: string
+
+    AuthTokenResponse:
+      type: object
+      required: [access_token, refresh_token, token_type, expires_in]
+      properties:
+        access_token:
+          type: string
+        refresh_token:
+          type: string
+        token_type:
+          type: string
+          example: Bearer
+        expires_in:
+          type: integer
+          description: Access token TTL in seconds
+          example: 900
+        user:
+          $ref: '#/components/schemas/UserResponse'
+
+    PasswordResetRequestBody:
+      type: object
+      required: [email]
+      properties:
+        email:
+          type: string
+          format: email
+
+    PasswordResetConfirmRequest:
+      type: object
+      required: [token, new_password]
+      properties:
+        token:
+          type: string
+        new_password:
+          type: string
+          format: password
+          minLength: 8
+
+    # --- Users ---
+    ProfessionalProfileDTO:
+      type: object
+      properties:
+        skills:
+          type: array
+          items:
+            type: string
+        specialization:
+          type: string
+        default_hourly_rate:
+          type: number
+          format: decimal
+        currency:
+          type: string
+          example: VND
+        portfolio_url:
+          type: string
+          format: uri
+        business_name:
+          type: string
+
+    PreferencesDTO:
+      type: object
+      properties:
+        locale:
+          type: string
+          example: vi
+        timezone:
+          type: string
+          example: Asia/Ho_Chi_Minh
+        notification_channel:
+          $ref: '#/components/schemas/NotificationChannel'
+        theme:
+          $ref: '#/components/schemas/ThemePreference'
+
+    UserResponse:
+      type: object
+      required: [id, email, full_name, role, status, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        email:
+          type: string
+          format: email
+        full_name:
+          type: string
+        role:
+          $ref: '#/components/schemas/UserRole'
+        status:
+          $ref: '#/components/schemas/UserStatus'
+        avatar_url:
+          type: string
+          format: uri
+        bio:
+          type: string
+        phone:
+          type: string
+        professional_profile:
+          $ref: '#/components/schemas/ProfessionalProfileDTO'
+        preferences:
+          $ref: '#/components/schemas/PreferencesDTO'
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    UpdateUserRequest:
+      type: object
+      properties:
+        full_name:
+          type: string
+        email:
+          type: string
+          format: email
+        avatar_url:
+          type: string
+          format: uri
+        bio:
+          type: string
+        phone:
+          type: string
+
+    UpdateProfessionalProfileRequest:
+      $ref: '#/components/schemas/ProfessionalProfileDTO'
+
+    UpdatePreferencesRequest:
+      $ref: '#/components/schemas/PreferencesDTO'
+
+    # --- Subscriptions ---
+    SubscriptionPlanResponse:
+      type: object
+      required: [id, name, slug, price_monthly, currency]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          example: Pro
+        slug:
+          type: string
+          example: pro
+        price_monthly:
+          type: number
+          format: decimal
+        currency:
+          type: string
+          example: USD
+        max_ai_generations_per_month:
+          type: integer
+        can_use_ai:
+          type: boolean
+        can_export_pdf:
+          type: boolean
+        max_clients:
+          type: integer
+          nullable: true
+        max_deals:
+          type: integer
+          nullable: true
+        is_active:
+          type: boolean
+
+    SubscriptionResponse:
+      type: object
+      required: [id, user_id, plan, status, current_period_start, current_period_end]
+      properties:
+        id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        plan:
+          $ref: '#/components/schemas/SubscriptionPlanResponse'
+        status:
+          $ref: '#/components/schemas/SubscriptionStatus'
+        current_period_start:
+          type: string
+          format: date-time
+        current_period_end:
+          type: string
+          format: date-time
+        cancel_at_period_end:
+          type: boolean
+        cancelled_at:
+          type: string
+          format: date-time
+          nullable: true
+        override_expires_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    UsageRecordResponse:
+      type: object
+      required: [user_id, billing_period_start, billing_period_end, ai_generations_used]
+      properties:
+        user_id:
+          type: string
+          format: uuid
+        billing_period_start:
+          type: string
+          format: date-time
+        billing_period_end:
+          type: string
+          format: date-time
+        ai_generations_used:
+          type: integer
+        ai_generations_limit:
+          type: integer
+          description: From the current plan
+
+    ChangePlanRequest:
+      type: object
+      required: [plan_id]
+      properties:
+        plan_id:
+          type: string
+          format: uuid
+
+    # --- Clients ---
+    ContactInfoDTO:
+      type: object
+      properties:
+        phone:
+          type: string
+        website:
+          type: string
+          format: uri
+        linkedin_url:
+          type: string
+          format: uri
+        address_city:
+          type: string
+        address_country:
+          type: string
+
+    ClientResponse:
+      type: object
+      required: [id, owner_user_id, type, name, status, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        owner_user_id:
+          type: string
+          format: uuid
+        type:
+          $ref: '#/components/schemas/ClientType'
+        name:
+          type: string
+        email:
+          type: string
+          format: email
+          nullable: true
+        status:
+          $ref: '#/components/schemas/ClientStatus'
+        notes:
+          type: string
+          nullable: true
+        contact_info:
+          $ref: '#/components/schemas/ContactInfoDTO'
+        tags:
+          type: array
+          items:
+            type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    ClientPage:
+      type: object
+      required: [items, pagination]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ClientResponse'
+        pagination:
+          $ref: '#/components/schemas/PaginationMeta'
+
+    CreateClientRequest:
+      type: object
+      required: [name]
+      properties:
+        type:
+          $ref: '#/components/schemas/ClientType'
+        name:
+          type: string
+          maxLength: 255
+        email:
+          type: string
+          format: email
+        phone:
+          type: string
+        website:
+          type: string
+          format: uri
+        linkedin_url:
+          type: string
+          format: uri
+        address_city:
+          type: string
+        address_country:
+          type: string
+        notes:
+          type: string
+
+    UpdateClientRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        email:
+          type: string
+          format: email
+        phone:
+          type: string
+        website:
+          type: string
+          format: uri
+        linkedin_url:
+          type: string
+          format: uri
+        address_city:
+          type: string
+        address_country:
+          type: string
+        notes:
+          type: string
+        status:
+          $ref: '#/components/schemas/ClientStatus'
+
+    CommunicationLogResponse:
+      type: object
+      required: [id, client_id, channel, summary, communicated_at, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        client_id:
+          type: string
+          format: uuid
+        channel:
+          $ref: '#/components/schemas/CommChannel'
+        summary:
+          type: string
+        communicated_at:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+
+    CommunicationLogPage:
+      type: object
+      required: [items, pagination]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/CommunicationLogResponse'
+        pagination:
+          $ref: '#/components/schemas/PaginationMeta'
+
+    CreateCommunicationLogRequest:
+      type: object
+      required: [channel, summary, communicated_at]
+      properties:
+        channel:
+          $ref: '#/components/schemas/CommChannel'
+        summary:
+          type: string
+        communicated_at:
+          type: string
+          format: date-time
+
+    ClientTagResponse:
+      type: object
+      required: [id, client_id, tag, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        client_id:
+          type: string
+          format: uuid
+        tag:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+
+    AddTagRequest:
+      type: object
+      required: [tag]
+      properties:
+        tag:
+          type: string
+          maxLength: 100
+
+    # --- Deals ---
+    DealResponse:
+      type: object
+      required: [id, owner_user_id, client_id, title, stage, currency, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        owner_user_id:
+          type: string
+          format: uuid
+        client_id:
+          type: string
+          format: uuid
+        client_name:
+          type: string
+          description: Denormalized for display
+        title:
+          type: string
+        stage:
+          $ref: '#/components/schemas/DealStage'
+        source:
+          $ref: '#/components/schemas/DealSource'
+          nullable: true
+        estimated_value:
+          type: number
+          format: decimal
+          nullable: true
+        actual_value:
+          type: number
+          format: decimal
+          nullable: true
+        currency:
+          type: string
+        notes:
+          type: string
+          nullable: true
+        ai_qualification_score:
+          type: integer
+          minimum: 0
+          maximum: 100
+          nullable: true
+        ai_qualification_recommendation:
+          type: string
+          enum: [qualify, pass]
+          nullable: true
+        closed_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    DealPage:
+      type: object
+      required: [items, pagination]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/DealResponse'
+        pagination:
+          $ref: '#/components/schemas/PaginationMeta'
+
+    CreateDealRequest:
+      type: object
+      required: [client_id, title]
+      properties:
+        client_id:
+          type: string
+          format: uuid
+        title:
+          type: string
+          maxLength: 500
+        source:
+          $ref: '#/components/schemas/DealSource'
+        estimated_value:
+          type: number
+          format: decimal
+        currency:
+          type: string
+          default: VND
+        notes:
+          type: string
+
+    UpdateDealRequest:
+      type: object
+      properties:
+        title:
+          type: string
+        source:
+          $ref: '#/components/schemas/DealSource'
+        estimated_value:
+          type: number
+          format: decimal
+        actual_value:
+          type: number
+          format: decimal
+        currency:
+          type: string
+        notes:
+          type: string
+
+    StageTransitionRequest:
+      type: object
+      required: [target_stage]
+      properties:
+        target_stage:
+          $ref: '#/components/schemas/DealStage'
+        note:
+          type: string
+          description: Optional note to append to activity log
+
+    DealActivityEntryResponse:
+      type: object
+      required: [id, deal_id, entry_type, description, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        deal_id:
+          type: string
+          format: uuid
+        entry_type:
+          $ref: '#/components/schemas/DealActivityType'
+        description:
+          type: string
+        previous_stage:
+          $ref: '#/components/schemas/DealStage'
+          nullable: true
+        new_stage:
+          $ref: '#/components/schemas/DealStage'
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+
+    DealActivityPage:
+      type: object
+      required: [items, pagination]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/DealActivityEntryResponse'
+        pagination:
+          $ref: '#/components/schemas/PaginationMeta'
+
+    AddNoteRequest:
+      type: object
+      required: [description]
+      properties:
+        description:
+          type: string
+
+    # --- Proposals ---
+    ProposalPricingLineItem:
+      type: object
+      required: [description, quantity, unit_price, amount]
+      properties:
+        description:
+          type: string
+        quantity:
+          type: number
+          format: decimal
+        unit_price:
+          type: number
+          format: decimal
+        amount:
+          type: number
+          format: decimal
+
+    ProposalTimelineMilestone:
+      type: object
+      properties:
+        title:
+          type: string
+        due_date:
+          type: string
+          format: date
+
+    ProposalContentDTO:
+      type: object
+      properties:
+        title:
+          type: string
+        executive_summary:
+          type: string
+        scope_of_work:
+          type: string
+        timeline:
+          type: object
+          properties:
+            start_date:
+              type: string
+              format: date
+            end_date:
+              type: string
+              format: date
+            milestones:
+              type: array
+              items:
+                $ref: '#/components/schemas/ProposalTimelineMilestone'
+        pricing:
+          type: object
+          properties:
+            line_items:
+              type: array
+              items:
+                $ref: '#/components/schemas/ProposalPricingLineItem'
+            total:
+              type: number
+              format: decimal
+            currency:
+              type: string
+        terms:
+          type: object
+          properties:
+            payment_terms:
+              type: string
+            revision_policy:
+              type: string
+            ip_ownership:
+              type: string
+        notes:
+          type: string
+
+    ProposalResponse:
+      type: object
+      required: [id, deal_id, owner_user_id, version_number, status, content, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        deal_id:
+          type: string
+          format: uuid
+        owner_user_id:
+          type: string
+          format: uuid
+        version_number:
+          type: integer
+        status:
+          $ref: '#/components/schemas/ProposalStatus'
+        content:
+          $ref: '#/components/schemas/ProposalContentDTO'
+        share_token:
+          type: string
+          nullable: true
+        share_expires_at:
+          type: string
+          format: date-time
+          nullable: true
+        sent_at:
+          type: string
+          format: date-time
+          nullable: true
+        responded_at:
+          type: string
+          format: date-time
+          nullable: true
+        ai_generated:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    ProposalPage:
+      type: object
+      required: [items, pagination]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProposalResponse'
+        pagination:
+          $ref: '#/components/schemas/PaginationMeta'
+
+    CreateProposalRequest:
+      type: object
+      required: [deal_id]
+      properties:
+        deal_id:
+          type: string
+          format: uuid
+        content:
+          $ref: '#/components/schemas/ProposalContentDTO'
+
+    UpdateProposalRequest:
+      type: object
+      properties:
+        content:
+          $ref: '#/components/schemas/ProposalContentDTO'
+
+    ProposalRespondRequest:
+      type: object
+      required: [decision]
+      properties:
+        decision:
+          type: string
+          enum: [accepted, rejected]
+        note:
+          type: string
+
+    PublicProposalResponse:
+      type: object
+      description: Client-facing read-only proposal view (no internal IDs exposed)
+      required: [version_number, status, content]
+      properties:
+        version_number:
+          type: integer
+        status:
+          $ref: '#/components/schemas/ProposalStatus'
+        content:
+          $ref: '#/components/schemas/ProposalContentDTO'
+        sent_at:
+          type: string
+          format: date-time
+        responded_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    # --- Contracts ---
+    ContractPartiesDTO:
+      type: object
+      properties:
+        freelancer:
+          type: object
+          properties:
+            name:
+              type: string
+            email:
+              type: string
+            business_name:
+              type: string
+        client:
+          type: object
+          properties:
+            name:
+              type: string
+            email:
+              type: string
+            address:
+              type: string
+
+    ContractContentDTO:
+      type: object
+      properties:
+        parties:
+          $ref: '#/components/schemas/ContractPartiesDTO'
+        scope_of_work:
+          type: string
+        payment_terms:
+          type: string
+        revision_policy:
+          type: string
+        ip_ownership:
+          type: string
+        termination_clause:
+          type: string
+        governing_law:
+          type: string
+          default: Vietnam
+        custom_clauses:
+          type: string
+          nullable: true
+
+    ContractResponse:
+      type: object
+      required: [id, deal_id, proposal_id, client_id, owner_user_id, version_number, status, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        deal_id:
+          type: string
+          format: uuid
+        proposal_id:
+          type: string
+          format: uuid
+        client_id:
+          type: string
+          format: uuid
+        owner_user_id:
+          type: string
+          format: uuid
+        version_number:
+          type: integer
+        status:
+          $ref: '#/components/schemas/ContractStatus'
+        content:
+          $ref: '#/components/schemas/ContractContentDTO'
+        signed_by_freelancer_at:
+          type: string
+          format: date-time
+          nullable: true
+        signed_by_client_at:
+          type: string
+          format: date-time
+          nullable: true
+        effective_date:
+          type: string
+          format: date
+          nullable: true
+        end_date:
+          type: string
+          format: date
+          nullable: true
+        share_token:
+          type: string
+          nullable: true
+        parent_contract_id:
+          type: string
+          format: uuid
+          nullable: true
+        ai_generated:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    ContractPage:
+      type: object
+      required: [items, pagination]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ContractResponse'
+        pagination:
+          $ref: '#/components/schemas/PaginationMeta'
+
+    CreateContractRequest:
+      type: object
+      required: [proposal_id]
+      properties:
+        proposal_id:
+          type: string
+          format: uuid
+        content:
+          $ref: '#/components/schemas/ContractContentDTO'
+        effective_date:
+          type: string
+          format: date
+        end_date:
+          type: string
+          format: date
+
+    UpdateContractRequest:
+      type: object
+      properties:
+        content:
+          $ref: '#/components/schemas/ContractContentDTO'
+        effective_date:
+          type: string
+          format: date
+        end_date:
+          type: string
+          format: date
+
+    ContractTerminateRequest:
+      type: object
+      required: [reason]
+      properties:
+        reason:
+          type: string
+
+    PaymentMilestoneResponse:
+      type: object
+      required: [id, contract_id, description, amount, sort_order, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        contract_id:
+          type: string
+          format: uuid
+        description:
+          type: string
+        amount:
+          type: number
+          format: decimal
+        due_date:
+          type: string
+          format: date
+          nullable: true
+        invoice_id:
+          type: string
+          format: uuid
+          nullable: true
+        sort_order:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
+
+    CreatePaymentMilestoneRequest:
+      type: object
+      required: [description, amount]
+      properties:
+        description:
+          type: string
+        amount:
+          type: number
+          format: decimal
+        due_date:
+          type: string
+          format: date
+        sort_order:
+          type: integer
+
+    UpdatePaymentMilestoneRequest:
+      type: object
+      properties:
+        description:
+          type: string
+        amount:
+          type: number
+          format: decimal
+        due_date:
+          type: string
+          format: date
+        sort_order:
+          type: integer
+
+    PublicContractResponse:
+      type: object
+      required: [version_number, status, content]
+      properties:
+        version_number:
+          type: integer
+        status:
+          $ref: '#/components/schemas/ContractStatus'
+        content:
+          $ref: '#/components/schemas/ContractContentDTO'
+        effective_date:
+          type: string
+          format: date
+          nullable: true
+        end_date:
+          type: string
+          format: date
+          nullable: true
+        signed_by_freelancer_at:
+          type: string
+          format: date-time
+          nullable: true
+        signed_by_client_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    ClientSignRequest:
+      type: object
+      required: [signer_name]
+      properties:
+        signer_name:
+          type: string
+          description: Name of the client signatory
+
+    # --- Invoices ---
+    LineItemDTO:
+      type: object
+      required: [description, quantity, unit_price, amount]
+      properties:
+        description:
+          type: string
+        quantity:
+          type: number
+          format: decimal
+        unit_price:
+          type: number
+          format: decimal
+        amount:
+          type: number
+          format: decimal
+        sort_order:
+          type: integer
+
+    InvoiceResponse:
+      type: object
+      required: [id, owner_user_id, client_id, invoice_number, status, issue_date, due_date, total, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        owner_user_id:
+          type: string
+          format: uuid
+        client_id:
+          type: string
+          format: uuid
+        client_name:
+          type: string
+          description: Denormalized for display
+        contract_id:
+          type: string
+          format: uuid
+          nullable: true
+        deal_id:
+          type: string
+          format: uuid
+          nullable: true
+        invoice_number:
+          type: string
+          example: INV-2024-0042
+        status:
+          $ref: '#/components/schemas/InvoiceStatus'
+        issue_date:
+          type: string
+          format: date
+        due_date:
+          type: string
+          format: date
+        currency:
+          type: string
+        subtotal:
+          type: number
+          format: decimal
+        tax_rate:
+          type: number
+          format: decimal
+        tax_amount:
+          type: number
+          format: decimal
+        total:
+          type: number
+          format: decimal
+        amount_paid:
+          type: number
+          format: decimal
+        amount_outstanding:
+          type: number
+          format: decimal
+          description: Computed field = total - amount_paid
+        notes:
+          type: string
+          nullable: true
+        line_items:
+          type: array
+          items:
+            $ref: '#/components/schemas/LineItemDTO'
+        sent_at:
+          type: string
+          format: date-time
+          nullable: true
+        voided_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    InvoicePage:
+      type: object
+      required: [items, pagination]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/InvoiceResponse'
+        pagination:
+          $ref: '#/components/schemas/PaginationMeta'
+
+    CreateInvoiceRequest:
+      type: object
+      required: [client_id, issue_date, due_date, line_items]
+      properties:
+        client_id:
+          type: string
+          format: uuid
+        contract_id:
+          type: string
+          format: uuid
+        deal_id:
+          type: string
+          format: uuid
+        issue_date:
+          type: string
+          format: date
+        due_date:
+          type: string
+          format: date
+        currency:
+          type: string
+          default: VND
+        tax_rate:
+          type: number
+          format: decimal
+          default: 0
+        notes:
+          type: string
+        line_items:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            required: [description, quantity, unit_price]
+            properties:
+              description:
+                type: string
+              quantity:
+                type: number
+                format: decimal
+              unit_price:
+                type: number
+                format: decimal
+              sort_order:
+                type: integer
+
+    UpdateInvoiceRequest:
+      type: object
+      properties:
+        due_date:
+          type: string
+          format: date
+        tax_rate:
+          type: number
+          format: decimal
+        notes:
+          type: string
+        line_items:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            properties:
+              description:
+                type: string
+              quantity:
+                type: number
+              unit_price:
+                type: number
+              sort_order:
+                type: integer
+
+    PaymentRecordResponse:
+      type: object
+      required: [id, invoice_id, amount, payment_date, payment_method, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        invoice_id:
+          type: string
+          format: uuid
+        amount:
+          type: number
+          format: decimal
+        payment_date:
+          type: string
+          format: date
+        payment_method:
+          $ref: '#/components/schemas/PaymentMethod'
+        reference_note:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+
+    RecordPaymentRequest:
+      type: object
+      required: [amount, payment_date]
+      properties:
+        amount:
+          type: number
+          format: decimal
+        payment_date:
+          type: string
+          format: date
+        payment_method:
+          $ref: '#/components/schemas/PaymentMethod'
+        reference_note:
+          type: string
+
+    # --- Payments ---
+    PaymentMethodConfigResponse:
+      type: object
+      required: [provider, method, is_enabled]
+      properties:
+        provider:
+          $ref: '#/components/schemas/PaymentProvider'
+        method:
+          $ref: '#/components/schemas/PaymentMethod'
+        is_enabled:
+          type: boolean
+        display_name:
+          type: string
+          example: MoMo Wallet
+        account_label:
+          type: string
+          nullable: true
+          description: Masked wallet phone number, bank account label, or provider merchant name.
+        supported_currencies:
+          type: array
+          items:
+            type: string
+          example: [VND]
+        min_amount:
+          type: number
+          format: decimal
+          nullable: true
+        max_amount:
+          type: number
+          format: decimal
+          nullable: true
+
+    CreatePaymentLinkRequest:
+      type: object
+      required: [provider]
+      properties:
+        provider:
+          $ref: '#/components/schemas/PaymentProvider'
+        amount:
+          type: number
+          format: decimal
+          description: Optional partial payment amount. Defaults to the invoice outstanding amount.
+        currency:
+          type: string
+          default: VND
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+        return_url:
+          type: string
+          format: uri
+          nullable: true
+        client_message:
+          type: string
+          nullable: true
+          description: Optional reminder message shown beside the payment instructions.
+
+    PaymentLinkResponse:
+      type: object
+      required: [type]
+      properties:
+        type:
+          $ref: '#/components/schemas/PaymentLinkType'
+        url:
+          type: string
+          format: uri
+          nullable: true
+        qr_code_url:
+          type: string
+          format: uri
+          nullable: true
+        instructions:
+          type: string
+          nullable: true
+          description: Human-readable bank transfer or wallet payment instructions.
+
+    PaymentIntentResponse:
+      type: object
+      required: [id, invoice_id, provider, status, amount, currency, payment_link, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        invoice_id:
+          type: string
+          format: uuid
+        provider:
+          $ref: '#/components/schemas/PaymentProvider'
+        status:
+          $ref: '#/components/schemas/PaymentIntentStatus'
+        amount:
+          type: number
+          format: decimal
+        currency:
+          type: string
+          example: VND
+        payment_link:
+          $ref: '#/components/schemas/PaymentLinkResponse'
+        provider_reference:
+          type: string
+          nullable: true
+        paid_at:
+          type: string
+          format: date-time
+          nullable: true
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+        failure_reason:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    PaymentWebhookRequest:
+      type: object
+      required: [event_id, event_type, payload]
+      properties:
+        event_id:
+          type: string
+          description: Provider event ID used for idempotent webhook processing.
+        event_type:
+          type: string
+          example: payment.succeeded
+        signature:
+          type: string
+          nullable: true
+          description: Provider-supplied signature header or body field, if applicable.
+        payload:
+          type: object
+          additionalProperties: true
+          description: Raw provider payload retained for asynchronous verification.
+
+    PaymentWebhookAcceptedResponse:
+      type: object
+      required: [accepted, event_id]
+      properties:
+        accepted:
+          type: boolean
+          example: true
+        event_id:
+          type: string
+
+    PublicPaymentOptionsResponse:
+      type: object
+      required: [invoice_number, amount_outstanding, currency, options]
+      properties:
+        invoice_number:
+          type: string
+        amount_outstanding:
+          type: number
+          format: decimal
+        currency:
+          type: string
+          example: VND
+        options:
+          type: array
+          items:
+            $ref: '#/components/schemas/PaymentIntentResponse'
+
+    PublicInvoiceResponse:
+      type: object
+      required: [invoice_number, status, issue_date, due_date, total]
+      properties:
+        invoice_number:
+          type: string
+        status:
+          $ref: '#/components/schemas/InvoiceStatus'
+        issue_date:
+          type: string
+          format: date
+        due_date:
+          type: string
+          format: date
+        currency:
+          type: string
+        subtotal:
+          type: number
+          format: decimal
+        tax_rate:
+          type: number
+          format: decimal
+        tax_amount:
+          type: number
+          format: decimal
+        total:
+          type: number
+          format: decimal
+        amount_paid:
+          type: number
+          format: decimal
+        line_items:
+          type: array
+          items:
+            $ref: '#/components/schemas/LineItemDTO'
+        notes:
+          type: string
+          nullable: true
+
+    # --- Reminders ---
+    ReminderResponse:
+      type: object
+      required: [id, owner_user_id, target_type, target_id, reminder_type, channel, status, scheduled_at, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        owner_user_id:
+          type: string
+          format: uuid
+        target_type:
+          $ref: '#/components/schemas/ReminderTargetType'
+        target_id:
+          type: string
+          format: uuid
+        reminder_type:
+          $ref: '#/components/schemas/ReminderType'
+        channel:
+          $ref: '#/components/schemas/NotificationChannel'
+        status:
+          $ref: '#/components/schemas/ReminderStatus'
+        scheduled_at:
+          type: string
+          format: date-time
+        message_preview:
+          type: string
+          nullable: true
+        recurrence_rule:
+          type: string
+          nullable: true
+          description: RRULE string (RFC 5545)
+        parent_reminder_id:
+          type: string
+          format: uuid
+          nullable: true
+        retry_count:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    ReminderPage:
+      type: object
+      required: [items, pagination]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReminderResponse'
+        pagination:
+          $ref: '#/components/schemas/PaginationMeta'
+
+    CreateReminderRequest:
+      type: object
+      required: [target_type, target_id, reminder_type, channel, scheduled_at]
+      properties:
+        target_type:
+          $ref: '#/components/schemas/ReminderTargetType'
+        target_id:
+          type: string
+          format: uuid
+        reminder_type:
+          $ref: '#/components/schemas/ReminderType'
+        channel:
+          $ref: '#/components/schemas/NotificationChannel'
+        scheduled_at:
+          type: string
+          format: date-time
+          description: Must be in the future
+        message_preview:
+          type: string
+        recurrence_rule:
+          type: string
+          description: Optional RRULE string for recurring reminders
+
+    UpdateReminderRequest:
+      type: object
+      properties:
+        scheduled_at:
+          type: string
+          format: date-time
+        message_preview:
+          type: string
+        channel:
+          $ref: '#/components/schemas/NotificationChannel'
+
+    # --- Analytics ---
+    DashboardSummaryResponse:
+      type: object
+      required: [active_deal_count, total_pipeline_value, monthly_revenue_collected, overdue_invoice_count, win_rate, currency]
+      properties:
+        active_deal_count:
+          type: integer
+        total_pipeline_value:
+          type: number
+          format: decimal
+        monthly_revenue_collected:
+          type: number
+          format: decimal
+        overdue_invoice_count:
+          type: integer
+        win_rate:
+          type: number
+          format: decimal
+          description: Ratio 0.0–1.0
+        currency:
+          type: string
+        computed_at:
+          type: string
+          format: date-time
+
+    RevenueMetricsResponse:
+      type: object
+      required: [period_type, period_start, period_end]
+      properties:
+        period_type:
+          $ref: '#/components/schemas/PeriodType'
+        period_start:
+          type: string
+          format: date
+        period_end:
+          type: string
+          format: date
+        total_invoiced:
+          type: number
+          format: decimal
+        total_collected:
+          type: number
+          format: decimal
+        total_outstanding:
+          type: number
+          format: decimal
+        total_overdue:
+          type: number
+          format: decimal
+        currency:
+          type: string
+
+    PipelineStageMetric:
+      type: object
+      required: [stage, deal_count, total_value]
+      properties:
+        stage:
+          $ref: '#/components/schemas/DealStage'
+        deal_count:
+          type: integer
+        total_value:
+          type: number
+          format: decimal
+
+    PipelineMetricsResponse:
+      type: object
+      required: [stages, snapshot_date, currency]
+      properties:
+        stages:
+          type: array
+          items:
+            $ref: '#/components/schemas/PipelineStageMetric'
+        snapshot_date:
+          type: string
+          format: date
+        currency:
+          type: string
+
+    WinRateResponse:
+      type: object
+      required: [win_rate, deals_won, deals_lost, total_closed]
+      properties:
+        win_rate:
+          type: number
+          format: decimal
+          description: Ratio 0.0–1.0
+        deals_won:
+          type: integer
+        deals_lost:
+          type: integer
+        total_closed:
+          type: integer
+        funnel_conversion:
+          type: array
+          items:
+            type: object
+            properties:
+              from_stage:
+                $ref: '#/components/schemas/DealStage'
+              to_stage:
+                $ref: '#/components/schemas/DealStage'
+              conversion_rate:
+                type: number
+                format: decimal
+        period_start:
+          type: string
+          format: date
+          nullable: true
+        period_end:
+          type: string
+          format: date
+          nullable: true
+
+    TopClientEntry:
+      type: object
+      required: [client_id, client_name, total_invoiced, total_collected]
+      properties:
+        client_id:
+          type: string
+          format: uuid
+        client_name:
+          type: string
+        total_invoiced:
+          type: number
+          format: decimal
+        total_collected:
+          type: number
+          format: decimal
+        deal_count:
+          type: integer
+
+    TopClientsResponse:
+      type: object
+      required: [clients, currency]
+      properties:
+        clients:
+          type: array
+          items:
+            $ref: '#/components/schemas/TopClientEntry'
+        currency:
+          type: string
+
+    AIUsageMetricsResponse:
+      type: object
+      required: [proposals_generated, contracts_generated, leads_qualified, followups_generated, total_generations]
+      properties:
+        proposals_generated:
+          type: integer
+        contracts_generated:
+          type: integer
+        leads_qualified:
+          type: integer
+        followups_generated:
+          type: integer
+        total_generations:
+          type: integer
+        period_start:
+          type: string
+          format: date
+          nullable: true
+        period_end:
+          type: string
+          format: date
+          nullable: true
+
+    # --- AI ---
+    LeadQualificationRequest:
+      type: object
+      required: [deal_id]
+      properties:
+        deal_id:
+          type: string
+          format: uuid
+        additional_context:
+          type: string
+          description: Optional freeform context to help the AI
+
+    LeadQualificationResponse:
+      type: object
+      required: [deal_id, score, recommendation, reasoning]
+      properties:
+        deal_id:
+          type: string
+          format: uuid
+        score:
+          type: integer
+          minimum: 0
+          maximum: 100
+        recommendation:
+          type: string
+          enum: [qualify, pass]
+        reasoning:
+          type: string
+        generation_id:
+          type: string
+          format: uuid
+
+    ProposalGenerationRequest:
+      type: object
+      required: [deal_id]
+      properties:
+        deal_id:
+          type: string
+          format: uuid
+        template_id:
+          type: string
+          format: uuid
+          description: Optional system template to use as base
+        language:
+          type: string
+          enum: [vi, en]
+          default: vi
+
+    ProposalGenerationResponse:
+      type: object
+      required: [proposal_id, content, generation_id]
+      properties:
+        proposal_id:
+          type: string
+          format: uuid
+          description: The proposal record that was updated with the draft content
+        content:
+          $ref: '#/components/schemas/ProposalContentDTO'
+        generation_id:
+          type: string
+          format: uuid
+
+    ContractGenerationRequest:
+      type: object
+      required: [contract_id]
+      properties:
+        contract_id:
+          type: string
+          format: uuid
+        template_id:
+          type: string
+          format: uuid
+          nullable: true
+        language:
+          type: string
+          enum: [vi, en]
+          default: vi
+
+    ContractGenerationResponse:
+      type: object
+      required: [contract_id, content, generation_id]
+      properties:
+        contract_id:
+          type: string
+          format: uuid
+        content:
+          $ref: '#/components/schemas/ContractContentDTO'
+        generation_id:
+          type: string
+          format: uuid
+
+    FollowUpGenerationRequest:
+      type: object
+      required: [reminder_type, target_type, target_id]
+      properties:
+        reminder_type:
+          $ref: '#/components/schemas/ReminderType'
+        target_type:
+          $ref: '#/components/schemas/ReminderTargetType'
+        target_id:
+          type: string
+          format: uuid
+        language:
+          type: string
+          enum: [vi, en]
+          default: vi
+
+    FollowUpGenerationResponse:
+      type: object
+      required: [message_text, generation_id]
+      properties:
+        message_text:
+          type: string
+          description: AI-drafted follow-up message (treat as draft; user should review)
+        generation_id:
+          type: string
+          format: uuid
+
+    # --- Admin ---
+    AdminUserResponse:
+      allOf:
+        - $ref: '#/components/schemas/UserResponse'
+        - type: object
+          properties:
+            subscription:
+              $ref: '#/components/schemas/SubscriptionResponse'
+            deleted_at:
+              type: string
+              format: date-time
+              nullable: true
+
+    AdminUserPage:
+      type: object
+      required: [items, pagination]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/AdminUserResponse'
+        pagination:
+          $ref: '#/components/schemas/PaginationMeta'
+
+    AdminUpdateUserRequest:
+      type: object
+      properties:
+        role:
+          $ref: '#/components/schemas/UserRole'
+        status:
+          $ref: '#/components/schemas/UserStatus'
+
+    AdminSubscriptionPage:
+      type: object
+      required: [items, pagination]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/SubscriptionResponse'
+        pagination:
+          $ref: '#/components/schemas/PaginationMeta'
+
+    AdminSubscriptionOverrideRequest:
+      type: object
+      properties:
+        plan_id:
+          type: string
+          format: uuid
+          description: Override the user's plan
+        status:
+          $ref: '#/components/schemas/SubscriptionStatus'
+          description: Override the subscription status
+        override_expires_at:
+          type: string
+          format: date-time
+          description: When the override expires (returns to normal plan)
+
+    AdminCreatePlanRequest:
+      type: object
+      required: [name, slug, price_monthly, currency]
+      properties:
+        name:
+          type: string
+        slug:
+          type: string
+        price_monthly:
+          type: number
+          format: decimal
+        currency:
+          type: string
+        max_ai_generations_per_month:
+          type: integer
+          default: 0
+        can_use_ai:
+          type: boolean
+          default: false
+        can_export_pdf:
+          type: boolean
+          default: false
+        max_clients:
+          type: integer
+          nullable: true
+        max_deals:
+          type: integer
+          nullable: true
+
+    AdminUpdatePlanRequest:
+      type: object
+      properties:
+        max_ai_generations_per_month:
+          type: integer
+        can_use_ai:
+          type: boolean
+        can_export_pdf:
+          type: boolean
+        max_clients:
+          type: integer
+          nullable: true
+        max_deals:
+          type: integer
+          nullable: true
+        is_active:
+          type: boolean
+
+    AICostRecordResponse:
+      type: object
+      required: [id, user_id, ai_module, model_used, input_tokens, output_tokens, estimated_cost_usd, status, occurred_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        ai_module:
+          $ref: '#/components/schemas/AIModuleType'
+        model_used:
+          type: string
+        input_tokens:
+          type: integer
+        output_tokens:
+          type: integer
+        estimated_cost_usd:
+          type: number
+          format: decimal
+        status:
+          type: string
+          enum: [pending, completed, failed]
+        occurred_at:
+          type: string
+          format: date-time
+
+    AICostPage:
+      type: object
+      required: [items, pagination, totals]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/AICostRecordResponse'
+        pagination:
+          $ref: '#/components/schemas/PaginationMeta'
+        totals:
+          type: object
+          properties:
+            total_input_tokens:
+              type: integer
+            total_output_tokens:
+              type: integer
+            total_estimated_cost_usd:
+              type: number
+              format: decimal
+
+    AuditLogEntryResponse:
+      type: object
+      required: [id, event_type, description, occurred_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        event_type:
+          type: string
+          example: auth.user_logged_in
+        actor_user_id:
+          type: string
+          format: uuid
+          nullable: true
+        actor_email:
+          type: string
+          nullable: true
+        target_type:
+          type: string
+          nullable: true
+        target_id:
+          type: string
+          format: uuid
+          nullable: true
+        description:
+          type: string
+        ip_address:
+          type: string
+          nullable: true
+        metadata:
+          type: object
+          nullable: true
+        occurred_at:
+          type: string
+          format: date-time
+
+    AuditLogPage:
+      type: object
+      required: [items, pagination]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/AuditLogEntryResponse'
+        pagination:
+          $ref: '#/components/schemas/PaginationMeta'
+
+    SystemTemplateResponse:
+      type: object
+      required: [id, template_type, name, version_number, is_active, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        template_type:
+          $ref: '#/components/schemas/TemplateType'
+        name:
+          type: string
+        content:
+          type: object
+          description: Template body (structure matches ProposalContentDTO or ContractContentDTO)
+        plan_tier_required:
+          type: string
+          nullable: true
+        version_number:
+          type: integer
+        is_active:
+          type: boolean
+        parent_template_id:
+          type: string
+          format: uuid
+          nullable: true
+        created_by_admin_id:
+          type: string
+          format: uuid
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    CreateSystemTemplateRequest:
+      type: object
+      required: [template_type, name, content]
+      properties:
+        template_type:
+          $ref: '#/components/schemas/TemplateType'
+        name:
+          type: string
+        content:
+          type: object
+        plan_tier_required:
+          type: string
+          nullable: true
+
+    UpdateSystemTemplateRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        content:
+          type: object
+        is_active:
+          type: boolean
+        plan_tier_required:
+          type: string
+          nullable: true
+
+    FeatureFlagResponse:
+      type: object
+      required: [id, flag_name, is_enabled, rollout_percentage]
+      properties:
+        id:
+          type: string
+          format: uuid
+        flag_name:
+          type: string
+        is_enabled:
+          type: boolean
+        rollout_percentage:
+          type: integer
+          minimum: 0
+          maximum: 100
+        target_user_ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+          nullable: true
+        description:
+          type: string
+          nullable: true
+        updated_at:
+          type: string
+          format: date-time
+
+    UpdateFeatureFlagRequest:
+      type: object
+      properties:
+        is_enabled:
+          type: boolean
+        rollout_percentage:
+          type: integer
+          minimum: 0
+          maximum: 100
+        target_user_ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+        description:
+          type: string
+
+    PlatformMetricsResponse:
+      type: object
+      required: [computed_at]
+      properties:
+        registered_user_count:
+          type: integer
+        active_subscription_count:
+          type: integer
+        plan_distribution:
+          type: array
+          items:
+            type: object
+            properties:
+              plan_slug:
+                type: string
+              count:
+                type: integer
+        deals_created_last_30d:
+          type: integer
+        proposals_generated_last_30d:
+          type: integer
+        ai_calls_last_30d:
+          type: integer
+        estimated_ai_cost_usd_last_30d:
+          type: number
+          format: decimal
+        computed_at:
+          type: string
+          format: date-time
