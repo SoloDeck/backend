@@ -1,0 +1,1 @@
+"""ucontracts domain entities — skeleton."""

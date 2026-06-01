@@ -1,0 +1,1 @@
+"""usubscriptions domain entities — skeleton."""

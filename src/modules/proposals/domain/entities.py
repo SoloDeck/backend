@@ -1,0 +1,1 @@
+"""uproposals domain entities — skeleton."""

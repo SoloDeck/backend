@@ -1,0 +1,1 @@
+"""uanalytics domain entities — skeleton."""

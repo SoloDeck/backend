@@ -1,0 +1,1 @@
+"""uadmin domain entities — skeleton."""
