@@ -39,18 +39,19 @@ services:
       retries: 10
 
   # -------------------------------------------------------------------------
-  # FastAPI app
+  # Migrate + seed (one-shot).
+  # Runs alembic upgrade head then seeds default data.
+  # api and worker wait for this to complete successfully.
+  # Idempotent — safe to run on every `docker compose up`.
   # -------------------------------------------------------------------------
-  # -------------------------------------------------------------------------
-  # Bootstrap (one-shot: migrate + seed, then exits)
-  # -------------------------------------------------------------------------
-  bootstrap:
+  migrate:
     build:
       context: .
       target: runtime
-    env_file: .env
+    restart: "no"
     environment:
       DATABASE_URL: postgresql+asyncpg://solodesk:solodesk@db:5432/solodesk
+      APP_ENV: development
     depends_on:
       db:
         condition: service_healthy
@@ -59,15 +60,18 @@ services:
       - ./alembic:/app/alembic
       - ./scripts:/app/scripts
     command: python scripts/bootstrap.py
-    profiles:
-      - tools
 
+  # -------------------------------------------------------------------------
+  # FastAPI app
+  # -------------------------------------------------------------------------
   api:
     build:
       context: .
       target: runtime
     restart: unless-stopped
-    env_file: .env
+    env_file:
+      - path: .env
+        required: false
     environment:
       DATABASE_URL: postgresql+asyncpg://solodesk:solodesk@db:5432/solodesk
       REDIS_URL: redis://redis:6379/0
@@ -80,8 +84,10 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     volumes:
-      - ./src:/app/src          # hot-reload in dev
+      - ./src:/app/src
       - ./contracts:/app/contracts:ro
       - ./alembic:/app/alembic
       - ./scripts:/app/scripts
@@ -99,7 +105,9 @@ services:
       context: .
       target: worker
     restart: unless-stopped
-    env_file: .env
+    env_file:
+      - path: .env
+        required: false
     environment:
       DATABASE_URL: postgresql+asyncpg://solodesk:solodesk@db:5432/solodesk
       REDIS_URL: redis://redis:6379/0
@@ -110,6 +118,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     volumes:
       - ./src:/app/src
       - ./contracts:/app/contracts:ro
@@ -122,7 +132,9 @@ services:
       context: .
       target: beat
     restart: unless-stopped
-    env_file: .env
+    env_file:
+      - path: .env
+        required: false
     environment:
       DATABASE_URL: postgresql+asyncpg://solodesk:solodesk@db:5432/solodesk
       CELERY_BROKER_URL: redis://redis:6379/1
@@ -145,6 +157,8 @@ services:
 
   # -------------------------------------------------------------------------
   # pgAdmin — local PostgreSQL web UI
+  # http://localhost:5050  login: admin@solodesk.dev / admin
+  # Add server: host=db, port=5432, db=solodesk, user/pass=solodesk
   # -------------------------------------------------------------------------
   pgadmin:
     image: dpage/pgadmin4:latest
