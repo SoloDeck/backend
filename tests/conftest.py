@@ -13,6 +13,7 @@ import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+import src.infrastructure.database.models  # noqa: F401 — registers all ORM models with Base
 from src.infrastructure.database.base import Base
 from src.infrastructure.database.session import get_db_session
 from src.main import app

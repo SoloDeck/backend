@@ -42,6 +42,4 @@ Thumbs.db
 # Docker volumes
 postgres_data/
 
-# Alembic
-alembic/versions/*.py
-!alembic/versions/.gitkeep
+# Alembic — migrations are intentionally tracked in version control

@@ -1,4 +1,4 @@
-.PHONY: help install dev up down logs migrate revision test lint fmt typecheck clean
+.PHONY: help install dev up down logs migrate revision seed bootstrap reset-db test lint fmt typecheck clean
 
 # ---------------------------------------------------------------------------
 # Help
@@ -45,6 +45,15 @@ downgrade: ## Rollback one migration
 
 db-shell: ## Open psql shell
 	docker compose exec db psql -U solodesk -d solodesk
+
+seed: ## Run all seeders (idempotent — safe to call repeatedly)
+	python scripts/seed.py
+
+bootstrap: ## Run migrations then seed (idempotent — safe on every deploy)
+	python scripts/bootstrap.py
+
+reset-db: ## DROP all tables, re-migrate, re-seed (dev/CI only — destructive)
+	python scripts/reset_db.py
 
 # ---------------------------------------------------------------------------
 # Development
