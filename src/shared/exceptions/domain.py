@@ -31,6 +31,10 @@ class AlreadyExistsError(DomainError):
 # ---------------------------------------------------------------------------
 
 
+class AuthenticationError(DomainError):
+    """Invalid credentials or unauthenticated request."""
+
+
 class ForbiddenError(DomainError):
     """Authenticated user is not permitted to perform this action."""
 

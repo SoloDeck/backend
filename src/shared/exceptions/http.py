@@ -6,6 +6,7 @@ from fastapi.responses import JSONResponse
 from src.shared.exceptions.domain import (
     AIGenerationError,
     AlreadyExistsError,
+    AuthenticationError,
     BusinessRuleError,
     DomainError,
     EntitlementError,
@@ -21,6 +22,10 @@ def _error(code: str, message: str, **extra: object) -> dict:  # type: ignore[mi
 
 
 def setup_exception_handlers(app: FastAPI) -> None:
+    @app.exception_handler(AuthenticationError)
+    async def authentication(_: Request, exc: AuthenticationError) -> JSONResponse:
+        return JSONResponse(status_code=401, content=_error("UNAUTHORIZED", exc.message))
+
     @app.exception_handler(NotFoundError)
     async def not_found(_: Request, exc: NotFoundError) -> JSONResponse:
         return JSONResponse(status_code=404, content=_error("NOT_FOUND", exc.message))
