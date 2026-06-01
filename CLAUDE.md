@@ -222,31 +222,64 @@ Rules:
 - Import the `EventBus` singleton directly in services: `from src.shared.events.bus import event_bus`.
 - Password hashing: always use `src/shared/security/passwords.py` — `hash_password()` / `verify_password()`.
 
+### Response Envelope
+
+**Every endpoint must return the standard envelope. Never return raw objects, raw lists, or ad-hoc dicts.**
+
+```python
+from src.shared.responses import ApiResponse, PaginatedResponse
+
+# Single resource — 200
+return ApiResponse.ok(DealResponse.model_validate(deal))
+
+# Created — 201
+return ApiResponse.created(DealResponse.model_validate(deal))
+
+# Collection with pagination
+return PaginatedResponse.ok(items, total=total, page=page, page_size=page_size)
+```
+
+Error responses are handled automatically by `setup_exception_handlers` in `shared/exceptions/http.py`.
+Raise domain exceptions in services; the handler wraps them in `ApiError`.
+
+**Forbidden:**
+```python
+return deal                        # raw ORM model
+return items                       # raw list
+return {"message": "ok"}           # ad-hoc dict
+raise HTTPException(404, ...)      # use NotFoundError instead
+```
+
+**Required error codes** (`src/shared/responses/error.py` → `ErrorCode`):
+`VALIDATION_FAILED` · `UNAUTHORIZED` · `FORBIDDEN` · `NOT_FOUND` · `CONFLICT` ·
+`BUSINESS_RULE_VIOLATION` · `SUBSCRIPTION_REQUIRED` · `AI_QUOTA_EXCEEDED` · `INTERNAL_SERVER_ERROR`
+
 ### Routers (`api/router.py`)
 - Parse and validate HTTP input only.
 - Call one application service method per endpoint.
-- Return HTTP responses — no domain logic.
+- Return `ApiResponse[T]` or `PaginatedResponse[T]` — no domain logic.
 - Use `CurrentUser`, `CurrentUserId`, `AdminUser` from `src/shared/dependencies/auth.py`.
 - Use `DBSession` from `src/shared/dependencies/db.py`.
 
 ```python
 # CORRECT
-@router.post("/{deal_id}/stage-transition", response_model=DealResponse)
+@router.post("/{deal_id}/stage-transition", response_model=ApiResponse[DealResponse])
 async def transition_stage(
     deal_id: uuid.UUID,
     body: StageTransitionRequest,
     user_id: CurrentUserId,
     db: DBSession,
-) -> DealResponse:
+) -> ApiResponse[DealResponse]:
     service = DealsService(db=db)
     deal = await service.transition_stage(deal_id, body.target_stage, user_id)
-    return DealResponse.model_validate(deal)
+    return ApiResponse.ok(DealResponse.model_validate(deal))
 
-# WRONG — business logic in router
+# WRONG — raw return and business logic in router
 @router.post("/{deal_id}/stage-transition")
 async def transition_stage(...):
     if deal.stage == "lost":
-        raise HTTPException(...)  # ← this belongs in the service
+        raise HTTPException(...)  # ← use InvalidStateTransitionError in the service
+    return deal                   # ← wrap in ApiResponse.ok(...)
 ```
 
 ### Services (`application/service.py`)
@@ -573,6 +606,9 @@ For each module, complete this checklist before moving on:
 
 | Mistake | Correct Approach |
 |---|---|
+| Returning raw entity or list from a router | Wrap in `ApiResponse.ok(...)` or `PaginatedResponse.ok(...)`. |
+| Returning ad-hoc dict `{"message": "ok"}` | Use `ApiResponse.ok(...)` with a typed response schema. |
+| `raise HTTPException(...)` anywhere | Raise a domain exception — `setup_exception_handlers` converts it to `ApiError`. |
 | Implementing a feature without tests | Unit-test every service method; integration-test every endpoint. Same task, not later. |
 | Raising `HTTPException` inside a service | Raise domain exceptions (`NotFoundError`, `BusinessRuleError`). `shared/exceptions/http.py` translates them. |
 | Putting `if/else` business logic in a router | Move to `application/service.py`. |
@@ -635,6 +671,9 @@ For each module, complete this checklist before moving on:
 | `src/shared/dependencies/auth.py` | `CurrentUser`, `AdminUser`, `CurrentUserId` |
 | `src/shared/dependencies/db.py` | `DBSession` annotated type |
 | `src/shared/security/passwords.py` | `hash_password()`, `verify_password()` — Argon2id via pwdlib |
+| `src/shared/responses/response.py` | `ApiResponse[T]`, `PaginatedResponse[T]`, `ErrorResponse` |
+| `src/shared/responses/error.py` | `ApiError`, `ValidationErrorDetail`, `ErrorCode` enum |
+| `src/shared/responses/pagination.py` | `PaginationMetadata` |
 | `src/ai/facade.py` | `AIFacade` — only AI entry point for business modules |
 | `src/ai/shared/base.py` | `BaseAIChain` with retry + logging |
 | `alembic/env.py` | Async Alembic env — import models here |

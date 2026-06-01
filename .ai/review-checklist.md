@@ -4,6 +4,36 @@ Use this checklist before submitting any PR or considering a feature complete.
 
 ---
 
+## Response Envelope Compliance
+
+- [ ] Every endpoint returns `ApiResponse[T]` (single resource) or `PaginatedResponse[T]` (collection)
+- [ ] No router returns a raw ORM model, raw list, or ad-hoc dict
+- [ ] All error responses use the `ApiError` envelope (enforced by `setup_exception_handlers`)
+- [ ] Error `code` field uses a value from `ErrorCode` enum — no free-form strings
+- [ ] `VALIDATION_FAILED` errors include a populated `details` array with `field` + `message` per violation
+- [ ] No `HTTPException` raised anywhere — domain exceptions only
+- [ ] Integration tests assert envelope shape: `resp.json()["success"]`, `resp.json()["data"]`, `resp.json()["error"]["code"]`
+
+---
+
+## Pagination Compliance
+
+- [ ] All list endpoints return `PaginatedResponse[T]`
+- [ ] Response includes `pagination.total`, `pagination.page`, `pagination.page_size`, `pagination.total_pages`
+- [ ] Query params `page` and `page_size` are accepted and forwarded to the service
+- [ ] Empty results return `data: []` with `pagination.total: 0`, not a 404
+
+---
+
+## OpenAPI Compliance
+
+- [ ] Endpoint response type uses `$ref: '#/components/schemas/ApiResponseBase'` (or module-specific allOf)
+- [ ] Error responses reference `$ref: '#/components/schemas/ApiError'`
+- [ ] New reusable schemas added under `components/schemas/`
+- [ ] No inline response object definitions — always use `$ref`
+
+---
+
 ## Domain Validation
 
 - [ ] Domain entity correctly models the aggregate root and its invariants
@@ -73,6 +103,10 @@ Any of the following is an immediate rejection:
 
 | Issue | Reason |
 |-------|--------|
+| Router returns raw entity, list, or ad-hoc dict | Response envelope violation |
+| `HTTPException` raised anywhere in codebase | Architecture violation — use domain exceptions |
+| Error `code` not from `ErrorCode` enum | Response standard violation |
+| List endpoint missing `pagination` object | Pagination compliance failure |
 | Missing `WHERE owner_user_id` filter | Multi-tenant data leak |
 | Missing `WHERE deleted_at IS NULL` | Exposes soft-deleted records |
 | `HTTPException` in service | Architecture violation |
@@ -82,3 +116,4 @@ Any of the following is an immediate rejection:
 | `deal_id` or `client_id` mutated after creation | Immutability violation |
 | No unit test for new service method | Definition of Done not met |
 | OpenAPI not updated | Definition of Done not met |
+| Integration test doesn't assert envelope shape | Test quality failure |

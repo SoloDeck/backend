@@ -2577,45 +2577,57 @@ components:
         format: uuid
 
   # -------------------------------------------------------------------------
-  # Reusable Responses
+  # Reusable Responses — all use the standard ApiError envelope
   # -------------------------------------------------------------------------
   responses:
     BadRequest:
-      description: Validation error
+      description: Validation error (VALIDATION_FAILED)
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/ValidationErrorResponse'
+            $ref: '#/components/schemas/ApiError'
     Unauthorized:
-      description: Missing or invalid authentication token
+      description: Missing or invalid authentication token (UNAUTHORIZED)
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/ErrorResponse'
+            $ref: '#/components/schemas/ApiError'
     Forbidden:
-      description: Authenticated but not authorized for this action
+      description: Authenticated but not authorized for this action (FORBIDDEN)
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/ErrorResponse'
+            $ref: '#/components/schemas/ApiError'
     NotFound:
-      description: Resource not found
+      description: Resource not found (NOT_FOUND)
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/ErrorResponse'
+            $ref: '#/components/schemas/ApiError'
+    Conflict:
+      description: Conflict — duplicate resource or invalid state transition (CONFLICT)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
     PaymentRequired:
-      description: Subscription does not include this feature or usage limit reached
+      description: Subscription does not include this feature (SUBSCRIPTION_REQUIRED)
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/EntitlementErrorResponse'
+            $ref: '#/components/schemas/ApiError'
     TooManyRequests:
       description: Rate limit exceeded
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/ErrorResponse'
+            $ref: '#/components/schemas/ApiError'
+    InternalServerError:
+      description: Unexpected server error (INTERNAL_SERVER_ERROR)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
 
   # -------------------------------------------------------------------------
   # Schemas
@@ -2719,79 +2731,142 @@ components:
       type: string
       enum: [monthly, quarterly, yearly]
 
-    # --- Error Schemas ---
-    ErrorResponse:
+    # ---------------------------------------------------------------------------
+    # Standard Response Envelope
+    # ---------------------------------------------------------------------------
+
+    # Single-resource success response
+    # Usage: ApiResponse with data being any domain schema (e.g. ApiResponse_DealResponse)
+    ApiResponseBase:
       type: object
-      required: [error, message]
+      required: [success, code, timestamp, data]
       properties:
-        error:
+        success:
+          type: boolean
+          example: true
+        code:
+          type: integer
+          example: 200
+        timestamp:
           type: string
-          description: Machine-readable error code (e.g. NOT_FOUND, UNAUTHORIZED)
-          example: NOT_FOUND
+          format: date-time
+          example: "2026-06-01T12:00:00Z"
+        data:
+          description: Response payload (any object or array)
+
+    # Collection success response
+    PaginatedResponse:
+      type: object
+      required: [success, code, timestamp, data, pagination]
+      properties:
+        success:
+          type: boolean
+          example: true
+        code:
+          type: integer
+          example: 200
+        timestamp:
+          type: string
+          format: date-time
+        data:
+          type: array
+          items: {}
+          description: Array of resource objects
+        pagination:
+          $ref: '#/components/schemas/PaginationMetadata'
+
+    # Error envelope — wraps all 4xx and 5xx responses
+    ApiError:
+      type: object
+      required: [success, code, timestamp, error]
+      properties:
+        success:
+          type: boolean
+          example: false
+        code:
+          type: integer
+          example: 400
+        timestamp:
+          type: string
+          format: date-time
+        error:
+          $ref: '#/components/schemas/ApiErrorDetail'
+
+    ApiErrorDetail:
+      type: object
+      required: [message, code]
+      properties:
         message:
           type: string
           description: Human-readable explanation
           example: Deal not found
-        request_id:
+        code:
           type: string
-          description: Correlation ID for support tracing
-
-    ValidationErrorResponse:
-      type: object
-      required: [error, message, details]
-      properties:
-        error:
-          type: string
-          example: VALIDATION_ERROR
-        message:
-          type: string
-          example: Request body contains invalid fields
+          description: Machine-readable error code
+          enum:
+            - VALIDATION_FAILED
+            - UNAUTHORIZED
+            - FORBIDDEN
+            - NOT_FOUND
+            - CONFLICT
+            - BUSINESS_RULE_VIOLATION
+            - SUBSCRIPTION_REQUIRED
+            - AI_QUOTA_EXCEEDED
+            - INTERNAL_SERVER_ERROR
+          example: NOT_FOUND
         details:
           type: array
+          description: Field-level validation errors (populated for VALIDATION_FAILED only)
           items:
-            type: object
-            required: [field, message]
-            properties:
-              field:
-                type: string
-                example: estimated_value
-              message:
-                type: string
-                example: Must be a positive number
-        request_id:
-          type: string
+            $ref: '#/components/schemas/ValidationErrorDetail'
 
-    EntitlementErrorResponse:
+    ValidationErrorDetail:
       type: object
-      required: [error, message, entitlement]
+      required: [field, message]
       properties:
-        error:
+        field:
           type: string
-          example: ENTITLEMENT_REQUIRED
+          description: Dot-path to the invalid field
+          example: estimated_value
         message:
           type: string
-          example: Your plan does not include AI generation. Upgrade to Pro.
-        entitlement:
-          type: string
-          description: The specific entitlement flag that was missing
-          example: can_use_ai
-        upgrade_url:
-          type: string
-          example: /subscriptions/plans
+          description: Why the value is invalid
+          example: Must be a positive number
+        value:
+          description: The submitted value that failed validation
 
-    # --- Pagination Wrapper ---
-    PaginationMeta:
+    PaginationMetadata:
       type: object
       required: [total, page, page_size, total_pages]
       properties:
         total:
           type: integer
+          description: Total number of matching records
+          example: 42
         page:
           type: integer
+          description: Current page (1-indexed)
+          example: 1
         page_size:
           type: integer
+          description: Records per page
+          example: 20
         total_pages:
           type: integer
+          description: Total number of pages
+          example: 3
+
+    # ---------------------------------------------------------------------------
+    # Legacy aliases — kept for backward-compat during migration; will be removed
+    # ---------------------------------------------------------------------------
+    ErrorResponse:
+      $ref: '#/components/schemas/ApiError'
+    ValidationErrorResponse:
+      $ref: '#/components/schemas/ApiError'
+    EntitlementErrorResponse:
+      $ref: '#/components/schemas/ApiError'
+    PaginationMeta:
+      $ref: '#/components/schemas/PaginationMetadata'
 
     # --- Auth ---
     RegisterRequest:
