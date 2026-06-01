@@ -183,6 +183,7 @@ All services are orchestrated with Docker Compose. The stack includes:
 | `worker` | — | Celery worker (4 concurrent) |
 | `beat` | — | Celery beat scheduler |
 | `mailpit` | 1025 / 8025 | Local SMTP + email UI |
+| `pgadmin` | 5050 | PostgreSQL web UI |
 
 ```bash
 # Start everything
@@ -201,6 +202,40 @@ make down
 The API is available at **http://localhost:8000**.
 Interactive API docs are available at **http://localhost:8000/docs** (debug mode only).
 Mailpit email UI is available at **http://localhost:8025**.
+pgAdmin is available at **http://localhost:5050**.
+
+### Inspect Seeded Database With pgAdmin
+
+After the local database has been migrated and seeded, open pgAdmin and connect to the
+PostgreSQL container.
+
+pgAdmin login:
+
+| Field | Value |
+|---|---|
+| Email | `admin@solodesk.dev` |
+| Password | `admin` |
+
+Register a PostgreSQL server in pgAdmin:
+
+| Field | Value |
+|---|---|
+| Name | `SoloDesk Local` |
+| Host name/address | `db` |
+| Port | `5432` |
+| Maintenance database | `solodesk` |
+| Username | `solodesk` |
+| Password | `solodesk` |
+
+Seeded tables and records are visible under:
+
+```text
+Servers > SoloDesk Local > Databases > solodesk > Schemas > public > Tables
+```
+
+Use `db` as the host inside pgAdmin because it runs in the same Docker network as
+PostgreSQL. Host-machine tools such as TablePlus, DBeaver, or local `psql` should use
+`localhost:5432` instead.
 
 ### Running without Docker
 
