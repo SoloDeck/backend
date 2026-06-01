@@ -3,7 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.infrastructure.database.session import get_db_session
 from src.modules.auth.application.service import AuthService
-from src.modules.auth.schemas.request import RegisterRequest
+from src.modules.auth.schemas.request import LoginRequest, RegisterRequest
 from src.modules.auth.schemas.response import AuthTokenResponse
 
 router = APIRouter()
@@ -22,7 +22,18 @@ async def register(
     return await AuthService(db=db).register(payload)
 
 
-# POST /login
+@router.post(
+    "/login",
+    response_model=AuthTokenResponse,
+    summary="Login with email and password",
+)
+async def login(
+    payload: LoginRequest,
+    db: AsyncSession = Depends(get_db_session),
+) -> AuthTokenResponse:
+    return await AuthService(db=db).login(payload)
+
+
 # POST /refresh
 # POST /logout
 # GET  /google
