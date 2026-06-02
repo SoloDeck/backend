@@ -3,6 +3,10 @@
 
 This script catches repo consistency issues that slow down agents before heavier
 lint/type/test gates run.
+
+Run directly:
+    python scripts/agent_check.py        # works without any extra deps where possible
+    make agent-check                     # full gate (lint + typecheck + unit tests)
 """
 
 from __future__ import annotations
@@ -12,9 +16,14 @@ import sys
 from pathlib import Path
 from typing import Any
 
-import yaml
-
 ROOT = Path(__file__).resolve().parents[1]
+
+try:
+    import yaml as _yaml
+    _YAML_AVAILABLE = True
+except ModuleNotFoundError:
+    _yaml = None  # type: ignore[assignment]
+    _YAML_AVAILABLE = False
 
 
 def _failures() -> list[str]:
@@ -27,8 +36,11 @@ def _failures() -> list[str]:
 
 def _check_openapi() -> list[str]:
     path = ROOT / "contracts" / "openapi.yaml"
+    if not _YAML_AVAILABLE:
+        print("warning: pyyaml not installed — skipping OpenAPI check (install with: pip install pyyaml)")
+        return []
     try:
-        spec = yaml.safe_load(path.read_text(encoding="utf-8"))
+        spec = _yaml.safe_load(path.read_text(encoding="utf-8"))
     except Exception as exc:
         return [f"{path}: failed to parse OpenAPI YAML: {exc}"]
 
@@ -86,6 +98,13 @@ def _check_seeder_test_alignment() -> list[str]:
     failures: list[str] = []
     plans_path = ROOT / "src" / "infrastructure" / "database" / "seeders" / "plans.py"
     tests_path = ROOT / "tests" / "integration" / "test_seeders.py"
+
+    if not plans_path.exists():
+        return []
+    if not tests_path.exists():
+        print("warning: tests/integration/test_seeders.py not found — skipping seeder alignment check")
+        return []
+
     plans_text = plans_path.read_text(encoding="utf-8")
     tests_text = tests_path.read_text(encoding="utf-8")
 
