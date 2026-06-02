@@ -27,4 +27,4 @@ class ValidationErrorDetail(BaseModel):
 class ApiError(BaseModel):
     message: str
     code: str
-    details: list[ValidationErrorDetail] = []
+    details: list[ValidationErrorDetail] = Field(default_factory=list)
