@@ -74,8 +74,14 @@ _deal_activity_type = PgEnum(
 )
 _ai_recommendation = PgEnum("qualify", "pass", name="ai_recommendation", create_type=False)
 _proposal_status = PgEnum(
-    "draft", "sent", "accepted", "rejected", "expired",
-    name="proposal_status", create_type=False,
+    "draft",
+    "sent",
+    "accepted",
+    "rejected",
+    "expired",
+    "superseded",
+    name="proposal_status",
+    create_type=False,
 )
 _contract_status = PgEnum(
     "draft", "pending_signatures", "active", "completed", "cancelled", "amended",
