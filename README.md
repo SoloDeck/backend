@@ -177,6 +177,7 @@ All services are orchestrated with Docker Compose. The stack includes:
 
 | Service | Port | Description |
 |---|---|---|
+| `migrate` | — | One-shot: applies migrations + seeds data, then exits |
 | `api` | 8000 | FastAPI application with hot-reload |
 | `db` | 5432 | PostgreSQL 16 |
 | `redis` | 6379 | Redis 7 |
@@ -185,8 +186,10 @@ All services are orchestrated with Docker Compose. The stack includes:
 | `mailpit` | 1025 / 8025 | Local SMTP + email UI |
 | `pgadmin` | 5050 | PostgreSQL web UI |
 
+### Full stack (recommended)
+
 ```bash
-# Start everything
+# Build images and start everything — migrations and seed run automatically
 make up
 
 # Tail logs
@@ -199,59 +202,116 @@ make logs-api
 make down
 ```
 
-The API is available at **http://localhost:8000**.
-Interactive API docs are available at **http://localhost:8000/docs** (debug mode only).
-Mailpit email UI is available at **http://localhost:8025**.
-pgAdmin is available at **http://localhost:5050**.
+When you run `make up` (`docker compose up --build -d`), Docker Compose starts services
+in dependency order:
 
-### Inspect Seeded Database With pgAdmin
+1. `db` becomes healthy
+2. `migrate` runs `alembic upgrade head` then seeds default data, then **exits 0**
+3. `api` and `worker` start only after `migrate` completes successfully
 
-After the local database has been migrated and seeded, open pgAdmin and connect to the
-PostgreSQL container.
+This means tables and seed data are always present before the API accepts traffic.
+The `migrate` service is idempotent — running it again skips already-applied migrations
+and skips already-existing seed rows.
 
-pgAdmin login:
+### DB-only init (useful when iterating on migrations)
 
-| Field | Value |
-|---|---|
-| Email | `admin@solodesk.dev` |
-| Password | `admin` |
+Start only the database and pgAdmin, initialise the schema, then bring up the rest:
 
-Register a PostgreSQL server in pgAdmin:
+```bash
+# 1. Start only DB and pgAdmin
+docker compose up -d db pgadmin
 
-| Field | Value |
-|---|---|
-| Name | `SoloDesk Local` |
-| Host name/address | `db` |
-| Port | `5432` |
-| Maintenance database | `solodesk` |
-| Username | `solodesk` |
-| Password | `solodesk` |
+# 2. Apply migrations and seed (idempotent)
+make db-init
 
-Seeded tables and records are visible under:
-
-```text
-Servers > SoloDesk Local > Databases > solodesk > Schemas > public > Tables
+# 3. Start the rest of the stack
+docker compose up -d
 ```
 
-Use `db` as the host inside pgAdmin because it runs in the same Docker network as
-PostgreSQL. Host-machine tools such as TablePlus, DBeaver, or local `psql` should use
-`localhost:5432` instead.
+`make db-init` runs `python scripts/bootstrap.py` inside a short-lived container
+connected to the running `db` service.
 
 ### Running without Docker
 
 ```bash
 # Start only infrastructure
-docker compose up db redis -d
+docker compose up -d db redis
+
+# Apply migrations locally (requires DATABASE_URL in .env or environment)
+make migrate
+
+# Seed default data
+make seed
 
 # Run API locally with hot-reload
 make dev
 
 # Run Celery worker locally
 make worker-dev
-
-# Run Celery beat locally
-make beat-dev
 ```
+
+---
+
+## Database Initialisation
+
+> **Why pgAdmin may show no tables:** pgAdmin connects to PostgreSQL but cannot create
+> tables itself. Tables are created by running Alembic migrations. If you start only
+> `docker compose up -d db pgadmin`, the database is empty until you run migrations.
+
+### What gets seeded
+
+After `make db-init` or `make up`, the database contains:
+
+| Table | Seeded rows |
+|---|---|
+| `subscription_plans` | Free, Pro, Agency |
+| `users` | `admin@solodesk.dev` (development only) |
+
+### Connecting pgAdmin to PostgreSQL
+
+Open **http://localhost:5050** and log in:
+
+| Field | Value |
+|---|---|
+| Email | `admin@solodesk.dev` |
+| Password | `admin` |
+
+Click **Add New Server** and fill in the **Connection** tab:
+
+| Field | Value |
+|---|---|
+| Name | `SoloDesk Local` |
+| Host name/address | `db` ← Docker service name, **not** `localhost` |
+| Port | `5432` |
+| Maintenance database | `solodesk` |
+| Username | `solodesk` |
+| Password | `solodesk` |
+
+After connecting, tables are visible under:
+
+```
+Servers > SoloDesk Local > Databases > solodesk > Schemas > public > Tables
+```
+
+> **Host note:** pgAdmin runs inside Docker and reaches PostgreSQL via the internal
+> Docker network using the service name `db`. External tools (TablePlus, DBeaver,
+> local `psql`) connect via `localhost:5432`.
+
+### Expected result after init
+
+- `alembic_version` table exists with one row (`0001`)
+- ~26 tables visible under `public > Tables`
+- `subscription_plans` contains 3 rows: Free, Pro, Agency
+- `users` contains 1 row (`admin@solodesk.dev`) when `APP_ENV=development`
+
+### Reset (destructive — dev/CI only)
+
+```bash
+# Drop schema, re-migrate, re-seed
+make reset-db
+```
+
+This refuses to run when `APP_ENV=production` or `APP_ENV=staging`.
 
 ---
 
@@ -260,8 +320,11 @@ make beat-dev
 SoloDesk uses [Alembic](https://alembic.sqlalchemy.org/) with an async PostgreSQL engine.
 
 ```bash
-# Apply all pending migrations
+# Apply all pending migrations (local)
 make migrate
+
+# Apply migrations via Docker against the running db service
+make migrate-docker
 
 # Create a new auto-generated migration
 make revision msg="add client tags table"
@@ -277,7 +340,7 @@ make db-shell
 > are imported in `alembic/env.py`. Alembic only detects tables whose models are loaded
 > at migration time.
 
-The full reference schema (all 28 tables) is available at `docs/database/schema.sql`.
+The full reference schema is at `docs/database/schema.sql`.
 
 ---
 

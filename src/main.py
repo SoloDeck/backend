@@ -49,6 +49,7 @@ app = FastAPI(
     docs_url="/docs" if settings.debug else None,
     redoc_url="/redoc" if settings.debug else None,
     openapi_url="/openapi.json" if settings.debug else None,
+    swagger_ui_parameters={"tryItOutEnabled": True} # Luôn bật sẵn chế độ nhập và chạy API
 )
 
 
