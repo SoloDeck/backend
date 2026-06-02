@@ -65,9 +65,12 @@ _deal_source = PgEnum(
     name="deal_source", create_type=False,
 )
 _deal_activity_type = PgEnum(
-    "stage_change", "note_added", "proposal_created", "proposal_sent",
-    "contract_created", "invoice_created", "reminder_set", "ai_qualified",
-    name="deal_activity_type", create_type=False,
+    "stage_change",
+    "note_added",
+    "document_attached",
+    "ai_qualification",
+    name="deal_activity_type",
+    create_type=False,
 )
 _ai_recommendation = PgEnum("qualify", "pass", name="ai_recommendation", create_type=False)
 _proposal_status = PgEnum(
