@@ -3,7 +3,7 @@
 from enum import StrEnum
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class ErrorCode(StrEnum):
