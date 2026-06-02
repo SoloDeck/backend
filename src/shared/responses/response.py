@@ -72,9 +72,8 @@ class ErrorResponse(BaseModel):
         http_code: int,
         error_code: str,
         message: str,
-        details: list | None = None,
+        details: list["ValidationErrorDetail"] | None = None,
     ) -> "ErrorResponse":
-        from .error import ValidationErrorDetail
         return cls(
             code=http_code,
             error=ApiError(
