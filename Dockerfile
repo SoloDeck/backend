@@ -63,3 +63,27 @@ FROM runtime AS beat
 
 CMD ["celery", "-A", "src.infrastructure.celery.app.celery_app", "beat", \
      "--loglevel=info", "--scheduler=celery.beat:PersistentScheduler"]
+
+
+# ---------------------------------------------------------------------------
+# Stage 5: dev / test — installs [dev] extras (pytest, httpx, mypy, ruff…)
+# Tests directory is mounted via docker-compose volume, not baked in.
+# ---------------------------------------------------------------------------
+FROM python:3.13-slim AS dev
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/app
+
+WORKDIR /app
+
+RUN pip install --no-cache-dir hatch
+
+COPY pyproject.toml .
+RUN pip install --no-cache-dir ".[dev]"
+
+COPY src ./src
+COPY contracts ./contracts
+COPY alembic ./alembic
+COPY alembic.ini .
+COPY scripts ./scripts
