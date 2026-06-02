@@ -156,6 +156,33 @@ services:
       - "8025:8025"   # Web UI
 
   # -------------------------------------------------------------------------
+  # Test runner — uses dev image (includes pytest, httpx, etc.)
+  # Usage: docker compose run --rm test
+  # -------------------------------------------------------------------------
+  test:
+    build:
+      context: .
+      target: dev
+    restart: "no"
+    environment:
+      DATABASE_URL: postgresql+asyncpg://solodesk:solodesk@db:5432/solodesk_test
+      TEST_DATABASE_URL: postgresql+asyncpg://solodesk:solodesk@db:5432/solodesk_test
+      APP_ENV: development
+      SECRET_KEY: test-secret-key-not-for-production
+      JWT_SECRET_KEY: test-jwt-secret-key-not-for-production
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ./src:/app/src
+      - ./tests:/app/tests
+      - ./alembic:/app/alembic
+      - ./scripts:/app/scripts
+      - ./contracts:/app/contracts:ro
+      - ./pyproject.toml:/app/pyproject.toml:ro
+    command: python -m pytest tests/ -v
+
+  # -------------------------------------------------------------------------
   # pgAdmin — local PostgreSQL web UI
   # http://localhost:5050  login: admin@solodesk.dev / admin
   # Add server: host=db, port=5432, db=solodesk, user/pass=solodesk
