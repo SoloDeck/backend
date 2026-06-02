@@ -1,15 +1,18 @@
 openapi: 3.1.0
 info:
   title: SoloDesk API
-  description: AI-powered CRM and deal management platform for Vietnamese freelancers.
+  description: |
+    **SoloDesk – Intelligent Client & Deal Management System**  
+    AI-powered CRM and deal management platform for Vietnamese freelancers (designer, developer, marketer, photographer...). 
   version: 1.0.0
   contact:
+    name: SoloDesk Capstone Team – GSU26SE083
     email: solodeskai@gmail.com
 
 servers:
-  - url: /api/v1
-    description: Current version
-
+  - url: http://localhost:8000/api/v1
+    description: Local development
+    
 security:
   - BearerAuth: []
 
@@ -54,7 +57,12 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/AuthTokenResponse'
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/AuthTokenResponse'
         '409':
           description: Email already registered
           content:
@@ -81,7 +89,12 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/AuthTokenResponse'
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/AuthTokenResponse'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '429':
@@ -104,7 +117,12 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/AuthTokenResponse'
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/AuthTokenResponse'
         '401':
           $ref: '#/components/responses/Unauthorized'
 
@@ -149,7 +167,12 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/AuthTokenResponse'
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/AuthTokenResponse'
         '400':
           $ref: '#/components/responses/BadRequest'
 
@@ -206,7 +229,12 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/UserResponse'
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/UserResponse'
         '401':
           $ref: '#/components/responses/Unauthorized'
     patch:
@@ -224,7 +252,12 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/UserResponse'
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/UserResponse'
         '400':
           $ref: '#/components/responses/BadRequest'
         '409':
@@ -258,7 +291,12 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/UserResponse'
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/UserResponse'
         '400':
           $ref: '#/components/responses/BadRequest'
 
@@ -278,7 +316,12 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/UserResponse'
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/UserResponse'
 
   # -------------------------------------------------------------------------
   # SUBSCRIPTIONS
@@ -294,9 +337,14 @@ paths:
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/SubscriptionPlanResponse'
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/SubscriptionPlanResponse'
 
   /subscriptions/plans/{plan_id}:
     get:
@@ -311,7 +359,12 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/SubscriptionPlanResponse'
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/SubscriptionPlanResponse'
         '404':
           $ref: '#/components/responses/NotFound'
 
@@ -325,7 +378,12 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/SubscriptionResponse'
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/SubscriptionResponse'
 
   /subscriptions/me/upgrade:
     post:
@@ -343,7 +401,12 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/SubscriptionResponse'
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/SubscriptionResponse'
         '400':
           $ref: '#/components/responses/BadRequest'
 
@@ -363,7 +426,12 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/SubscriptionResponse'
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/SubscriptionResponse'
 
   /subscriptions/me/cancel:
     post:
@@ -375,7 +443,12 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/SubscriptionResponse'
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/SubscriptionResponse'
 
   /subscriptions/me/usage:
     get:
@@ -387,7 +460,12 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/UsageRecordResponse'
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/UsageRecordResponse'
 
   # -------------------------------------------------------------------------
   # CLIENTS
@@ -447,7 +525,12 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ClientResponse'
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/ClientResponse'
         '400':
           $ref: '#/components/responses/BadRequest'
         '409':
@@ -469,7 +552,12 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ClientResponse'
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/ClientResponse'
         '404':
           $ref: '#/components/responses/NotFound'
     patch:
@@ -487,7 +575,12 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ClientResponse'
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/ClientResponse'
         '400':
           $ref: '#/components/responses/BadRequest'
         '404':
@@ -557,7 +650,12 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/CommunicationLogResponse'
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/CommunicationLogResponse'
         '400':
           $ref: '#/components/responses/BadRequest'
 
@@ -573,9 +671,14 @@ paths:
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/ClientTagResponse'
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/ClientTagResponse'
     post:
       tags: [Clients]
       summary: Add a tag to a client
@@ -591,7 +694,12 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ClientTagResponse'
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/ClientTagResponse'
         '409':
           description: Tag already exists or client has 10 tags
           content:
@@ -694,7 +802,12 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/DealResponse'
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/DealResponse'
         '400':
           $ref: '#/components/responses/BadRequest'
 
@@ -710,7 +823,12 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/DealResponse'
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/DealResponse'
         '404':
           $ref: '#/components/responses/NotFound'
     patch:
@@ -728,7 +846,12 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/DealResponse'
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/DealResponse'
         '409':
           description: Deal is in a terminal stage
           content:
@@ -760,7 +883,12 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/DealResponse'
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/DealResponse'
         '400':
           description: Invalid transition or missing prerequisites
           content:
@@ -782,7 +910,12 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/LeadQualificationResponse'
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/LeadQualificationResponse'
         '402':
           $ref: '#/components/responses/PaymentRequired'
         '404':
@@ -834,7 +967,12 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/DealActivityEntryResponse'
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/DealActivityEntryResponse'
 
   # -------------------------------------------------------------------------
   # PROPOSALS
@@ -899,7 +1037,12 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ProposalResponse'
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/ProposalResponse'
         '400':
           $ref: '#/components/responses/BadRequest'
 
@@ -915,7 +1058,12 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ProposalResponse'
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/ProposalResponse'
         '404':
           $ref: '#/components/responses/NotFound'
     patch:
@@ -933,7 +1081,12 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ProposalResponse'
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/ProposalResponse'
         '409':
           description: Proposal is not in draft status
           content:
@@ -965,7 +1118,12 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ProposalResponse'
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/ProposalResponse'
         '400':
           description: Pricing total mismatch or missing required fields
           content:
@@ -985,7 +1143,12 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ProposalResponse'
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/ProposalResponse'
         '402':
           $ref: '#/components/responses/PaymentRequired'
 
@@ -1003,7 +1166,12 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/PublicProposalResponse'
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/PublicProposalResponse'
         '404':
           $ref: '#/components/responses/NotFound'
         '410':
@@ -1032,7 +1200,12 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/PublicProposalResponse'
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/PublicProposalResponse'
         '409':
           description: Proposal already responded or expired
           content:
@@ -1104,7 +1277,12 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ContractResponse'
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/ContractResponse'
         '400':
           $ref: '#/components/responses/BadRequest'
         '409':
@@ -1126,7 +1304,12 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ContractResponse'
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/ContractResponse'
         '404':
           $ref: '#/components/responses/NotFound'
     patch:
@@ -1144,7 +1327,12 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ContractResponse'
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/ContractResponse'
         '409':
           description: Contract is not in draft status
           content:
@@ -1164,7 +1352,12 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ContractResponse'
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/ContractResponse'
 
   /contracts/{contract_id}/sign:
     parameters:
@@ -1178,7 +1371,12 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ContractResponse'
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/ContractResponse'
 
   /contracts/{contract_id}/amend:
     parameters:
@@ -1198,7 +1396,12 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ContractResponse'
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/ContractResponse'
         '409':
           description: Contract is not in active status
           content:
@@ -1224,7 +1427,12 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ContractResponse'
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/ContractResponse'
 
   /contracts/{contract_id}/generate:
     parameters:
@@ -1238,7 +1446,12 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ContractResponse'
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/ContractResponse'
         '402':
           $ref: '#/components/responses/PaymentRequired'
 
@@ -1254,9 +1467,14 @@ paths:
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/PaymentMilestoneResponse'
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/PaymentMilestoneResponse'
     post:
       tags: [Contracts]
       summary: Add a payment milestone (draft only)
@@ -1272,7 +1490,12 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/PaymentMilestoneResponse'
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/PaymentMilestoneResponse'
 
   /contracts/{contract_id}/milestones/{milestone_id}:
     parameters:
@@ -1298,7 +1521,12 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/PaymentMilestoneResponse'
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/PaymentMilestoneResponse'
     delete:
       tags: [Contracts]
       summary: Delete a milestone (draft contract only)
@@ -1319,7 +1547,12 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/PublicContractResponse'
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/PublicContractResponse'
         '410':
           description: Share link expired
           content:
@@ -1346,7 +1579,12 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/PublicContractResponse'
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/PublicContractResponse'
 
   # -------------------------------------------------------------------------
   # INVOICES
@@ -1431,7 +1669,12 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/InvoiceResponse'
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/InvoiceResponse'
         '400':
           $ref: '#/components/responses/BadRequest'
 
@@ -1447,7 +1690,12 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/InvoiceResponse'
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/InvoiceResponse'
         '404':
           $ref: '#/components/responses/NotFound'
     patch:
@@ -1465,7 +1713,12 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/InvoiceResponse'
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/InvoiceResponse'
         '409':
           description: Invoice is not in draft status
           content:
@@ -1485,7 +1738,12 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/InvoiceResponse'
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/InvoiceResponse'
 
   /invoices/{invoice_id}/void:
     parameters:
@@ -1499,7 +1757,12 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/InvoiceResponse'
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/InvoiceResponse'
         '409':
           description: Invoice is paid and cannot be voided
           content:
@@ -1519,9 +1782,14 @@ paths:
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/PaymentRecordResponse'
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/PaymentRecordResponse'
     post:
       tags: [Invoices]
       summary: Record a payment against an invoice
@@ -1537,7 +1805,12 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/InvoiceResponse'
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/InvoiceResponse'
         '400':
           description: Payment would exceed invoice total
           content:
@@ -1564,7 +1837,12 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/PaymentIntentResponse'
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/PaymentIntentResponse'
         '400':
           $ref: '#/components/responses/BadRequest'
         '404':
@@ -1586,9 +1864,14 @@ paths:
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/PaymentMethodConfigResponse'
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/PaymentMethodConfigResponse'
 
   /payments/intents/{payment_intent_id}:
     parameters:
@@ -1602,7 +1885,12 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/PaymentIntentResponse'
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/PaymentIntentResponse'
         '404':
           $ref: '#/components/responses/NotFound'
 
@@ -1618,7 +1906,12 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/PaymentIntentResponse'
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/PaymentIntentResponse'
         '409':
           description: Payment intent is already completed or expired
           content:
@@ -1649,7 +1942,12 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/PaymentWebhookAcceptedResponse'
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/PaymentWebhookAcceptedResponse'
         '400':
           $ref: '#/components/responses/BadRequest'
 
@@ -1666,7 +1964,12 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/PublicInvoiceResponse'
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/PublicInvoiceResponse'
         '410':
           description: Share link expired
           content:
@@ -1687,7 +1990,12 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/PublicPaymentOptionsResponse'
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/PublicPaymentOptionsResponse'
         '410':
           description: Share link expired
           content:
@@ -1762,7 +2070,12 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ReminderResponse'
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/ReminderResponse'
         '400':
           $ref: '#/components/responses/BadRequest'
 
@@ -1778,7 +2091,12 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ReminderResponse'
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/ReminderResponse'
         '404':
           $ref: '#/components/responses/NotFound'
     patch:
@@ -1796,7 +2114,12 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ReminderResponse'
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/ReminderResponse'
         '409':
           description: Reminder is not in pending status
           content:
@@ -1823,7 +2146,12 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/DashboardSummaryResponse'
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/DashboardSummaryResponse'
 
   /analytics/revenue:
     get:
@@ -1853,7 +2181,12 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/RevenueMetricsResponse'
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/RevenueMetricsResponse'
 
   /analytics/pipeline:
     get:
@@ -1871,7 +2204,12 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/PipelineMetricsResponse'
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/PipelineMetricsResponse'
 
   /analytics/win-rate:
     get:
@@ -1894,7 +2232,12 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/WinRateResponse'
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/WinRateResponse'
 
   /analytics/clients/top:
     get:
@@ -1929,7 +2272,12 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/TopClientsResponse'
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/TopClientsResponse'
 
   /analytics/ai-usage:
     get:
@@ -1952,7 +2300,12 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/AIUsageMetricsResponse'
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/AIUsageMetricsResponse'
 
   # -------------------------------------------------------------------------
   # AI
@@ -1973,7 +2326,12 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/LeadQualificationResponse'
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/LeadQualificationResponse'
         '402':
           $ref: '#/components/responses/PaymentRequired'
 
@@ -1993,7 +2351,12 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ProposalGenerationResponse'
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/ProposalGenerationResponse'
         '402':
           $ref: '#/components/responses/PaymentRequired'
 
@@ -2013,7 +2376,12 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ContractGenerationResponse'
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/ContractGenerationResponse'
         '402':
           $ref: '#/components/responses/PaymentRequired'
 
@@ -2033,7 +2401,12 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/FollowUpGenerationResponse'
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/FollowUpGenerationResponse'
         '402':
           $ref: '#/components/responses/PaymentRequired'
 
@@ -2093,7 +2466,12 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/AdminUserResponse'
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/AdminUserResponse'
         '404':
           $ref: '#/components/responses/NotFound'
     patch:
@@ -2111,7 +2489,12 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/AdminUserResponse'
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/AdminUserResponse'
 
   /admin/users/{user_id}/suspend:
     parameters:
@@ -2125,7 +2508,12 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/AdminUserResponse'
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/AdminUserResponse'
         '409':
           description: Cannot suspend the last admin
           content:
@@ -2145,7 +2533,12 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/AdminUserResponse'
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/AdminUserResponse'
 
   /admin/users/{user_id}/sessions:
     parameters:
@@ -2210,7 +2603,12 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/SubscriptionResponse'
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/SubscriptionResponse'
 
   /admin/plans:
     get:
@@ -2222,9 +2620,14 @@ paths:
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/SubscriptionPlanResponse'
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/SubscriptionPlanResponse'
     post:
       tags: [Admin]
       summary: Create a new subscription plan
@@ -2240,7 +2643,12 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/SubscriptionPlanResponse'
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/SubscriptionPlanResponse'
 
   /admin/plans/{plan_id}:
     parameters:
@@ -2260,7 +2668,12 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/SubscriptionPlanResponse'
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/SubscriptionPlanResponse'
 
   /admin/ai-costs:
     get:
@@ -2372,9 +2785,14 @@ paths:
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/SystemTemplateResponse'
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/SystemTemplateResponse'
     post:
       tags: [Admin]
       summary: Create a system template
@@ -2390,7 +2808,12 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/SystemTemplateResponse'
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/SystemTemplateResponse'
 
   /admin/templates/{template_id}:
     parameters:
@@ -2415,7 +2838,12 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/SystemTemplateResponse'
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/SystemTemplateResponse'
 
   /admin/feature-flags:
     get:
@@ -2427,9 +2855,14 @@ paths:
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/FeatureFlagResponse'
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/FeatureFlagResponse'
 
   /admin/feature-flags/{flag_name}:
     parameters:
@@ -2453,7 +2886,12 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/FeatureFlagResponse'
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/FeatureFlagResponse'
         '404':
           $ref: '#/components/responses/NotFound'
 
@@ -2467,7 +2905,12 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/PlatformMetricsResponse'
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/PlatformMetricsResponse'
 
 # ===========================================================================
 # COMPONENTS
@@ -3182,15 +3625,14 @@ components:
           format: date-time
 
     ClientPage:
-      type: object
-      required: [items, pagination]
-      properties:
-        items:
-          type: array
-          items:
-            $ref: '#/components/schemas/ClientResponse'
-        pagination:
-          $ref: '#/components/schemas/PaginationMeta'
+      allOf:
+        - $ref: '#/components/schemas/PaginatedResponse'
+        - type: object
+          properties:
+            data:
+              type: array
+              items:
+                $ref: '#/components/schemas/ClientResponse'
 
     CreateClientRequest:
       type: object
@@ -3266,15 +3708,14 @@ components:
           format: date-time
 
     CommunicationLogPage:
-      type: object
-      required: [items, pagination]
-      properties:
-        items:
-          type: array
-          items:
-            $ref: '#/components/schemas/CommunicationLogResponse'
-        pagination:
-          $ref: '#/components/schemas/PaginationMeta'
+      allOf:
+        - $ref: '#/components/schemas/PaginatedResponse'
+        - type: object
+          properties:
+            data:
+              type: array
+              items:
+                $ref: '#/components/schemas/CommunicationLogResponse'
 
     CreateCommunicationLogRequest:
       type: object
@@ -3370,15 +3811,14 @@ components:
           format: date-time
 
     DealPage:
-      type: object
-      required: [items, pagination]
-      properties:
-        items:
-          type: array
-          items:
-            $ref: '#/components/schemas/DealResponse'
-        pagination:
-          $ref: '#/components/schemas/PaginationMeta'
+      allOf:
+        - $ref: '#/components/schemas/PaginatedResponse'
+        - type: object
+          properties:
+            data:
+              type: array
+              items:
+                $ref: '#/components/schemas/DealResponse'
 
     CreateDealRequest:
       type: object
@@ -3454,15 +3894,14 @@ components:
           format: date-time
 
     DealActivityPage:
-      type: object
-      required: [items, pagination]
-      properties:
-        items:
-          type: array
-          items:
-            $ref: '#/components/schemas/DealActivityEntryResponse'
-        pagination:
-          $ref: '#/components/schemas/PaginationMeta'
+      allOf:
+        - $ref: '#/components/schemas/PaginatedResponse'
+        - type: object
+          properties:
+            data:
+              type: array
+              items:
+                $ref: '#/components/schemas/DealActivityEntryResponse'
 
     AddNoteRequest:
       type: object
@@ -3587,15 +4026,14 @@ components:
           format: date-time
 
     ProposalPage:
-      type: object
-      required: [items, pagination]
-      properties:
-        items:
-          type: array
-          items:
-            $ref: '#/components/schemas/ProposalResponse'
-        pagination:
-          $ref: '#/components/schemas/PaginationMeta'
+      allOf:
+        - $ref: '#/components/schemas/PaginatedResponse'
+        - type: object
+          properties:
+            data:
+              type: array
+              items:
+                $ref: '#/components/schemas/ProposalResponse'
 
     CreateProposalRequest:
       type: object
@@ -3745,15 +4183,14 @@ components:
           format: date-time
 
     ContractPage:
-      type: object
-      required: [items, pagination]
-      properties:
-        items:
-          type: array
-          items:
-            $ref: '#/components/schemas/ContractResponse'
-        pagination:
-          $ref: '#/components/schemas/PaginationMeta'
+      allOf:
+        - $ref: '#/components/schemas/PaginatedResponse'
+        - type: object
+          properties:
+            data:
+              type: array
+              items:
+                $ref: '#/components/schemas/ContractResponse'
 
     CreateContractRequest:
       type: object
@@ -3981,15 +4418,14 @@ components:
           format: date-time
 
     InvoicePage:
-      type: object
-      required: [items, pagination]
-      properties:
-        items:
-          type: array
-          items:
-            $ref: '#/components/schemas/InvoiceResponse'
-        pagination:
-          $ref: '#/components/schemas/PaginationMeta'
+      allOf:
+        - $ref: '#/components/schemas/PaginatedResponse'
+        - type: object
+          properties:
+            data:
+              type: array
+              items:
+                $ref: '#/components/schemas/InvoiceResponse'
 
     CreateInvoiceRequest:
       type: object
@@ -4354,15 +4790,14 @@ components:
           format: date-time
 
     ReminderPage:
-      type: object
-      required: [items, pagination]
-      properties:
-        items:
-          type: array
-          items:
-            $ref: '#/components/schemas/ReminderResponse'
-        pagination:
-          $ref: '#/components/schemas/PaginationMeta'
+      allOf:
+        - $ref: '#/components/schemas/PaginatedResponse'
+        - type: object
+          properties:
+            data:
+              type: array
+              items:
+                $ref: '#/components/schemas/ReminderResponse'
 
     CreateReminderRequest:
       type: object
@@ -4695,15 +5130,14 @@ components:
               nullable: true
 
     AdminUserPage:
-      type: object
-      required: [items, pagination]
-      properties:
-        items:
-          type: array
-          items:
-            $ref: '#/components/schemas/AdminUserResponse'
-        pagination:
-          $ref: '#/components/schemas/PaginationMeta'
+      allOf:
+        - $ref: '#/components/schemas/PaginatedResponse'
+        - type: object
+          properties:
+            data:
+              type: array
+              items:
+                $ref: '#/components/schemas/AdminUserResponse'
 
     AdminUpdateUserRequest:
       type: object
@@ -4714,15 +5148,14 @@ components:
           $ref: '#/components/schemas/UserStatus'
 
     AdminSubscriptionPage:
-      type: object
-      required: [items, pagination]
-      properties:
-        items:
-          type: array
-          items:
-            $ref: '#/components/schemas/SubscriptionResponse'
-        pagination:
-          $ref: '#/components/schemas/PaginationMeta'
+      allOf:
+        - $ref: '#/components/schemas/PaginatedResponse'
+        - type: object
+          properties:
+            data:
+              type: array
+              items:
+                $ref: '#/components/schemas/SubscriptionResponse'
 
     AdminSubscriptionOverrideRequest:
       type: object
@@ -4872,15 +5305,14 @@ components:
           format: date-time
 
     AuditLogPage:
-      type: object
-      required: [items, pagination]
-      properties:
-        items:
-          type: array
-          items:
-            $ref: '#/components/schemas/AuditLogEntryResponse'
-        pagination:
-          $ref: '#/components/schemas/PaginationMeta'
+      allOf:
+        - $ref: '#/components/schemas/PaginatedResponse'
+        - type: object
+          properties:
+            data:
+              type: array
+              items:
+                $ref: '#/components/schemas/AuditLogEntryResponse'
 
     SystemTemplateResponse:
       type: object
