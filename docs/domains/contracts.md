@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Generate, store, and manage formal service contracts between a freelancer and their clients. A Contract is the legally-oriented document that formalizes the terms of an engagement once a Proposal has been accepted. It provides a binding reference for the work to be delivered, the payment schedule, and the governing terms.
+Generate, store, and manage service agreements between a freelancer and their clients. A Contract in SoloDesk is a **simple service agreement** ("hợp đồng dịch vụ đơn giản") — a practical working document that formalizes the terms of an engagement once a Proposal has been accepted. It is **not** a formal legal document or court-enforceable instrument. It provides a clear written reference for the work to be delivered, the payment schedule, and the agreed terms, appropriate for Vietnamese freelancer–client relationships.
 
 ## Responsibilities
 
@@ -21,7 +21,7 @@ Generate, store, and manage formal service contracts between a freelancer and th
 - Proposal content or lifecycle (owned by **Proposals** domain)
 - Client contact records (owned by **Clients** domain)
 - Deal pipeline stage management (owned by **Deals** domain)
-- Legal validity or e-signature infrastructure (out of scope; future integration)
+- Legal validity enforcement or court-enforceable e-signature infrastructure (out of scope; future integration)
 
 ## Core Concepts
 
