@@ -1,5 +1,18 @@
 # SoloDesk Backend — Claude Code Context
 
+## Agent Workflow
+
+**Every task that adds or modifies a feature must follow this sequence — no exceptions:**
+
+1. Implement the feature (service → repository → router).
+2. Write unit tests for every new/changed service method.
+3. Write integration tests for every new/changed API endpoint.
+4. Confirm all tests pass before considering the task complete.
+
+**Never mark a task done without corresponding tests.**
+
+---
+
 ## Project Overview
 
 **SoloDesk** is an AI-powered CRM and deal management platform for Vietnamese freelancers.
@@ -32,7 +45,8 @@ Client → Deal → Proposal → Contract → Invoice
 | Validation | Pydantic v2 |
 | Settings | pydantic-settings |
 | Logging | structlog |
-| Testing | pytest + pytest-asyncio |
+| Password hashing | pwdlib (Argon2id via `PasswordHash.recommended()`) |
+| Testing | pytest + pytest-asyncio (`asyncio_mode = "auto"`) |
 
 ---
 
@@ -51,7 +65,7 @@ src/
 ├── workers/          # Celery tasks (ai_jobs, pdf_jobs, reminder_jobs, scheduler)
 ├── integrations/     # External providers (stripe, google_oauth, openai_client)
 ├── infrastructure/   # Database, Redis, Celery app setup
-├── shared/           # Pagination, exceptions, events, dependencies, logging
+├── shared/           # Pagination, exceptions, events, dependencies, security, logging
 └── main.py           # FastAPI app, router registration, lifespan
 ```
 
@@ -164,31 +178,108 @@ lifecycle, logout + token blacklisting, password reset.
 
 ## Coding Rules
 
+### Modern Python Conventions
+
+- Use `X | None` — never `Optional[X]` (Python 3.13 project).
+- All functions and methods must have full type annotations.
+- Use `structlog.get_logger(__name__)` for logging. Never use `print()`.
+- Use `async def` for all DB-touching functions; `def` for pure logic helpers.
+- Pydantic v2: use `model_config = ConfigDict(from_attributes=True)` in response schemas.
+- ORM models: declare PostgreSQL ENUM columns with `PgEnum(..., create_type=False)` — the ENUM types are created by Alembic migrations, not the ORM.
+
+### Dependency Injection Pattern
+
+Services and repositories use `@dataclass` for DI. Repositories are wired in `__post_init__` so they can be replaced with mocks in tests.
+
+```python
+@dataclass
+class DealsService:
+    db: AsyncSession
+    repo: DealsRepository | None = None
+
+    def __post_init__(self) -> None:
+        if self.repo is None:
+            self.repo = DealsRepository(self.db)
+```
+
+Routers instantiate services directly — no FastAPI `Depends` wrapper around services:
+
+```python
+@router.post("/", response_model=DealResponse, status_code=201)
+async def create_deal(
+    body: CreateDealRequest,
+    user_id: CurrentUserId,
+    db: DBSession,
+) -> DealResponse:
+    service = DealsService(db=db)
+    deal = await service.create(body, owner_user_id=user_id)
+    return DealResponse.model_validate(deal)
+```
+
+Rules:
+- All services are `@dataclass` with `db: AsyncSession` as the first field.
+- Never instantiate `AIFacade` inside a router — inject it into the service.
+- Import the `EventBus` singleton directly in services: `from src.shared.events.bus import event_bus`.
+- Password hashing: always use `src/shared/security/passwords.py` — `hash_password()` / `verify_password()`.
+
+### Response Envelope
+
+**Every endpoint must return the standard envelope. Never return raw objects, raw lists, or ad-hoc dicts.**
+
+```python
+from src.shared.responses import ApiResponse, PaginatedResponse
+
+# Single resource — 200
+return ApiResponse.ok(DealResponse.model_validate(deal))
+
+# Created — 201
+return ApiResponse.created(DealResponse.model_validate(deal))
+
+# Collection with pagination
+return PaginatedResponse.ok(items, total=total, page=page, page_size=page_size)
+```
+
+Error responses are handled automatically by `setup_exception_handlers` in `shared/exceptions/http.py`.
+Raise domain exceptions in services; the handler wraps them in `ApiError`.
+
+**Forbidden:**
+```python
+return deal                        # raw ORM model
+return items                       # raw list
+return {"message": "ok"}           # ad-hoc dict
+raise HTTPException(404, ...)      # use NotFoundError instead
+```
+
+**Required error codes** (`src/shared/responses/error.py` → `ErrorCode`):
+`VALIDATION_FAILED` · `UNAUTHORIZED` · `FORBIDDEN` · `NOT_FOUND` · `CONFLICT` ·
+`BUSINESS_RULE_VIOLATION` · `SUBSCRIPTION_REQUIRED` · `AI_QUOTA_EXCEEDED` · `INTERNAL_SERVER_ERROR`
+
 ### Routers (`api/router.py`)
 - Parse and validate HTTP input only.
 - Call one application service method per endpoint.
-- Return HTTP responses — no domain logic.
+- Return `ApiResponse[T]` or `PaginatedResponse[T]` — no domain logic.
 - Use `CurrentUser`, `CurrentUserId`, `AdminUser` from `src/shared/dependencies/auth.py`.
 - Use `DBSession` from `src/shared/dependencies/db.py`.
 
 ```python
 # CORRECT
-@router.post("/{deal_id}/stage-transition", response_model=DealResponse)
+@router.post("/{deal_id}/stage-transition", response_model=ApiResponse[DealResponse])
 async def transition_stage(
     deal_id: uuid.UUID,
     body: StageTransitionRequest,
     user_id: CurrentUserId,
     db: DBSession,
-) -> DealResponse:
-    service = DealsService(db)
+) -> ApiResponse[DealResponse]:
+    service = DealsService(db=db)
     deal = await service.transition_stage(deal_id, body.target_stage, user_id)
-    return DealResponse.model_validate(deal)
+    return ApiResponse.ok(DealResponse.model_validate(deal))
 
-# WRONG — business logic in router
+# WRONG — raw return and business logic in router
 @router.post("/{deal_id}/stage-transition")
 async def transition_stage(...):
     if deal.stage == "lost":
-        raise HTTPException(...)  # ← this belongs in the service
+        raise HTTPException(...)  # ← use InvalidStateTransitionError in the service
+    return deal                   # ← wrap in ApiResponse.ok(...)
 ```
 
 ### Services (`application/service.py`)
@@ -243,7 +334,7 @@ async def get_by_id(self, deal_id, owner_user_id):
 ### Schemas (`schemas/`)
 - Pydantic v2 models only.
 - `request.py` — validate inbound data; use `Field(...)` for constraints.
-- `response.py` — set `model_config = {"from_attributes": True}` so ORM models map cleanly.
+- `response.py` — `model_config = ConfigDict(from_attributes=True)` so ORM models map cleanly.
 - Never put business logic in validators.
 
 ---
@@ -322,46 +413,153 @@ deal = self.db.query(DealModel).filter(...).first()  # sync — blocks event loo
 - `make migrate` — apply to database.
 - Import all model files in `alembic/env.py` for auto-detect to work.
 - One migration per logical change. Never edit a committed migration.
+- ORM ENUM columns: `PgEnum("val1", "val2", name="type_name", create_type=False)`.
 
 ---
 
 ## Testing Rules
 
+Tests are **not optional** — they are part of the implementation. Write them in the same
+task, not afterward.
+
+### File locations
+
+```
+tests/
+├── conftest.py                          ← shared fixtures (db_session, client, auth_headers)
+├── unit/
+│   ├── modules/<name>/test_service.py  ← one file per module service
+│   └── shared/<name>/test_*.py         ← shared utilities
+└── integration/
+    └── modules/<name>/test_*_api.py    ← one file per module router
+```
+
 ### Unit Tests (`tests/unit/`)
-Required for every `application/service.py` method.
-- Mock the repository (inject a fake or use `unittest.mock.AsyncMock`).
-- Test business rules, state transition validation, error conditions.
-- No database, no HTTP.
+
+Required for **every** `application/service.py` method. Use `AsyncMock` for repositories — no real DB.
 
 ```python
-async def test_transition_to_lost_from_new_lead():
+from unittest.mock import AsyncMock
+import pytest
+from src.modules.deals.application.service import DealsService
+from src.shared.exceptions.domain import NotFoundError
+
+# --- Happy path ---
+async def test_create_deal_returns_model():
     repo = AsyncMock()
-    repo.get_by_id.return_value = deal_fixture(stage="new_lead")
+    repo.create.return_value = deal_orm_fixture()
     service = DealsService(db=AsyncMock(), repo=repo)
-    result = await service.transition_stage(deal_id, "lost", user_id)
-    assert result.stage == "lost"
+    result = await service.create(payload_fixture(), owner_user_id=uuid.uuid4())
+    assert result.stage == "new_lead"
+
+# --- Error path: always test it ---
+async def test_create_deal_raises_when_client_not_found():
+    repo = AsyncMock()
+    repo.get_client.return_value = None
+    service = DealsService(db=AsyncMock(), repo=repo)
+    with pytest.raises(NotFoundError):
+        await service.create(payload_fixture(), owner_user_id=uuid.uuid4())
 ```
+
+Rules:
+- Test every branch: success, not-found, wrong owner, invalid state transition.
+- Use `pytest.raises(DomainExceptionClass)` for every error path.
+- Assert on `.message` when the error text matters to the contract.
+- Group tests in a class per service method: `class TestCreate:`, `class TestTransitionStage:`.
 
 ### Integration Tests (`tests/integration/`)
-Required for every API endpoint.
-- Use `tests/conftest.py` fixtures: real PostgreSQL test DB, rolled-back per test.
-- Use `AsyncClient` against the full ASGI app.
-- Test the HTTP → service → DB round-trip.
-- Do not mock the database.
+
+Required for **every** API endpoint. Use real PostgreSQL (rolled back per test).
 
 ```python
-async def test_create_deal(client: AsyncClient, auth_headers):
-    resp = await client.post("/api/v1/deals", json={...}, headers=auth_headers)
-    assert resp.status_code == 201
-    assert resp.json()["stage"] == "new_lead"
+from httpx import AsyncClient
+
+class TestLoginEndpoint:
+    async def test_success(self, client: AsyncClient, auth_headers: dict):
+        resp = await client.post("/api/v1/auth/login", json={
+            "email": "test@example.com", "password": "Test@1234!"
+        })
+        assert resp.status_code == 200
+        assert "access_token" in resp.json()
+
+    async def test_wrong_password_returns_401(self, client: AsyncClient):
+        resp = await client.post("/api/v1/auth/login", json={
+            "email": "test@example.com", "password": "wrong"
+        })
+        assert resp.status_code == 401
+
+    async def test_missing_field_returns_422(self, client: AsyncClient):
+        resp = await client.post("/api/v1/auth/login", json={"email": "x@x.com"})
+        assert resp.status_code == 422
+
+    async def test_tenant_isolation(self, client: AsyncClient):
+        # Create resource as user A, verify user B gets 404
+        ...
 ```
 
-### AI Prompt Tests (`tests/unit/ai/`)
-Required for every AI chain (`src/ai/<module>/chain.py`).
-- Test `_parse_output()` with real LLM response fixtures (recorded strings).
-- Test that malformed output raises `AIOutputParseError`.
-- Test prompt template rendering with sample inputs.
-- Do NOT call the real OpenAI API in tests — use recorded fixtures.
+**Minimum coverage per endpoint:**
+- `200`/`201` success
+- `401` unauthenticated
+- `404` not found (where applicable)
+- `422` schema validation failure
+- Tenant isolation (user A cannot read user B's data)
+
+Rules:
+- Use `client` and `auth_headers` fixtures from `tests/conftest.py`.
+- Never mock the database in integration tests.
+- `auth_headers` fixture registers a real user via `POST /api/v1/auth/register` and returns `{"Authorization": "Bearer <token>"}`.
+
+### Fixtures and Factories
+
+Prefer **inline dict factories** over factory-boy. Factory-boy adds ORM coupling that fights the layered architecture.
+
+```python
+# In tests/conftest.py or a per-module conftest.py
+import pytest_asyncio
+from httpx import AsyncClient
+
+@pytest_asyncio.fixture
+async def auth_headers(client: AsyncClient) -> dict:
+    resp = await client.post("/api/v1/auth/register", json={
+        "email": "test@example.com",
+        "password": "Test@1234!",
+        "full_name": "Test User",
+    })
+    token = resp.json()["access_token"]
+    return {"Authorization": f"Bearer {token}"}
+
+# Inline factory — simple, no ORM coupling
+def make_deal_payload(**overrides) -> dict:
+    return {"title": "Test Deal", "client_id": str(uuid.uuid4()), **overrides}
+```
+
+Rules:
+- One `conftest.py` per test subdirectory for module-specific fixtures.
+- Never share mutable state between tests.
+- Async fixtures use `@pytest_asyncio.fixture`.
+
+### AI Chain Tests (`tests/unit/ai/`)
+
+Required for every `src/ai/<module>/chain.py`.
+
+```python
+VALID_RESPONSE = '{"score": 85, "recommendation": "qualify", "summary": "Strong lead"}'
+
+def test_parse_output_valid():
+    result = LeadQualifierChain()._parse_output(VALID_RESPONSE)
+    assert result["score"] == 85
+    assert result["recommendation"] == "qualify"
+
+def test_parse_output_malformed_raises():
+    with pytest.raises(AIOutputParseError):
+        LeadQualifierChain()._parse_output("not valid json")
+
+def test_prompt_template_renders():
+    prompt = LeadQualifierChain()._build_prompt(deal_data={...}, client_data={...})
+    assert len(prompt) > 0
+```
+
+Do NOT call the real OpenAI API in tests — use recorded response fixtures.
 
 ---
 
@@ -388,11 +586,16 @@ Implement in this order to minimize unresolved dependencies:
 16. admin module            ← reads across everything
 ```
 
-For each module, implement in this order:
+For each module, complete this checklist before moving on:
+
 ```
-domain/entities.py  →  infrastructure/models.py  →  infrastructure/repository.py
-  →  application/service.py  →  schemas/  →  api/router.py
-  →  tests/unit/  →  tests/integration/
+☐ domain/entities.py          + unit tests for invariant methods
+☐ infrastructure/models.py    (PgEnum for all ENUM columns, create_type=False)
+☐ infrastructure/repository.py + unit tests with AsyncMock db
+☐ application/service.py      + unit tests (mocked repo, all branches)
+☐ schemas/request.py + response.py
+☐ api/router.py               + integration tests (success + all error paths)
+☐ Alembic migration           (if schema changed)
 ```
 
 ---
@@ -403,19 +606,26 @@ domain/entities.py  →  infrastructure/models.py  →  infrastructure/repositor
 
 | Mistake | Correct Approach |
 |---|---|
-| Raising `HTTPException` inside a service | Raise domain exceptions (`NotFoundError`, `BusinessRuleError`). The HTTP handler in `shared/exceptions/http.py` translates them. |
+| Returning raw entity or list from a router | Wrap in `ApiResponse.ok(...)` or `PaginatedResponse.ok(...)`. |
+| Returning ad-hoc dict `{"message": "ok"}` | Use `ApiResponse.ok(...)` with a typed response schema. |
+| `raise HTTPException(...)` anywhere | Raise a domain exception — `setup_exception_handlers` converts it to `ApiError`. |
+| Implementing a feature without tests | Unit-test every service method; integration-test every endpoint. Same task, not later. |
+| Raising `HTTPException` inside a service | Raise domain exceptions (`NotFoundError`, `BusinessRuleError`). `shared/exceptions/http.py` translates them. |
 | Putting `if/else` business logic in a router | Move to `application/service.py`. |
-| Querying the DB directly from a router | Always go through the service → repository chain. |
+| Querying the DB directly from a router | Always go through service → repository. |
 | Calling `langchain` from `src/modules/` | Use `AIFacade` only. |
-| Importing one module's service into another module's service | Communicate via domain events (`EventBus`) or query the DB through a repository. |
-| Forgetting `WHERE deleted_at IS NULL` | Will expose soft-deleted records to users. |
-| Forgetting `WHERE owner_user_id = :uid` | Will leak other users' data — critical security bug. |
-| Using sync SQLAlchemy (`session.query()`) | Always use async (`await session.execute(select(...))`). |
+| Importing one module's service into another | Communicate via domain events (`EventBus`) or a repository query. |
+| Forgetting `WHERE deleted_at IS NULL` | Exposes soft-deleted records. |
+| Forgetting `WHERE owner_user_id = :uid` | Leaks other users' data — critical security bug. |
+| Using sync SQLAlchemy (`session.query()`) | Always `await session.execute(select(...))`. |
+| ORM column typed as `String` for a PG ENUM | Use `PgEnum(..., create_type=False)` — asyncpg rejects implicit VARCHAR→ENUM cast. |
+| Using `Optional[X]` | Use `X \| None` (Python 3.13). |
+| Testing only the happy path | Always add: not-found, wrong owner, invalid state, 401, 422. |
+| Mocking the DB in integration tests | Integration tests use real PostgreSQL (rolled back per test). |
 | Writing business logic in `domain/entities.py` that calls I/O | Domain entities must be pure — no DB, no HTTP, no AI calls. |
-| Modifying an append-only table (communication logs, activity entries, payment records) | These are immutable audit records. Always insert, never update. |
-| Applying AI-generated content directly to a sent/active record | AI output is always a draft. User must explicitly confirm before status advances. |
-| Hardcoding `owner_user_id` filters only in some query paths | Apply the tenant filter in the repository, not the service, so it can never be accidentally omitted. |
-| Committing a migration that references a model not imported in `alembic/env.py` | Alembic won't detect the table. Import every model module in `alembic/env.py`. |
+| Modifying an append-only table | Always INSERT, never UPDATE on audit/log tables. |
+| Applying AI-generated content directly to a live record | AI output is always draft. User must confirm before status advances. |
+| Committing a migration that references a model not in `alembic/env.py` | Alembic won't detect the table. |
 
 ### Subscription / Entitlement
 
@@ -455,11 +665,15 @@ domain/entities.py  →  infrastructure/models.py  →  infrastructure/repositor
 | `src/infrastructure/redis/client.py` | Redis connection pool, `get_redis()` |
 | `src/infrastructure/celery/app.py` | Celery app + beat schedule |
 | `src/shared/exceptions/domain.py` | Domain exception hierarchy |
-| `src/shared/exceptions/http.py` | FastAPI exception handlers |
+| `src/shared/exceptions/http.py` | FastAPI exception handlers (domain → HTTP status) |
 | `src/shared/pagination/models.py` | `PaginationParams`, `Page[T]` |
-| `src/shared/events/bus.py` | In-process `EventBus` |
+| `src/shared/events/bus.py` | In-process `EventBus` singleton |
 | `src/shared/dependencies/auth.py` | `CurrentUser`, `AdminUser`, `CurrentUserId` |
 | `src/shared/dependencies/db.py` | `DBSession` annotated type |
+| `src/shared/security/passwords.py` | `hash_password()`, `verify_password()` — Argon2id via pwdlib |
+| `src/shared/responses/response.py` | `ApiResponse[T]`, `PaginatedResponse[T]`, `ErrorResponse` |
+| `src/shared/responses/error.py` | `ApiError`, `ValidationErrorDetail`, `ErrorCode` enum |
+| `src/shared/responses/pagination.py` | `PaginationMetadata` |
 | `src/ai/facade.py` | `AIFacade` — only AI entry point for business modules |
 | `src/ai/shared/base.py` | `BaseAIChain` with retry + logging |
 | `alembic/env.py` | Async Alembic env — import models here |

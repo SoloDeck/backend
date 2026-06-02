@@ -15,16 +15,14 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 from jose import jwt
-from passlib.context import CryptContext
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config.settings import settings
-from src.shared.exceptions.domain import AlreadyExistsError
-from src.modules.auth.schemas.request import RegisterRequest
+from src.shared.exceptions.domain import AlreadyExistsError, AuthenticationError
+from src.shared.security.passwords import hash_password, verify_password
+from src.modules.auth.schemas.request import LoginRequest, RegisterRequest
 from src.modules.auth.schemas.response import AuthTokenResponse
-
-_pwd_ctx = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
 @dataclass
@@ -32,7 +30,7 @@ class AuthService:
     db: AsyncSession
 
     async def register(self, payload: RegisterRequest) -> AuthTokenResponse:
-        from src.infrastructure.database.models import UserModel, CredentialModel, SubscriptionModel, PlanModel
+        from src.infrastructure.database.models import UserModel, SubscriptionModel, PlanModel
 
         # Check for duplicate email
         existing = await self.db.scalar(
@@ -47,11 +45,11 @@ class AuthService:
         now = datetime.now(timezone.utc)
         user_id = uuid.uuid4()
 
-        # Create user
         user = UserModel(
             id=user_id,
             email=payload.email,
             full_name=payload.full_name,
+            hashed_password=hash_password(payload.password),
             role="freelancer",
             status="active",
             locale="vi",
@@ -60,13 +58,6 @@ class AuthService:
             theme="light",
         )
         self.db.add(user)
-
-        # Create credential
-        credential = CredentialModel(
-            user_id=user_id,
-            hashed_password=_pwd_ctx.hash(payload.password),
-        )
-        self.db.add(credential)
 
         # Create free subscription
         free_plan = await self.db.scalar(select(PlanModel).where(PlanModel.name == "Free"))
@@ -83,6 +74,34 @@ class AuthService:
         await self.db.commit()
 
         return self._issue_tokens(user_id=user_id, email=payload.email, role="freelancer")
+
+    async def login(self, payload: LoginRequest) -> AuthTokenResponse:
+        from src.infrastructure.database.models import UserModel
+
+        user = await self.db.scalar(
+            select(UserModel).where(
+                UserModel.email == payload.email,
+                UserModel.deleted_at.is_(None),
+            )
+        )
+
+        # Constant-time check: always verify even if user is None to prevent timing attacks
+        stored_hash = user.hashed_password if user is not None else None
+        password_ok = (
+            verify_password(payload.password, stored_hash)
+            if stored_hash is not None
+            else False
+        )
+
+        if user is None or not password_ok:
+            raise AuthenticationError("Invalid email or password")
+
+        if user.status != "active":
+            raise AuthenticationError("Account is suspended")
+
+        return self._issue_tokens(
+            user_id=user.id, email=user.email, role=user.role
+        )
 
     def _issue_tokens(self, *, user_id: uuid.UUID, email: str, role: str) -> AuthTokenResponse:
         now = datetime.now(timezone.utc)
