@@ -84,8 +84,14 @@ _proposal_status = PgEnum(
     create_type=False,
 )
 _contract_status = PgEnum(
-    "draft", "pending_signatures", "active", "completed", "cancelled", "amended",
-    name="contract_status", create_type=False,
+    "draft",
+    "pending_signatures",
+    "active",
+    "completed",
+    "terminated",
+    "expired",
+    name="contract_status",
+    create_type=False,
 )
 _invoice_status = PgEnum(
     "draft", "sent", "partially_paid", "paid", "overdue", "voided",
