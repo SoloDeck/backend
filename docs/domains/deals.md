@@ -13,6 +13,7 @@ Track every sales opportunity a freelancer pursues from first contact through to
 - Maintain a timeline of deal activity (stage changes, notes)
 - Provide pipeline view data (stage distribution, total value by stage)
 - Trigger downstream workflows on stage transitions (e.g. proposal generation, contract creation)
+- Provide an embeddable intake form (shareable link) for client self-submission of new leads
 
 ## Does Not Own
 
