@@ -1,4 +1,4 @@
-.PHONY: help install dev up down logs migrate revision migrate-docker seed-docker db-init seed bootstrap reset-db test lint fmt typecheck clean
+.PHONY: help install dev up down logs migrate revision migrate-docker seed-docker db-init seed bootstrap reset-db test lint fmt typecheck check agent-check agent-db-check clean
 
 # ---------------------------------------------------------------------------
 # Help
@@ -105,6 +105,17 @@ typecheck: ## Type-check with Mypy
 	mypy src
 
 check: lint typecheck ## Run lint + typecheck
+
+agent-check: ## Fast non-mutating gate for AI agents (contract + lint + type + unit tests)
+	python scripts/agent_check.py
+	ruff check src tests scripts
+	mypy src
+	pytest tests/unit -v
+
+agent-db-check: ## DB-dependent gate for AI agents (migrate/seed + integration tests)
+	docker compose up -d db
+	docker compose run --rm migrate python scripts/bootstrap.py
+	pytest tests/integration -v
 
 # ---------------------------------------------------------------------------
 # Utilities
