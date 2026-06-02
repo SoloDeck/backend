@@ -89,9 +89,15 @@ _reminder_target_type = PgEnum(
     "deal", "client", "invoice", "contract", name="reminder_target_type", create_type=False
 )
 _reminder_type_enum = PgEnum(
-    "follow_up", "payment_due", "contract_expiry", "proposal_expiry",
-    "meeting", "check_in", "custom",
-    name="reminder_type_enum", create_type=False,
+    "follow_up",
+    "proposal_follow_up",
+    "contract_signing_nudge",
+    "payment_due",
+    "payment_overdue",
+    "re_engagement",
+    "custom",
+    name="reminder_type_enum",
+    create_type=False,
 )
 _reminder_status = PgEnum(
     "pending", "sent", "failed", "cancelled", "skipped",
