@@ -35,7 +35,7 @@ from src.infrastructure.database.base import Base, SoftDeleteMixin, TimestampMix
 _user_role = PgEnum("freelancer", "admin", name="user_role", create_type=False)
 _user_status = PgEnum("active", "suspended", "deleted", name="user_status", create_type=False)
 _notification_channel = PgEnum(
-    "email", "in_app", "both", name="notification_channel", create_type=False
+    "email", "in_app", "both", "zalo", name="notification_channel", create_type=False
 )
 _theme_preference = PgEnum("light", "dark", name="theme_preference", create_type=False)
 _subscription_status = PgEnum(
@@ -43,9 +43,8 @@ _subscription_status = PgEnum(
     name="subscription_status", create_type=False,
 )
 _billing_event_type = PgEnum(
-    "subscription_created", "subscription_renewed", "subscription_cancelled",
-    "payment_succeeded", "payment_failed", "plan_upgraded", "plan_downgraded",
-    "trial_started", "trial_ended",
+    "payment_succeeded", "payment_failed",
+    "subscription_renewed", "subscription_cancelled",
     name="billing_event_type", create_type=False,
 )
 _client_type = PgEnum("individual", "company", name="client_type", create_type=False)
@@ -53,10 +52,10 @@ _client_status = PgEnum(
     "prospect", "active", "inactive", "archived", name="client_status", create_type=False
 )
 _comm_channel = PgEnum(
-    "email", "phone", "meeting", "message", name="comm_channel", create_type=False
+    "email", "phone", "meeting", "message", "zalo", name="comm_channel", create_type=False
 )
 _deal_stage = PgEnum(
-    "new_lead", "qualified", "proposal_sent", "negotiation",
+    "new_lead", "qualified", "proposal_sent", "in_negotiation",
     "active", "completed_and_billed", "lost",
     name="deal_stage", create_type=False,
 )
@@ -73,6 +72,7 @@ _deal_activity_type = PgEnum(
     create_type=False,
 )
 _ai_recommendation = PgEnum("qualify", "pass", name="ai_recommendation", create_type=False)
+_lead_score_level = PgEnum("hot", "warm", "cold", name="lead_score_level", create_type=False)
 _proposal_status = PgEnum(
     "draft",
     "sent",
@@ -94,11 +94,11 @@ _contract_status = PgEnum(
     create_type=False,
 )
 _invoice_status = PgEnum(
-    "draft", "sent", "partially_paid", "paid", "overdue", "voided",
+    "draft", "sent", "partially_paid", "paid", "overdue", "void",
     name="invoice_status", create_type=False,
 )
 _payment_method = PgEnum(
-    "bank_transfer", "cash", "online", "other", name="payment_method", create_type=False
+    "bank_transfer", "momo", "cash", "online", "other", name="payment_method", create_type=False
 )
 _reminder_target_type = PgEnum(
     "deal", "client", "invoice", "contract", name="reminder_target_type", create_type=False
@@ -526,6 +526,11 @@ class ProposalModel(UUIDMixin, TimestampMixin, Base):
         Index("idx_proposals_deal_status", "deal_id", "status"),
         Index("idx_proposals_owner_status", "owner_user_id", "status"),
         Index("idx_proposals_owner_created", "owner_user_id", "created_at"),
+        Index(
+            "idx_proposals_content_gin", "content",
+            postgresql_using="gin",
+            postgresql_ops={"content": "jsonb_path_ops"},
+        ),
     )
 
 
@@ -578,6 +583,11 @@ class ContractModel(UUIDMixin, TimestampMixin, Base):
         Index("idx_contracts_owner_status", "owner_user_id", "status"),
         Index("idx_contracts_client", "client_id"),
         Index("idx_contracts_proposal", "proposal_id"),
+        Index(
+            "uq_contracts_one_active_per_deal", "deal_id",
+            unique=True,
+            postgresql_where=text("status IN ('active', 'pending_signatures')"),
+        ),
     )
 
 
@@ -655,6 +665,14 @@ class InvoiceModel(UUIDMixin, TimestampMixin, Base):
         Index("idx_invoices_owner_due_date", "owner_user_id", "due_date"),
         Index("idx_invoices_owner_issued", "owner_user_id", "issue_date"),
         Index("idx_invoices_client", "client_id"),
+        Index(
+            "idx_invoices_contract", "contract_id",
+            postgresql_where=text("contract_id IS NOT NULL"),
+        ),
+        Index(
+            "idx_invoices_deal", "deal_id",
+            postgresql_where=text("deal_id IS NOT NULL"),
+        ),
     )
 
 
@@ -735,6 +753,14 @@ class ReminderModel(UUIDMixin, TimestampMixin, Base):
             "owner_user_id", "status", "scheduled_at",
         ),
         Index("idx_reminders_target", "target_type", "target_id"),
+        Index(
+            "idx_reminders_pending_scheduled", "scheduled_at",
+            postgresql_where=text("status = 'pending'"),
+        ),
+        Index(
+            "idx_reminders_parent", "parent_reminder_id",
+            postgresql_where=text("parent_reminder_id IS NOT NULL"),
+        ),
     )
 
 
