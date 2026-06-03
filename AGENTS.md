@@ -47,6 +47,22 @@ Key reference documents:
 
 ---
 
+## Commit Rules
+
+Follow these rules for every commit, no exceptions:
+
+* **One logical change per commit.** Never bundle unrelated changes.
+* **Message format:** `<type>(<scope>): <short summary>`
+  * Examples: `feat(deals): add intake form endpoint`, `fix(models): correct deal_stage enum value`
+* **Allowed types:** `feat` · `fix` · `docs` · `refactor` · `test` · `chore` · `migration`
+* **Scope:** use the module name (`auth`, `deals`, `contracts`, …) or `models`, `schema`, `config`, `deps`, `ci`
+* **Never commit:** secrets, `.env` files, compiled bytecode (`__pycache__`, `*.pyc`), local IDE config
+* **Never amend a pushed commit.** Create a new commit instead.
+* **Never skip hooks** (`--no-verify`) unless the user explicitly requests it.
+* **Migration commits** must use type `migration(<domain>):` and must not be bundled with feature code.
+
+---
+
 ## Agent Workflow
 
 Every task that adds or modifies a feature must follow this sequence:
