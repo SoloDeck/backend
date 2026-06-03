@@ -11,7 +11,7 @@ src/
 ├── modules/          ← 11 business domains
 ├── ai/               ← AI chains (cross-cutting, never imported by modules directly)
 ├── workers/          ← Celery task definitions
-├── integrations/     ← External provider adapters
+├── integrations/     ← External provider adapters (stripe, google_oauth, openai_client, sendgrid, zalo_oa, momo)
 ├── infrastructure/   ← DB engine, Redis, Celery app setup
 └── shared/           ← Pagination, exceptions, events, dependencies
 ```

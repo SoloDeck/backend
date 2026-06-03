@@ -3,7 +3,7 @@
 from enum import StrEnum
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class ErrorCode(StrEnum):
@@ -27,4 +27,4 @@ class ValidationErrorDetail(BaseModel):
 class ApiError(BaseModel):
     message: str
     code: str
-    details: list[ValidationErrorDetail] = []
+    details: list[ValidationErrorDetail] = Field(default_factory=list)

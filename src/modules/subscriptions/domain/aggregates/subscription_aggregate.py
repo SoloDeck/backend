@@ -99,7 +99,8 @@ class SubscriptionAggregate:
         tokens_used: int | None = None,
         cost_usd: float | None = None,
     ) -> UsageRecord:
-        self.subscription.check_entitlement(feature.value.replace("ai_", "can_use_ai").split("_")[0])
+        entitlement_feature = "can_export_pdf" if feature == UsageFeature.PDF_EXPORT else "can_use_ai"
+        self.subscription.check_entitlement(entitlement_feature)
         now = datetime.now(timezone.utc)
         record = UsageRecord(
             id=uuid.uuid4(),

@@ -1,5 +1,18 @@
 # SoloDesk Backend — Claude Code Context
 
+## Commit Rules
+
+- **Commit scope:** one logical change per commit. Never bundle unrelated changes.
+- **Message format:** `<type>(<scope>): <short summary>` — e.g. `feat(deals): add intake form endpoint`, `fix(models): correct deal_stage enum value`.
+- **Allowed types:** `feat` · `fix` · `docs` · `refactor` · `test` · `chore` · `migration`
+- **Scope:** use the module name (`auth`, `deals`, `contracts`, …) or `models`, `schema`, `config`, `deps`, `ci`.
+- **Never commit:** secrets, `.env` files, compiled bytecode (`__pycache__`, `*.pyc`), local IDE config.
+- **Never amend a pushed commit.** Create a new commit instead.
+- **Never skip hooks** (`--no-verify`) unless explicitly instructed.
+- **Migration commits** must be tagged `migration(<domain>):` and must not be bundled with feature code.
+
+---
+
 ## Agent Workflow
 
 **Every task that adds or modifies a feature must follow this sequence — no exceptions:**
@@ -41,6 +54,9 @@ Client → Deal → Proposal → Contract → Invoice
 | Migrations | Alembic (async env) |
 | Cache / Queue broker | Redis 7 |
 | Task queue | Celery 5 with beat scheduler |
+| PDF generation | WeasyPrint |
+| Email delivery | SendGrid |
+| Messaging delivery | Zalo Official Account (OA) API |
 | AI orchestration | LangChain + OpenAI (gpt-4o) |
 | Validation | Pydantic v2 |
 | Settings | pydantic-settings |
@@ -63,7 +79,7 @@ src/
 ├── modules/          # 11 business domains (see Module Ownership)
 ├── ai/               # AI chains — never imported by modules directly
 ├── workers/          # Celery tasks (ai_jobs, pdf_jobs, reminder_jobs, scheduler)
-├── integrations/     # External providers (stripe, google_oauth, openai_client)
+├── integrations/     # External providers (stripe, google_oauth, openai_client, sendgrid, zalo_oa, momo)
 ├── infrastructure/   # Database, Redis, Celery app setup
 ├── shared/           # Pagination, exceptions, events, dependencies, security, logging
 └── main.py           # FastAPI app, router registration, lifespan
@@ -130,10 +146,11 @@ lifecycle, logout + token blacklisting, password reset.
 **Key rule:** client email is unique per owner user, not globally.
 
 ### `deals`
-**Responsibilities:** deal CRUD, pipeline stage transitions, activity log, AI qualification trigger.
+**Responsibilities:** deal CRUD, pipeline stage transitions, activity log, AI qualification trigger, embeddable intake form (shareable link for client self-submission).
 **Boundaries:** does NOT own proposal documents, contract documents, invoices, or reminders.
 **Depends on:** Clients (client_id immutable after creation).
-**Key rule:** stage transitions are forward-only; `completed_and_billed` and `lost` are terminal. Validate using `Deal.can_transition_to()` in the service layer.
+**Pipeline stages (forward-only):** `new_lead` → `qualified` → `proposal_sent` → `in_negotiation` → `active` → `completed_and_billed`. Terminal stages: `completed_and_billed`, `lost`.
+**Key rule:** Validate all transitions using `Deal.can_transition_to()` in the service layer. Moving to `lost` or `completed_and_billed` sets `closed_at` and auto-cancels pending Reminders.
 
 ### `proposals`
 **Responsibilities:** proposal versioning, lifecycle (draft → sent → accepted/rejected/expired), shareable client link, AI generation trigger.
@@ -145,6 +162,7 @@ lifecycle, logout + token blacklisting, password reset.
 **Responsibilities:** contract creation from accepted proposal, content editing (draft only), signing workflow, amendment versioning, payment milestones.
 **Boundaries:** does NOT own invoice creation — emits milestone events for Invoices to consume.
 **Depends on:** Proposals (proposal must be `accepted`), Deals, Clients.
+**Contract scope:** contracts are simple service agreements ("hợp đồng dịch vụ đơn giản") — **not** formal legal documents. AI generation produces a practical working agreement suitable for Vietnamese freelancer–client relationships, not court-enforceable legal text.
 **Key rule:** client data is embedded by value at creation (`client_snapshot` JSONB) — never read live client record for contract display.
 
 ### `invoices`
@@ -160,6 +178,7 @@ lifecycle, logout + token blacklisting, password reset.
 **Responsibilities:** reminder scheduling, delivery via Workers, recurrence, auto-cancel when target reaches terminal state.
 **Boundaries:** does NOT own business objects — targets them via polymorphic (`target_type`, `target_id`).
 **Depends on:** Users (timezone/preferences), Workers (Celery delivery).
+**Delivery channels:** email via SendGrid (`src/integrations/sendgrid/`) or Zalo OA message via Zalo API (`src/integrations/zalo_oa/`). Channel is chosen per user preference. Never deliver via raw SMTP or direct HTTP calls — always go through the integration adapters.
 **Key rule:** no DB-level FK on `target_id` — referential integrity enforced at application layer.
 
 ### `analytics`
@@ -635,6 +654,7 @@ For each module, complete this checklist before moving on:
 
 ### Deal Stage Transitions
 
+- Valid stages: `new_lead` → `qualified` → `proposal_sent` → `in_negotiation` → `active` → `completed_and_billed`. Also `lost` (terminal, reachable from any non-terminal stage).
 - Validate with `Deal.can_transition_to(target)` before any DB write.
 - Transitioning to `active` requires at least one accepted Proposal linked to the Deal.
 - Transitioning to `completed_and_billed` requires at least one Invoice linked to the Deal.
