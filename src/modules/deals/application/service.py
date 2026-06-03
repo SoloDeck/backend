@@ -1,7 +1,7 @@
-"""udeals application service — skeleton."""
+"""Deals application service — skeleton."""
 from dataclasses import dataclass
 from sqlalchemy.ext.asyncio import AsyncSession
 
 @dataclass
-class udealsService:
+class DealsService:
     db: AsyncSession

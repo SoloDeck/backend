@@ -1,7 +1,7 @@
-"""ureminders application service — skeleton."""
+"""Reminders application service — skeleton."""
 from dataclasses import dataclass
 from sqlalchemy.ext.asyncio import AsyncSession
 
 @dataclass
-class uremindersService:
+class RemindersService:
     db: AsyncSession

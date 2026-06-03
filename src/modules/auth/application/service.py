@@ -40,7 +40,7 @@ class AuthService:
             )
         )
         if existing:
-            raise AlreadyExistsError("email", payload.email)
+            raise AlreadyExistsError(f"Email '{payload.email}' is already registered")
 
         now = datetime.now(timezone.utc)
         user_id = uuid.uuid4()
