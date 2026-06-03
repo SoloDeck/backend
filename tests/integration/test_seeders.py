@@ -10,7 +10,7 @@ Test coverage:
 - AdminSeeder creates an admin user in development
 - AdminSeeder is idempotent (double run produces no duplicates)
 - run_all honours APP_ENV guard (admin skipped outside development)
-- Default plan slugs: free, pro, business
+- Default plan slugs: free, pro, agency
 """
 
 from unittest.mock import patch
@@ -56,7 +56,7 @@ class TestPlansSeeder:
     async def test_creates_expected_slugs(self, db_session: AsyncSession) -> None:
         await PlansSeeder(db_session).run()
         slugs = await _plan_slugs(db_session)
-        assert slugs == {"free", "pro", "business"}
+        assert slugs == {"free", "pro", "agency"}
 
     async def test_free_plan_has_no_ai(self, db_session: AsyncSession) -> None:
         await PlansSeeder(db_session).run()
@@ -72,14 +72,14 @@ class TestPlansSeeder:
         assert pro.can_use_ai is True
         assert pro.max_ai_generations_per_month == 50
 
-    async def test_business_plan_has_most_ai(self, db_session: AsyncSession) -> None:
+    async def test_agency_plan_has_most_ai(self, db_session: AsyncSession) -> None:
         await PlansSeeder(db_session).run()
-        biz = await db_session.scalar(
-            select(PlanModel).where(PlanModel.slug == "business")
+        agency = await db_session.scalar(
+            select(PlanModel).where(PlanModel.slug == "agency")
         )
-        assert biz is not None
-        assert biz.can_use_ai is True
-        assert biz.max_ai_generations_per_month == 500
+        assert agency is not None
+        assert agency.can_use_ai is True
+        assert agency.max_ai_generations_per_month == 500
 
     async def test_idempotent_no_duplicates(self, db_session: AsyncSession) -> None:
         await PlansSeeder(db_session).run()
