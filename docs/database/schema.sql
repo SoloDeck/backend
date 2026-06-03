@@ -16,7 +16,7 @@ CREATE EXTENSION IF NOT EXISTS "pgcrypto";  -- gen_random_uuid()
 
 CREATE TYPE user_role            AS ENUM ('freelancer', 'admin');
 CREATE TYPE user_status          AS ENUM ('active', 'suspended', 'deleted');
-CREATE TYPE notification_channel AS ENUM ('email', 'in_app', 'both');
+CREATE TYPE notification_channel AS ENUM ('email', 'in_app', 'both', 'zalo');
 CREATE TYPE theme_preference     AS ENUM ('light', 'dark');
 
 CREATE TYPE subscription_status  AS ENUM ('active', 'past_due', 'suspended', 'cancelled');
@@ -29,7 +29,7 @@ CREATE TYPE billing_event_type   AS ENUM (
 
 CREATE TYPE client_type          AS ENUM ('individual', 'company');
 CREATE TYPE client_status        AS ENUM ('prospect', 'active', 'inactive', 'archived');
-CREATE TYPE comm_channel         AS ENUM ('email', 'phone', 'meeting', 'message');
+CREATE TYPE comm_channel         AS ENUM ('email', 'phone', 'meeting', 'message', 'zalo');
 
 CREATE TYPE deal_stage           AS ENUM (
     'new_lead',
@@ -48,6 +48,7 @@ CREATE TYPE deal_activity_type   AS ENUM (
     'ai_qualification'
 );
 CREATE TYPE ai_recommendation    AS ENUM ('qualify', 'pass');
+CREATE TYPE lead_score_level     AS ENUM ('hot', 'warm', 'cold');
 
 CREATE TYPE proposal_status      AS ENUM (
     'draft',
@@ -75,7 +76,7 @@ CREATE TYPE invoice_status       AS ENUM (
     'overdue',
     'void'
 );
-CREATE TYPE payment_method       AS ENUM ('bank_transfer', 'cash', 'online', 'other');
+CREATE TYPE payment_method       AS ENUM ('bank_transfer', 'momo', 'cash', 'online', 'other');
 
 CREATE TYPE reminder_target_type AS ENUM ('deal', 'client', 'invoice', 'contract');
 CREATE TYPE reminder_type_enum   AS ENUM (
@@ -138,6 +139,13 @@ CREATE TABLE users (
     currency                CHAR(3)         NOT NULL DEFAULT 'VND',
     portfolio_url           TEXT,
     business_name           VARCHAR(255),
+    momo_phone_number       VARCHAR(20),
+    bank_account_info       TEXT,
+
+    -- Zalo OA integration
+    zalo_oa_app_id          VARCHAR(255),
+    zalo_oa_access_token    TEXT,
+    zalo_oa_refresh_token   TEXT,
 
     -- Preferences (embedded value object)
     locale                  CHAR(5)         NOT NULL DEFAULT 'vi',

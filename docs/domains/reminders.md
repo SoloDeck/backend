@@ -17,7 +17,8 @@ Schedule and deliver timely, contextual notifications that prompt the freelancer
 ## Does Not Own
 
 - The business objects being reminded about (owned by respective domains)
-- Email template rendering and SMTP delivery (delegated to Workers)
+- Email delivery implementation (delegated to Workers via SendGrid adapter in `src/integrations/sendgrid/`)
+- Zalo OA message delivery implementation (delegated to Workers via Zalo OA adapter in `src/integrations/zalo_oa/`)
 - Push notification infrastructure (future; delegated to Workers)
 - Subscription billing reminders for SoloDesk itself (owned by **Subscriptions** domain)
 
@@ -43,7 +44,7 @@ Schedule and deliver timely, contextual notifications that prompt the freelancer
 
 **Recurrence Rule** — An optional RRULE-compatible definition for repeating reminders (e.g. every 3 days, until cancelled). Used for persistent follow-up sequences.
 
-**Channel** — Where the notification is delivered: `in_app` (notification center), `email`, or `both`.
+**Channel** — Where the notification is delivered: `in_app` (notification center), `email` (via SendGrid), `zalo` (via Zalo Official Account API), or `both`. Channel is chosen per user preference stored in their profile.
 
 **Delivery Record** — An immutable log entry per delivery attempt: `attempted_at`, `channel`, `outcome`, `error_message`.
 

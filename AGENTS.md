@@ -31,6 +31,9 @@ The backend stack is:
 * Redis 7
 * Celery 5 + beat
 * LangChain + OpenAI (gpt-4o)
+* WeasyPrint (PDF generation)
+* SendGrid (email delivery)
+* Zalo Official Account (OA) API (messaging delivery)
 * Pydantic v2
 * structlog
 
@@ -41,6 +44,22 @@ Key reference documents:
 * `docs/domains/aggregates/` — DDD aggregate design per domain
 * `docs/adr/` — architectural decision records
 * `.ai/` — agent-specific rules for architecture, coding, naming, testing
+
+---
+
+## Commit Rules
+
+Follow these rules for every commit, no exceptions:
+
+* **One logical change per commit.** Never bundle unrelated changes.
+* **Message format:** `<type>(<scope>): <short summary>`
+  * Examples: `feat(deals): add intake form endpoint`, `fix(models): correct deal_stage enum value`
+* **Allowed types:** `feat` · `fix` · `docs` · `refactor` · `test` · `chore` · `migration`
+* **Scope:** use the module name (`auth`, `deals`, `contracts`, …) or `models`, `schema`, `config`, `deps`, `ci`
+* **Never commit:** secrets, `.env` files, compiled bytecode (`__pycache__`, `*.pyc`), local IDE config
+* **Never amend a pushed commit.** Create a new commit instead.
+* **Never skip hooks** (`--no-verify`) unless the user explicitly requests it.
+* **Migration commits** must use type `migration(<domain>):` and must not be bundled with feature code.
 
 ---
 
@@ -149,18 +168,18 @@ Keep domain concepts in their owning module:
 | `users` | Profile, professional profile, preferences, soft-delete | Does not own credentials, subscriptions, or business records |
 | `subscriptions` | Plans, subscription lifecycle, usage counters, billing events, entitlement checks | Does not own raw payment gateway processing |
 | `clients` | Client address book, contacts, communication logs, tags, lifecycle | Does not own deals, proposals, contracts, or invoices |
-| `deals` | Deal CRUD, pipeline stage transitions, activity log, AI qualification trigger | Does not own documents or invoices |
+| `deals` | Deal CRUD, pipeline stage transitions, activity log, AI qualification trigger, embeddable intake form (shareable client self-submission link) | Does not own documents or invoices |
 | `proposals` | Proposal versions, lifecycle, share links, AI draft trigger | Does not directly advance deal stages |
 | `contracts` | Contract creation, draft editing, signing, amendments, payment milestones | Does not own invoice creation or payment tracking |
 | `invoices` | Invoice CRUD, line items, tax totals, payment recording, overdue detection, share links | Does not own contract milestone definitions |
-| `reminders` | Scheduling, recurrence, delivery records, target lifecycle reactions | Does not own target business objects |
+| `reminders` | Scheduling, recurrence, delivery records, target lifecycle reactions. Delivery channels: email via SendGrid or Zalo OA message; channel chosen per user preference. | Does not own target business objects |
 | `analytics` | Read-only revenue, pipeline, client, subscription, and AI usage metrics | Never writes operational tables |
 | `admin` | Admin user management, subscription overrides, templates, feature flags, audit logs, platform metrics | Must not bypass domain services |
 
 Critical module rules:
 
 * `subscriptions` entitlement checks must happen before AI token consumption.
-* `deals` stage transitions are forward-only; `completed_and_billed` and `lost` are terminal.
+* `deals` pipeline stages (forward-only): `new_lead` → `qualified` → `proposal_sent` → `in_negotiation` → `active` → `completed_and_billed`. `lost` is terminal and reachable from any non-terminal stage.
 * `proposals` may have only one `sent` proposal per deal at a time.
 * `contracts` embed `client_snapshot` at creation and never read live client data for contract display.
 * `invoices` must link to `contract_id` or `deal_id`; standalone invoices are invalid.

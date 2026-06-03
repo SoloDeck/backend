@@ -19,10 +19,16 @@ from src.shared.responses.error import ErrorCode, ValidationErrorDetail
 from src.shared.responses.response import ErrorResponse
 
 
-def _err(http_code: int, error_code: str, message: str, details: list | None = None) -> JSONResponse:
+def _err(
+    http_code: int,
+    error_code: str | ErrorCode,
+    message: str,
+    details: list[ValidationErrorDetail] | None = None,
+) -> JSONResponse:
+    code = error_code.value if isinstance(error_code, ErrorCode) else error_code
     body = ErrorResponse.from_error(
         http_code=http_code,
-        error_code=error_code,
+        error_code=code,
         message=message,
         details=details,
     )
