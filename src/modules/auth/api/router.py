@@ -1,13 +1,30 @@
+"""Auth API router."""
+
+import uuid
+from datetime import datetime, timedelta, timezone
+from typing import Annotated
+
 from fastapi import APIRouter, Depends, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.infrastructure.database.session import get_db_session
 from src.modules.auth.application.service import AuthService
-from src.modules.auth.schemas.request import LoginRequest, RegisterRequest
-from src.modules.auth.schemas.response import AuthTokenResponse
-from src.shared.responses import ApiResponse
+from src.modules.auth.schemas.request import (
+    GoogleAuthRequest,
+    LoginRequest,
+    PasswordResetConfirmRequest,
+    PasswordResetRequestBody,
+    RefreshRequest,
+    RegisterRequest,
+)
+from src.modules.auth.schemas.response import AuthTokenResponse, MessageResponse
+from src.shared.dependencies.auth import CurrentUser
+from src.shared.responses.response import ApiResponse
+from src.config.settings import settings
 
 router = APIRouter()
+
+DBSession = Annotated[AsyncSession, Depends(get_db_session)]
 
 
 @router.post(
@@ -18,7 +35,7 @@ router = APIRouter()
 )
 async def register(
     payload: RegisterRequest,
-    db: AsyncSession = Depends(get_db_session),
+    db: DBSession,
 ) -> ApiResponse[AuthTokenResponse]:
     result = await AuthService(db=db).register(payload)
     return ApiResponse.created(result)
@@ -31,15 +48,80 @@ async def register(
 )
 async def login(
     payload: LoginRequest,
-    db: AsyncSession = Depends(get_db_session),
+    db: DBSession,
 ) -> ApiResponse[AuthTokenResponse]:
     result = await AuthService(db=db).login(payload)
     return ApiResponse.ok(result)
 
 
-# POST /refresh
-# POST /logout
-# GET  /google
-# GET  /google/callback
-# POST /password-reset/request
-# POST /password-reset/confirm
+@router.post(
+    "/refresh",
+    response_model=ApiResponse[AuthTokenResponse],
+    summary="Refresh access token",
+)
+async def refresh(
+    payload: RefreshRequest,
+    db: DBSession,
+) -> ApiResponse[AuthTokenResponse]:
+    result = await AuthService(db=db).refresh(payload)
+    return ApiResponse.ok(result)
+
+
+@router.post(
+    "/logout",
+    response_model=ApiResponse[MessageResponse],
+    summary="Logout and blacklist current token",
+)
+async def logout(
+    current_user: CurrentUser,
+    db: DBSession,
+) -> ApiResponse[MessageResponse]:
+    expires_at = datetime.now(timezone.utc) + timedelta(
+        minutes=settings.jwt_access_token_expire_minutes
+    )
+    await AuthService(db=db).logout(
+        user_id=uuid.UUID(current_user.sub),
+        jti=current_user.jti,
+        expires_at=expires_at,
+    )
+    return ApiResponse.ok(MessageResponse(detail="Logged out successfully"))
+
+
+@router.post(
+    "/google",
+    response_model=ApiResponse[AuthTokenResponse],
+    summary="Authenticate with Google ID token",
+)
+async def google_auth(
+    payload: GoogleAuthRequest,
+    db: DBSession,
+) -> ApiResponse[AuthTokenResponse]:
+    result = await AuthService(db=db).google_auth(payload)
+    return ApiResponse.ok(result)
+
+
+@router.post(
+    "/password-reset/request",
+    response_model=ApiResponse[MessageResponse],
+    summary="Request a password reset token",
+)
+async def password_reset_request(
+    payload: PasswordResetRequestBody,
+    db: DBSession,
+) -> ApiResponse[MessageResponse]:
+    token = await AuthService(db=db).request_password_reset(payload)
+    detail = f"Reset token: {token}" if token else "If email exists, reset instructions sent"
+    return ApiResponse.ok(MessageResponse(detail=detail))
+
+
+@router.post(
+    "/password-reset/confirm",
+    response_model=ApiResponse[MessageResponse],
+    summary="Confirm password reset with token",
+)
+async def password_reset_confirm(
+    payload: PasswordResetConfirmRequest,
+    db: DBSession,
+) -> ApiResponse[MessageResponse]:
+    await AuthService(db=db).confirm_password_reset(payload)
+    return ApiResponse.ok(MessageResponse(detail="Password reset successfully"))

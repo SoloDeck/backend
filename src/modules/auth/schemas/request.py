@@ -37,3 +37,7 @@ class PasswordResetRequestBody(BaseModel):
 class PasswordResetConfirmRequest(BaseModel):
     token: str
     new_password: str
+
+
+class GoogleAuthRequest(BaseModel):
+    id_token: str

@@ -6,3 +6,7 @@ class AuthTokenResponse(BaseModel):
     refresh_token: str
     token_type: str = "Bearer"
     expires_in: int  # seconds
+
+
+class MessageResponse(BaseModel):
+    detail: str
