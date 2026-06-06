@@ -1,4 +1,4 @@
-.PHONY: help install dev up down logs migrate revision migrate-docker seed-docker db-init seed bootstrap reset-db test lint fmt typecheck clean
+.PHONY: help install dev up down logs migrate revision migrate-docker seed-docker db-init seed bootstrap reset-db test test-unit test-integration test-fast test-build lint fmt typecheck check agent-check agent-db-check clean
 
 # ---------------------------------------------------------------------------
 # Help
@@ -77,19 +77,22 @@ beat-dev: ## Run Celery beat locally
 	celery -A src.infrastructure.celery.app.celery_app beat --loglevel=debug
 
 # ---------------------------------------------------------------------------
-# Testing
+# Testing (all targets run inside Docker via the 'test' service)
 # ---------------------------------------------------------------------------
-test: ## Run full test suite
-	pytest -v --cov=src --cov-report=term-missing
+test-build: ## Build the test Docker image
+	docker compose build test
 
-test-unit: ## Run unit tests only
-	pytest tests/unit -v
+test: ## Run full test suite (Docker)
+	docker compose run --rm test python -m pytest tests/ -v --cov=src --cov-report=term-missing
 
-test-integration: ## Run integration tests only
-	pytest tests/integration -v
+test-unit: ## Run unit tests only (Docker)
+	docker compose run --rm test python -m pytest tests/unit/ -v
 
-test-fast: ## Run tests, stop on first failure
-	pytest -x -q
+test-integration: ## Run integration tests only (Docker)
+	docker compose run --rm test python -m pytest tests/integration/ -v
+
+test-fast: ## Run tests, stop on first failure (Docker)
+	docker compose run --rm test python -m pytest tests/ -x -q
 
 # ---------------------------------------------------------------------------
 # Code quality
@@ -105,6 +108,17 @@ typecheck: ## Type-check with Mypy
 	mypy src
 
 check: lint typecheck ## Run lint + typecheck
+
+agent-check: ## Fast non-mutating gate for AI agents (contract + lint + type + unit tests)
+	python scripts/agent_check.py
+	ruff check src tests scripts
+	mypy src
+	pytest tests/unit -v
+
+agent-db-check: ## DB-dependent gate for AI agents (migrate/seed + integration tests)
+	docker compose up -d db
+	docker compose run --rm migrate python scripts/bootstrap.py
+	pytest tests/integration -v
 
 # ---------------------------------------------------------------------------
 # Utilities

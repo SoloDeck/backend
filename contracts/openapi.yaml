@@ -18,19 +18,33 @@ security:
 
 tags:
   - name: Auth
+    description: Registration, credential login, Google OAuth, JWT lifecycle, and password reset.
   - name: Users
+    description: User account CRUD, professional profile, and notification preferences.
   - name: Subscriptions
+    description: Plan catalog, subscription lifecycle, plan changes, and AI usage counters.
   - name: Clients
+    description: Client address book, contact info, communication logs, and tags.
   - name: Deals
+    description: Deal CRUD, pipeline stage transitions, activity timeline, and AI lead qualification.
   - name: Proposals
+    description: Proposal versioning, lifecycle (draft → sent → accepted/rejected/expired), and AI generation.
   - name: Contracts
+    description: Contract creation from accepted proposals, signing workflow, amendments, and milestones.
   - name: Invoices
+    description: Invoice CRUD, line items, tax calculation, status transitions, and payment recording.
   - name: Payments
+    description: Payment link generation, payment intent management, and provider webhook ingestion.
   - name: Reminders
+    description: Reminder scheduling, recurrence rules, and delivery management via Celery workers.
   - name: Analytics
+    description: Read-only derived metrics — revenue, pipeline, win rate, top clients, and AI usage.
   - name: AI
+    description: Standalone AI endpoints for lead qualification, proposal/contract generation, and follow-up drafts. All require an AI-enabled subscription.
   - name: Admin
+    description: Platform administration — user management, subscription overrides, plan catalog, templates, feature flags, AI cost monitoring, and audit logs. Requires `role=admin`.
   - name: Public
+    description: Client-facing unauthenticated endpoints for viewing and responding to proposals, contracts, and invoices via shareable links.
 
 # ===========================================================================
 # PATHS
@@ -44,6 +58,10 @@ paths:
     post:
       tags: [Auth]
       summary: Register a new freelancer account
+      description: |
+        Creates a new user account and provisions a free-tier subscription automatically.
+        Password must be at least 8 characters. Returns a JWT access token and a refresh
+        token so the caller can start authenticated requests immediately.
       security: []
       requestBody:
         required: true
@@ -76,6 +94,10 @@ paths:
     post:
       tags: [Auth]
       summary: Login with email and password
+      description: |
+        Validates credentials and returns a short-lived access token (15 min) and a
+        long-lived refresh token. Subject to rate limiting — repeated failures from the
+        same IP return 429.
       security: []
       requestBody:
         required: true
@@ -104,6 +126,10 @@ paths:
     post:
       tags: [Auth]
       summary: Rotate refresh token and obtain new access token
+      description: |
+        Token rotation strategy — the submitted refresh token is invalidated immediately
+        and a new pair is issued. Each refresh token is single-use; replaying an old
+        token returns 401.
       security: []
       requestBody:
         required: true
@@ -130,6 +156,9 @@ paths:
     post:
       tags: [Auth]
       summary: Invalidate current session
+      description: |
+        Blacklists the caller's access token in Redis. Any subsequent request carrying
+        the same token returns 401. The refresh token is also revoked server-side.
       responses:
         '204':
           description: Logged out
@@ -140,6 +169,9 @@ paths:
     get:
       tags: [Auth]
       summary: Initiate Google OAuth 2.0 flow
+      description: |
+        Redirects the browser to Google's authorization endpoint with PKCE state.
+        A new account is created automatically if the Google email is not yet registered.
       security: []
       responses:
         '302':
@@ -180,6 +212,9 @@ paths:
     post:
       tags: [Auth]
       summary: Request a password reset email
+      description: |
+        Always returns 204 regardless of whether the email is registered, to prevent
+        email enumeration. The reset link is valid for 1 hour.
       security: []
       requestBody:
         required: true
@@ -197,6 +232,9 @@ paths:
     post:
       tags: [Auth]
       summary: Apply new password using reset token
+      description: |
+        Token is single-use and expires after 1 hour. On success, all existing sessions
+        for the account are revoked immediately.
       security: []
       requestBody:
         required: true
@@ -223,6 +261,7 @@ paths:
     get:
       tags: [Users]
       summary: Get current user profile
+      description: Returns the full profile including nested `professional_profile` and `preferences` objects.
       responses:
         '200':
           description: User profile
@@ -240,6 +279,9 @@ paths:
     patch:
       tags: [Users]
       summary: Update current user identity fields
+      description: |
+        Partial update — only provided fields are changed. Changing `email` triggers a
+        uniqueness check across all users and returns 409 if the address is already taken.
       requestBody:
         required: true
         content:
@@ -269,6 +311,9 @@ paths:
     delete:
       tags: [Users]
       summary: Request soft-deletion of own account
+      description: |
+        Sets `deleted_at` on the user record (soft delete). All active sessions are
+        revoked immediately. Data is retained for 30 days before permanent deletion.
       responses:
         '204':
           description: Account scheduled for deletion
@@ -279,6 +324,9 @@ paths:
     patch:
       tags: [Users]
       summary: Update professional profile (skills, rate, portfolio…)
+      description: |
+        Updates skills, hourly rate, and portfolio metadata. These values are read by the
+        AI proposal generator to personalize generated content.
       requestBody:
         required: true
         content:
@@ -304,6 +352,9 @@ paths:
     patch:
       tags: [Users]
       summary: Update notification, locale, and theme preferences
+      description: |
+        `locale` and `timezone` affect reminder scheduling and the language used by AI
+        content generation. Changes take effect on the next AI call or reminder dispatch.
       requestBody:
         required: true
         content:
@@ -330,6 +381,7 @@ paths:
     get:
       tags: [Subscriptions]
       summary: List all active subscription plans
+      description: Returns only plans with `is_active=true`. Use `/admin/plans` to list all plans including deactivated ones.
       security: []
       responses:
         '200':
@@ -389,6 +441,10 @@ paths:
     post:
       tags: [Subscriptions]
       summary: Upgrade to a higher plan (takes effect immediately)
+      description: |
+        The plan switch is immediate. AI generation quota resets to 0 at the start of
+        the new billing period. Downgrading within the same request is rejected — use
+        `/subscriptions/me/downgrade` instead.
       requestBody:
         required: true
         content:
@@ -414,6 +470,10 @@ paths:
     post:
       tags: [Subscriptions]
       summary: Downgrade to a lower plan (takes effect at period end)
+      description: |
+        Schedules the plan change for `current_period_end`. Current plan benefits,
+        including AI quota, remain active until then. Sets `cancel_at_period_end=true`
+        on the current plan internally.
       requestBody:
         required: true
         content:
@@ -437,6 +497,10 @@ paths:
     post:
       tags: [Subscriptions]
       summary: Cancel subscription at period end
+      description: |
+        Marks the subscription for cancellation at `current_period_end`. Access continues
+        until then. After cancellation, the user is downgraded to the free tier — they do
+        not lose existing data, but AI features become unavailable.
       responses:
         '200':
           description: Subscription scheduled for cancellation
@@ -454,6 +518,9 @@ paths:
     get:
       tags: [Subscriptions]
       summary: Get usage counters for current billing period
+      description: |
+        `ai_generations_used` resets at `billing_period_start`. Compare against
+        the plan's `max_ai_generations_per_month` to determine remaining quota.
       responses:
         '200':
           description: Usage record
@@ -474,6 +541,10 @@ paths:
     get:
       tags: [Clients]
       summary: List clients
+      description: |
+        Returns only clients owned by the authenticated user (`owner_user_id` filter is
+        applied automatically). Archived (soft-deleted) clients are excluded unless
+        `status=archived` is passed.
       parameters:
         - $ref: '#/components/parameters/Page'
         - $ref: '#/components/parameters/PageSize'
@@ -513,6 +584,10 @@ paths:
     post:
       tags: [Clients]
       summary: Create a client
+      description: |
+        Client `email` is unique **per owner**, not globally — two different freelancers
+        may register the same client email. Returns 409 only when the same user already
+        has a client with that address.
       requestBody:
         required: true
         content:
@@ -588,6 +663,9 @@ paths:
     delete:
       tags: [Clients]
       summary: Soft-delete (archive) a client
+      description: |
+        Sets `deleted_at` on the client record (soft delete). Blocked with 409 if the
+        client has any active deals, pending contracts, or unpaid invoices.
       responses:
         '204':
           description: Client archived
@@ -638,6 +716,10 @@ paths:
     post:
       tags: [Clients]
       summary: Append a communication log entry (append-only)
+      description: |
+        Entries cannot be edited or deleted after creation — this is an immutable audit
+        trail of client interactions. `communicated_at` can be backdated to record
+        historical communications.
       requestBody:
         required: true
         content:
@@ -731,6 +813,9 @@ paths:
     get:
       tags: [Deals]
       summary: List deals
+      description: |
+        Returns only deals owned by the authenticated user. Soft-deleted deals are always
+        excluded. Use `stage` filter to view a specific pipeline column.
       parameters:
         - $ref: '#/components/parameters/Page'
         - $ref: '#/components/parameters/PageSize'
@@ -790,6 +875,9 @@ paths:
     post:
       tags: [Deals]
       summary: Create a deal
+      description: |
+        `client_id` is immutable after creation. The deal starts in `stage=new_lead`.
+        Use `/deals/{id}/stage-transition` to advance the pipeline stage.
       requestBody:
         required: true
         content:
@@ -834,6 +922,10 @@ paths:
     patch:
       tags: [Deals]
       summary: Update deal (blocked on terminal stages)
+      description: |
+        Partial update — only provided fields are changed. Returns 409 if the deal is
+        in a terminal stage (`completed_and_billed` or `lost`). `client_id` cannot be
+        changed after creation.
       requestBody:
         required: true
         content:
@@ -871,6 +963,12 @@ paths:
     post:
       tags: [Deals]
       summary: Advance deal to next pipeline stage
+      description: |
+        Stage transitions are **forward-only**. Terminal stages (`completed_and_billed`,
+        `lost`) cannot be exited. Business prerequisites:
+        - Transitioning to `active` requires at least one accepted proposal.
+        - Transitioning to `completed_and_billed` requires at least one invoice linked to the deal.
+        - Moving to `lost` or `completed_and_billed` sets `closed_at` and auto-cancels all pending reminders.
       requestBody:
         required: true
         content:
@@ -904,6 +1002,10 @@ paths:
     post:
       tags: [Deals]
       summary: Trigger AI lead qualification for a deal
+      description: |
+        Requires an active AI-enabled subscription (returns 402 otherwise). Stores the
+        qualification `score` and `recommendation` on the deal record. The result is
+        informational — it does not trigger an automatic stage change.
       responses:
         '200':
           description: Qualification result applied to deal
@@ -927,6 +1029,7 @@ paths:
     get:
       tags: [Deals]
       summary: List activity timeline for a deal
+      description: Full chronological history of stage changes, notes added, and AI qualification events for this deal.
       parameters:
         - $ref: '#/components/parameters/Page'
         - $ref: '#/components/parameters/PageSize'
@@ -955,6 +1058,7 @@ paths:
     post:
       tags: [Deals]
       summary: Append a note to a deal activity log
+      description: Append-only — notes cannot be edited or deleted after creation. Use this to record freeform observations or meeting outcomes.
       requestBody:
         required: true
         content:
@@ -981,6 +1085,10 @@ paths:
     get:
       tags: [Proposals]
       summary: List proposals
+      description: |
+        Returns proposals owned by the authenticated user. At most one proposal per deal
+        may be in `sent` status at any time — creating a new revision sets the previous
+        one to `superseded`.
       parameters:
         - $ref: '#/components/parameters/Page'
         - $ref: '#/components/parameters/PageSize'
@@ -1025,6 +1133,10 @@ paths:
     post:
       tags: [Proposals]
       summary: Create a proposal draft
+      description: |
+        Creates a proposal in `draft` status linked to the specified deal. `content` is
+        optional at creation — use `PATCH` to fill manually or
+        `/proposals/{id}/generate` to populate with AI.
       requestBody:
         required: true
         content:
@@ -1069,6 +1181,7 @@ paths:
     patch:
       tags: [Proposals]
       summary: Update proposal (draft only)
+      description: Updates are only allowed while `status=draft`. Any other status returns 409.
       requestBody:
         required: true
         content:
@@ -1112,6 +1225,11 @@ paths:
     post:
       tags: [Proposals]
       summary: Send proposal to client (generates share link, locks content)
+      description: |
+        Transitions status `draft → sent`. Generates a `share_token` for the client-facing
+        link. Validates that `pricing.total` matches the sum of line item `amount` values.
+        If another proposal for the same deal is currently `sent`, it moves to `superseded`.
+        Content is locked — no further PATCH is possible after sending.
       responses:
         '200':
           description: Proposal sent with share_token
@@ -1137,6 +1255,10 @@ paths:
     post:
       tags: [Proposals]
       summary: Trigger AI generation to fill/replace proposal content (returns draft)
+      description: |
+        Requires an active AI-enabled subscription (returns 402 otherwise). Writes
+        AI-drafted content into the proposal but keeps `status=draft`. User must review
+        and explicitly call `/send` to deliver to the client.
       responses:
         '200':
           description: Proposal updated with AI-generated draft content
@@ -1159,6 +1281,9 @@ paths:
     get:
       tags: [Public]
       summary: View a proposal via shareable link (client-facing, no auth)
+      description: |
+        No authentication required. Returns a read-only view with no internal IDs
+        exposed. Returns 410 if the `share_token` has expired (default window: 30 days).
       security: []
       responses:
         '200':
@@ -1187,6 +1312,10 @@ paths:
     post:
       tags: [Public]
       summary: Client submits accept or reject response
+      description: |
+        Client decision is **final** — once the proposal is `accepted` or `rejected` it
+        cannot change status. Accepting emits a `proposals.proposal_accepted` domain event
+        which may advance the linked deal stage.
       security: []
       requestBody:
         required: true
@@ -1265,6 +1394,11 @@ paths:
     post:
       tags: [Contracts]
       summary: Create a contract from an accepted proposal
+      description: |
+        The source proposal must have `status=accepted`. Only one contract per deal may
+        be in `active` or `pending_signatures` at a time (enforced by a partial unique
+        index — returns 409 on violation). `client_snapshot` is captured from the live
+        client record at creation and **never updated** afterward.
       requestBody:
         required: true
         content:
@@ -1315,6 +1449,9 @@ paths:
     patch:
       tags: [Contracts]
       summary: Update contract content (draft only)
+      description: |
+        Content updates are only allowed while `status=draft`. `deal_id`, `proposal_id`,
+        and `client_id` are immutable after creation.
       requestBody:
         required: true
         content:
@@ -1346,6 +1483,10 @@ paths:
     post:
       tags: [Contracts]
       summary: Move contract to pending_signatures and generate share link
+      description: |
+        Transitions `draft → pending_signatures`. Generates a `share_token` for the
+        client signature link. Contract content is locked after this — no further
+        PATCH updates are allowed.
       responses:
         '200':
           description: Contract sent for signatures
@@ -1365,6 +1506,10 @@ paths:
     post:
       tags: [Contracts]
       summary: Record freelancer signature
+      description: |
+        Records the freelancer's signature timestamp. If the client has already signed
+        (via the public share link), the contract status transitions to `active`
+        immediately. Otherwise it remains `pending_signatures` awaiting the client.
       responses:
         '200':
           description: Signature recorded; activates if both parties have signed
@@ -1384,6 +1529,10 @@ paths:
     post:
       tags: [Contracts]
       summary: Create an amendment (new version) of an active contract
+      description: |
+        Creates a new contract draft (incremented `version_number`) from the active
+        contract. The previous active contract moves to `archived`. `deal_id` and
+        `proposal_id` are preserved. Only allowed when `status=active`.
       requestBody:
         required: true
         content:
@@ -1415,6 +1564,10 @@ paths:
     post:
       tags: [Contracts]
       summary: Terminate a contract
+      description: |
+        Sets `status=terminated` and stores the termination reason. This is a
+        **terminal state** — the contract cannot be reactivated. All pending reminders
+        linked to this contract are auto-cancelled.
       requestBody:
         required: true
         content:
@@ -1440,6 +1593,10 @@ paths:
     post:
       tags: [Contracts]
       summary: Trigger AI generation to fill contract content (draft only)
+      description: |
+        Requires an active AI-enabled subscription (returns 402 otherwise). Populates
+        contract clauses based on the linked proposal and client snapshot. The contract
+        stays in `draft` — user must review, then call `/send` to initiate signing.
       responses:
         '200':
           description: Contract updated with AI-generated draft content
@@ -1478,6 +1635,7 @@ paths:
     post:
       tags: [Contracts]
       summary: Add a payment milestone (draft only)
+      description: Milestones can only be added or changed while the contract is in `draft` status.
       requestBody:
         required: true
         content:
@@ -1540,6 +1698,9 @@ paths:
     get:
       tags: [Public]
       summary: View a contract via shareable link (client-facing, no auth)
+      description: |
+        No authentication required. Returns only the fields needed for the client to
+        review and sign. Returns 410 if the share link has expired.
       security: []
       responses:
         '200':
@@ -1566,6 +1727,10 @@ paths:
     post:
       tags: [Public]
       summary: Client submits signature via share link
+      description: |
+        Records the client's signature by name (`signer_name`) along with a timestamp.
+        If the freelancer has already signed via `/contracts/{id}/sign`, the contract
+        transitions to `active` immediately.
       security: []
       requestBody:
         required: true
@@ -1593,6 +1758,10 @@ paths:
     get:
       tags: [Invoices]
       summary: List invoices
+      description: |
+        Returns invoices scoped to the authenticated user. Use `overdue_only=true` to
+        retrieve invoices past `due_date` with outstanding balance (useful for reminder
+        workflows).
       parameters:
         - $ref: '#/components/parameters/Page'
         - $ref: '#/components/parameters/PageSize'
@@ -1657,6 +1826,10 @@ paths:
     post:
       tags: [Invoices]
       summary: Create an invoice
+      description: |
+        An invoice **must** have `contract_id` or `deal_id` (or both) — standalone
+        invoices are rejected. Requires at least one line item. `total` is calculated
+        server-side as `subtotal + tax_amount`; the invoice starts in `draft` status.
       requestBody:
         required: true
         content:
@@ -1701,6 +1874,9 @@ paths:
     patch:
       tags: [Invoices]
       summary: Update invoice (draft only)
+      description: |
+        Updates only allowed while `status=draft`. If `line_items` is provided, it
+        **replaces** the entire line item list rather than merging.
       requestBody:
         required: true
         content:
@@ -1732,6 +1908,9 @@ paths:
     post:
       tags: [Invoices]
       summary: Send invoice to client
+      description: |
+        Validates that `total = subtotal + tax_amount` before allowing the transition
+        `draft → sent`. Generates a `share_token` for the client-facing view link.
       responses:
         '200':
           description: Invoice sent
@@ -1751,6 +1930,9 @@ paths:
     post:
       tags: [Invoices]
       summary: Void an invoice (not permitted on paid invoices)
+      description: |
+        Marks the invoice as `void`. Not permitted if any payment has been recorded
+        (`status=paid` or `partially_paid`). Voided invoices cannot be restored.
       responses:
         '200':
           description: Invoice voided
@@ -1776,6 +1958,7 @@ paths:
     get:
       tags: [Invoices]
       summary: List payment records for an invoice
+      description: Returns all payment records in chronological order. Append-only — individual records cannot be edited or deleted.
       responses:
         '200':
           description: Payment records
@@ -1793,6 +1976,10 @@ paths:
     post:
       tags: [Invoices]
       summary: Record a payment against an invoice
+      description: |
+        Records a partial or full payment. `amount_paid` cannot exceed `total` — any
+        submission that would cause overpayment is rejected with 400. When
+        `amount_paid` reaches `total`, invoice status automatically becomes `paid`.
       requestBody:
         required: true
         content:
@@ -1858,6 +2045,7 @@ paths:
     get:
       tags: [Payments]
       summary: List enabled payment methods for the current user
+      description: Returns the freelancer's configured payment methods (MoMo, bank transfer, VNPay, etc.) with account labels and supported currencies.
       responses:
         '200':
           description: Enabled payment methods and account instructions
@@ -1900,6 +2088,7 @@ paths:
     post:
       tags: [Payments]
       summary: Cancel an unpaid payment intent
+      description: Only `pending` or `processing` intents can be cancelled. Returns 409 if the intent is already `succeeded` or `expired`.
       responses:
         '200':
           description: Payment intent cancelled
@@ -1923,6 +2112,10 @@ paths:
     post:
       tags: [Payments]
       summary: Receive payment provider webhook callback
+      description: |
+        Accepts the raw provider payload for asynchronous verification by a Celery worker.
+        Responds immediately with 202 — actual payment recording happens after signature
+        verification. Use `event_id` for idempotent processing.
       security: []
       parameters:
         - name: provider
@@ -1957,6 +2150,7 @@ paths:
     get:
       tags: [Public]
       summary: View an invoice via shareable link (client-facing, no auth)
+      description: No authentication required. Returns 410 if the share link has expired.
       security: []
       responses:
         '200':
@@ -2010,6 +2204,7 @@ paths:
     get:
       tags: [Reminders]
       summary: List reminders
+      description: Returns reminders owned by the authenticated user. Use `target_type` + `target_id` to fetch reminders scoped to a specific deal, client, invoice, or contract.
       parameters:
         - $ref: '#/components/parameters/Page'
         - $ref: '#/components/parameters/PageSize'
@@ -2058,6 +2253,11 @@ paths:
     post:
       tags: [Reminders]
       summary: Create a reminder
+      description: |
+        `scheduled_at` must be in the future. `target_id` is **not** backed by a
+        database foreign key — the application layer verifies that the target exists and
+        is owned by the caller. Supports recurring reminders via `recurrence_rule`
+        (RRULE, RFC 5545 format).
       requestBody:
         required: true
         content:
@@ -2102,6 +2302,7 @@ paths:
     patch:
       tags: [Reminders]
       summary: Update a pending reminder
+      description: Only reminders in `pending` status can be updated. Sent, failed, or cancelled reminders are immutable.
       requestBody:
         required: true
         content:
@@ -2129,6 +2330,7 @@ paths:
     delete:
       tags: [Reminders]
       summary: Cancel a pending reminder
+      description: Sets `status=cancelled`. If the Celery task has not yet been dispatched, it is revoked. Sent or failed reminders cannot be cancelled.
       responses:
         '204':
           description: Reminder cancelled
@@ -2140,6 +2342,10 @@ paths:
     get:
       tags: [Analytics]
       summary: Pre-computed dashboard summary (active deals, pipeline value, MRR, overdue count, win rate)
+      description: |
+        Pre-computed snapshot refreshed periodically (not real-time). All metrics are
+        scoped strictly to the authenticated user's `owner_user_id` — cross-user data
+        is never exposed.
       responses:
         '200':
           description: Dashboard summary
@@ -2157,6 +2363,7 @@ paths:
     get:
       tags: [Analytics]
       summary: Revenue metrics snapshot for a given period
+      description: "`from_date` and `to_date` are inclusive. `period_type` determines aggregation granularity (monthly, quarterly, yearly). Read-only — never writes to operational tables."
       parameters:
         - name: period_type
           in: query
@@ -2192,6 +2399,7 @@ paths:
     get:
       tags: [Analytics]
       summary: Pipeline distribution snapshot
+      description: "`snapshot_date` defaults to today if not provided. Returns deal count and total estimated value per pipeline stage."
       parameters:
         - name: snapshot_date
           in: query
@@ -2215,6 +2423,7 @@ paths:
     get:
       tags: [Analytics]
       summary: Win rate and funnel conversion rates
+      description: "`win_rate = deals_won / (deals_won + deals_lost)`. Only closed deals (`completed_and_billed` or `lost`) are included. Date range is optional — omitting it returns all-time metrics."
       parameters:
         - name: from_date
           in: query
@@ -2243,6 +2452,7 @@ paths:
     get:
       tags: [Analytics]
       summary: Top clients by revenue
+      description: Ranked by the selected `metric` (defaults to `total_collected`). Returns at most `min(limit, 50)` entries. Scoped to the authenticated user.
       parameters:
         - name: limit
           in: query
@@ -2283,6 +2493,7 @@ paths:
     get:
       tags: [Analytics]
       summary: AI generation usage counters for current user
+      description: Aggregates `ai_cost_records` for the authenticated user. Date range is optional — omitting it returns all-time totals.
       parameters:
         - name: from_date
           in: query
@@ -2314,6 +2525,10 @@ paths:
     post:
       tags: [AI]
       summary: Qualify a lead (standalone; also available via /deals/{id}/qualify)
+      description: |
+        Standalone alternative to `/deals/{id}/qualify`. Consumes one AI generation
+        from the subscription quota. Result is informational only — does **not** modify
+        the deal record or trigger a stage change.
       requestBody:
         required: true
         content:
@@ -2339,6 +2554,10 @@ paths:
     post:
       tags: [AI]
       summary: Generate a proposal draft for a deal
+      description: |
+        Requires an active AI-enabled subscription (returns 402 otherwise). Creates or
+        updates the proposal with AI-drafted content in `draft` status. User must review
+        the content and explicitly call `/proposals/{id}/send` to deliver it to the client.
       requestBody:
         required: true
         content:
@@ -2364,6 +2583,11 @@ paths:
     post:
       tags: [AI]
       summary: Generate a contract draft from an accepted proposal
+      description: |
+        Requires an active AI-enabled subscription (returns 402 otherwise). The target
+        contract must be in `draft` status. Populates contract clauses based on the
+        linked proposal content and client snapshot. Status remains `draft` until
+        the freelancer calls `/contracts/{id}/send`.
       requestBody:
         required: true
         content:
@@ -2389,6 +2613,11 @@ paths:
     post:
       tags: [AI]
       summary: Generate a follow-up message draft
+      description: |
+        Requires an active AI-enabled subscription (returns 402 otherwise). Generates a
+        message draft appropriate for the given `reminder_type` and target context. Does
+        **not** send the message — the user must copy it or trigger delivery separately
+        via the Reminders API.
       requestBody:
         required: true
         content:
@@ -2417,6 +2646,7 @@ paths:
     get:
       tags: [Admin]
       summary: List all platform users
+      description: Requires `role=admin` in the JWT. Returns all users regardless of owner scope. Cross-user data access — admin-only.
       parameters:
         - $ref: '#/components/parameters/Page'
         - $ref: '#/components/parameters/PageSize'
@@ -2460,6 +2690,7 @@ paths:
     get:
       tags: [Admin]
       summary: Get any user profile (read-only)
+      description: Full profile including nested `subscription` and `deleted_at` timestamp. Read-only — use PATCH to modify.
       responses:
         '200':
           description: User detail
@@ -2477,6 +2708,7 @@ paths:
     patch:
       tags: [Admin]
       summary: Update user role or status
+      description: Changes `role` or `status`. Demoting the last admin account is blocked with 409. Every change is written to the audit log.
       requestBody:
         required: true
         content:
@@ -2502,6 +2734,10 @@ paths:
     post:
       tags: [Admin]
       summary: Suspend a user account
+      description: |
+        Sets `status=suspended` and immediately revokes all active sessions. The
+        suspended user loses access to AI features but can still read their existing
+        data. Cannot suspend the last admin account.
       responses:
         '200':
           description: User suspended
@@ -2527,6 +2763,7 @@ paths:
     post:
       tags: [Admin]
       summary: Reinstate a suspended user
+      description: Restores `status=active`. Does not restore previous sessions — the user must log in again.
       responses:
         '200':
           description: User reinstated
@@ -2546,6 +2783,7 @@ paths:
     delete:
       tags: [Admin]
       summary: Revoke all active sessions for a user
+      description: Force-revokes all active JWT sessions by blacklisting tokens in Redis. Useful after a security incident or account compromise.
       responses:
         '204':
           description: Sessions revoked
@@ -2554,6 +2792,7 @@ paths:
     get:
       tags: [Admin]
       summary: List all platform subscriptions
+      description: Cross-user subscription data — admin-only. Use to monitor plan distribution, past-due accounts, or upcoming renewals.
       parameters:
         - $ref: '#/components/parameters/Page'
         - $ref: '#/components/parameters/PageSize'
@@ -2591,6 +2830,10 @@ paths:
     patch:
       tags: [Admin]
       summary: Manually override a user's subscription plan or status
+      description: |
+        Used for trial access, compensations, or support escalations. `override_expires_at`
+        specifies when the override ends and the subscription returns to its normal plan.
+        Logged to the audit log.
       requestBody:
         required: true
         content:
@@ -2614,6 +2857,7 @@ paths:
     get:
       tags: [Admin]
       summary: List all plans including inactive
+      description: Returns all plans regardless of `is_active`. Use `/subscriptions/plans` for the public catalog shown to users.
       responses:
         '200':
           description: All plans
@@ -2631,6 +2875,7 @@ paths:
     post:
       tags: [Admin]
       summary: Create a new subscription plan
+      description: Creates a new plan. Existing subscribers are not affected — they remain on their current plan until they explicitly change it.
       requestBody:
         required: true
         content:
@@ -2656,6 +2901,7 @@ paths:
     patch:
       tags: [Admin]
       summary: Update a plan (deactivate or change limits; existing subscribers unaffected)
+      description: Deactivating (`is_active=false`) hides the plan from the public catalog but does not cancel existing subscriptions on that plan.
       requestBody:
         required: true
         content:
@@ -2679,6 +2925,7 @@ paths:
     get:
       tags: [Admin]
       summary: Platform-wide AI cost records
+      description: Read-only view of all LLM generation records with token counts and USD cost estimates across all users. Includes aggregate totals for the filtered period.
       parameters:
         - $ref: '#/components/parameters/Page'
         - $ref: '#/components/parameters/PageSize'
@@ -2720,6 +2967,7 @@ paths:
     get:
       tags: [Admin]
       summary: Platform audit log
+      description: Immutable, append-only log of admin and user actions. Entries cannot be deleted or modified. Use `event_type` and `actor_user_id` to narrow the search.
       parameters:
         - $ref: '#/components/parameters/Page'
         - $ref: '#/components/parameters/PageSize'
@@ -2796,6 +3044,7 @@ paths:
     post:
       tags: [Admin]
       summary: Create a system template
+      description: Creates a new template starting at `version_number=1`. Set `plan_tier_required` to restrict availability to paid plans.
       requestBody:
         required: true
         content:
@@ -2826,6 +3075,7 @@ paths:
     patch:
       tags: [Admin]
       summary: Activate, deactivate, or update a template
+      description: Setting `is_active=false` hides the template from AI generation without deleting it. Content changes increment `version_number`.
       requestBody:
         required: true
         content:
@@ -2849,6 +3099,7 @@ paths:
     get:
       tags: [Admin]
       summary: List all feature flags
+      description: Returns all flags with `rollout_percentage` and optional `target_user_ids` for gradual rollouts.
       responses:
         '200':
           description: Feature flags
@@ -2874,6 +3125,7 @@ paths:
     patch:
       tags: [Admin]
       summary: Update a feature flag
+      description: Changes take effect immediately without a deploy. Use `rollout_percentage` for gradual rollouts and `target_user_ids` for targeted beta access.
       requestBody:
         required: true
         content:
@@ -2899,6 +3151,7 @@ paths:
     get:
       tags: [Admin]
       summary: Platform-wide health metrics snapshot
+      description: Aggregated health snapshot across all users and domains (user count, active subscriptions, plan distribution, AI cost last 30 days). Updated periodically — not real-time.
       responses:
         '200':
           description: Platform metrics
