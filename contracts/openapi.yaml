@@ -3186,14 +3186,14 @@ components:
       properties:
         success:
           type: boolean
-          example: true
+          examples: true
         code:
           type: integer
-          example: 200
+          examples: 200
         timestamp:
           type: string
           format: date-time
-          example: "2026-06-01T12:00:00Z"
+          examples: "2026-06-01T12:00:00Z"
         data:
           description: Response payload (any object or array)
 
@@ -3204,10 +3204,10 @@ components:
       properties:
         success:
           type: boolean
-          example: true
+          examples: true
         code:
           type: integer
-          example: 200
+          examples: 200
         timestamp:
           type: string
           format: date-time
@@ -3225,10 +3225,10 @@ components:
       properties:
         success:
           type: boolean
-          example: false
+          examples: false
         code:
           type: integer
-          example: 400
+          examples: 400
         timestamp:
           type: string
           format: date-time
@@ -3242,7 +3242,7 @@ components:
         message:
           type: string
           description: Human-readable explanation
-          example: Deal not found
+          examples: Deal not found
         code:
           type: string
           description: Machine-readable error code
@@ -3256,7 +3256,7 @@ components:
             - SUBSCRIPTION_REQUIRED
             - AI_QUOTA_EXCEEDED
             - INTERNAL_SERVER_ERROR
-          example: NOT_FOUND
+          examples: NOT_FOUND
         details:
           type: array
           description: Field-level validation errors (populated for VALIDATION_FAILED only)
@@ -3270,11 +3270,11 @@ components:
         field:
           type: string
           description: Dot-path to the invalid field
-          example: estimated_value
+          examples: estimated_value
         message:
           type: string
           description: Why the value is invalid
-          example: Must be a positive number
+          examples: Must be a positive number
         value:
           description: The submitted value that failed validation
 
@@ -3285,19 +3285,19 @@ components:
         total:
           type: integer
           description: Total number of matching records
-          example: 42
+          examples: 42
         page:
           type: integer
           description: Current page (1-indexed)
-          example: 1
+          examples: 1
         page_size:
           type: integer
           description: Records per page
-          example: 20
+          examples: 20
         total_pages:
           type: integer
           description: Total number of pages
-          example: 3
+          examples: 3
 
     # ---------------------------------------------------------------------------
     # Legacy aliases — kept for backward-compat during migration; will be removed
@@ -3319,16 +3319,16 @@ components:
         email:
           type: string
           format: email
-          example: jane@example.com
+          examples: jane@examples.com
         password:
           type: string
           format: password
           minLength: 8
-          example: s3cretPass!
+          examples: s3cretPass!
         full_name:
           type: string
           minLength: 1
-          example: Nguyễn Văn A
+          examples: Nguyễn Văn A
 
     LoginRequest:
       type: object
@@ -3359,11 +3359,11 @@ components:
           type: string
         token_type:
           type: string
-          example: Bearer
+          examples: Bearer
         expires_in:
           type: integer
           description: Access token TTL in seconds
-          example: 900
+          examples: 900
         user:
           $ref: '#/components/schemas/UserResponse'
 
@@ -3401,7 +3401,7 @@ components:
           format: decimal
         currency:
           type: string
-          example: VND
+          examples: VND
         portfolio_url:
           type: string
           format: uri
@@ -3413,10 +3413,10 @@ components:
       properties:
         locale:
           type: string
-          example: vi
+          examples: vi
         timezone:
           type: string
-          example: Asia/Ho_Chi_Minh
+          examples: Asia/Ho_Chi_Minh
         notification_channel:
           $ref: '#/components/schemas/NotificationChannel'
         theme:
@@ -3488,16 +3488,16 @@ components:
           format: uuid
         name:
           type: string
-          example: Pro
+          examples: Pro
         slug:
           type: string
-          example: pro
+          examples: pro
         price_monthly:
           type: number
           format: decimal
         currency:
           type: string
-          example: USD
+          examples: USD
         max_ai_generations_per_month:
           type: integer
         can_use_ai:
@@ -4365,7 +4365,7 @@ components:
           nullable: true
         invoice_number:
           type: string
-          example: INV-2024-0042
+          examples: INV-2024-0042
         status:
           $ref: '#/components/schemas/InvoiceStatus'
         issue_date:
@@ -4552,7 +4552,7 @@ components:
           type: boolean
         display_name:
           type: string
-          example: MoMo Wallet
+          examples: MoMo Wallet
         account_label:
           type: string
           nullable: true
@@ -4561,7 +4561,7 @@ components:
           type: array
           items:
             type: string
-          example: [VND]
+          examples: [VND]
         min_amount:
           type: number
           format: decimal
@@ -4635,7 +4635,7 @@ components:
           format: decimal
         currency:
           type: string
-          example: VND
+          examples: VND
         payment_link:
           $ref: '#/components/schemas/PaymentLinkResponse'
         provider_reference:
@@ -4668,7 +4668,7 @@ components:
           description: Provider event ID used for idempotent webhook processing.
         event_type:
           type: string
-          example: payment.succeeded
+          examples: payment.succeeded
         signature:
           type: string
           nullable: true
@@ -4684,7 +4684,7 @@ components:
       properties:
         accepted:
           type: boolean
-          example: true
+          examples: true
         event_id:
           type: string
 
@@ -4699,7 +4699,7 @@ components:
           format: decimal
         currency:
           type: string
-          example: VND
+          examples: VND
         options:
           type: array
           items:
@@ -5277,7 +5277,7 @@ components:
           format: uuid
         event_type:
           type: string
-          example: auth.user_logged_in
+          examples: auth.user_logged_in
         actor_user_id:
           type: string
           format: uuid
