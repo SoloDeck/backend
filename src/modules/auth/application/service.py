@@ -2,6 +2,7 @@
 
 import hashlib
 import secrets
+import urllib.parse
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -342,3 +343,71 @@ class AuthService:
             user.hashed_password = hash_password(payload.new_password)
 
         await self.db.flush()
+
+    @staticmethod
+    def get_google_auth_url() -> str:
+        """Build the Google OAuth 2.0 authorization URL and return it.
+
+        A short-lived signed JWT is used as the ``state`` parameter to prevent
+        CSRF without requiring server-side session storage.
+        """
+        state = jwt.encode(
+            {
+                "type": "oauth_state",
+                "nonce": secrets.token_hex(16),
+                "exp": datetime.now(timezone.utc) + timedelta(minutes=10),
+            },
+            settings.jwt_secret_key,
+            algorithm=settings.jwt_algorithm,
+        )
+        params = {
+            "client_id": settings.google_client_id,
+            "redirect_uri": settings.google_redirect_uri,
+            "response_type": "code",
+            "scope": "openid email profile",
+            "state": state,
+            "access_type": "offline",
+            "prompt": "select_account",
+        }
+        return "https://accounts.google.com/o/oauth2/v2/auth?" + urllib.parse.urlencode(params)
+
+    async def google_oauth_callback(self, code: str, state: str) -> AuthTokenResponse:
+        """Exchange the authorization *code* from Google for application tokens.
+
+        Verifies the ``state`` JWT to guard against CSRF, exchanges the code
+        for a Google ID token, then delegates to the existing ``google_auth``
+        upsert logic.
+        """
+        try:
+            claims = jwt.decode(
+                state,
+                settings.jwt_secret_key,
+                algorithms=[settings.jwt_algorithm],
+            )
+        except JWTError:
+            raise AuthenticationError("Invalid or expired OAuth state parameter")
+
+        if claims.get("type") != "oauth_state":
+            raise AuthenticationError("Malformed OAuth state parameter")
+
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                "https://oauth2.googleapis.com/token",
+                data={
+                    "client_id": settings.google_client_id,
+                    "client_secret": settings.google_client_secret,
+                    "code": code,
+                    "redirect_uri": settings.google_redirect_uri,
+                    "grant_type": "authorization_code",
+                },
+            )
+
+        if resp.status_code != 200:
+            raise AuthenticationError("Failed to exchange Google authorization code")
+
+        token_data = resp.json()
+        id_token = token_data.get("id_token")
+        if not id_token:
+            raise AuthenticationError("Google token exchange response missing id_token")
+
+        return await self.google_auth(GoogleAuthRequest(id_token=id_token))
