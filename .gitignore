@@ -43,3 +43,14 @@ Thumbs.db
 postgres_data/
 
 # Alembic — migrations are intentionally tracked in version control
+
+# claude-code-harness (lifecycle) runtime state — keep out of git
+.claude/state/
+.claude/agent-memory/
+.claude/logs/
+
+# Reference documents (not source code)
+*.docx
+*.doc
+*.xlsx
+*.xls
