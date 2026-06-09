@@ -12,12 +12,16 @@ build/
 .venv/
 venv/
 env/
+.python-version
 
 # Testing
 .coverage
 htmlcov/
 .pytest_cache/
 .tox/
+
+# Jupyter
+.ipynb_checkpoints/
 
 # Type checking
 .mypy_cache/
