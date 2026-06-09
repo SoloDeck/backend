@@ -1,8 +1,8 @@
 import uuid
 from dataclasses import dataclass
 
-from src.shared.domain.base import DomainEvent
 from src.modules.deals.domain.value_objects.deal_stage import DealStage
+from src.shared.domain.base import DomainEvent
 
 
 @dataclass(frozen=True)

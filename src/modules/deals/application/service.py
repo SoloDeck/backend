@@ -2,13 +2,13 @@
 
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.shared.exceptions.domain import InvalidStateTransitionError, NotFoundError
 from src.modules.deals.schemas.request import DealRequest, DealStageRequest
+from src.shared.exceptions.domain import InvalidStateTransitionError, NotFoundError
 
 VALID_TRANSITIONS: dict[str, list[str]] = {
     "new_lead": ["qualified", "lost"],
@@ -84,17 +84,19 @@ class DealsService:
 
     async def delete(self, user_id: uuid.UUID, deal_id: uuid.UUID) -> None:
         deal = await self._get_deal(user_id, deal_id)
-        deal.deleted_at = datetime.now(timezone.utc)
+        deal.deleted_at = datetime.now(UTC)
         await self.db.flush()
 
-    async def transition_stage(self, user_id: uuid.UUID, deal_id: uuid.UUID, payload: DealStageRequest):  # type: ignore[return]
+    async def transition_stage(
+        self, user_id: uuid.UUID, deal_id: uuid.UUID, payload: DealStageRequest
+    ):  # type: ignore[return]
         deal = await self._get_deal(user_id, deal_id)
         allowed = VALID_TRANSITIONS.get(deal.stage, [])
         if payload.stage not in allowed:
             raise InvalidStateTransitionError("deal", deal.stage, payload.stage)
         deal.stage = payload.stage
         if payload.stage in ("completed_and_billed", "lost") and hasattr(deal, "closed_at"):
-            deal.closed_at = datetime.now(timezone.utc)
+            deal.closed_at = datetime.now(UTC)
         await self.db.flush()
         await self.db.refresh(deal)
         return deal

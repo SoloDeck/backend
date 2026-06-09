@@ -1,7 +1,7 @@
-from enum import Enum
+from enum import StrEnum
 
 
-class ReminderStatus(str, Enum):
+class ReminderStatus(StrEnum):
     PENDING = "pending"
     SENT = "sent"
     FAILED = "failed"

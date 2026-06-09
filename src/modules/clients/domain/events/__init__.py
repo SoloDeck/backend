@@ -1,8 +1,8 @@
 from .client_events import (
-    ClientCreatedEvent,
-    ClientStatusChangedEvent,
     ClientArchivedEvent,
+    ClientCreatedEvent,
     ClientDeletedEvent,
+    ClientStatusChangedEvent,
 )
 
 __all__ = [

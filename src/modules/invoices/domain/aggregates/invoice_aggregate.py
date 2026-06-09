@@ -1,25 +1,25 @@
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
 
-from src.shared.domain.base import DomainEvent
-from src.shared.domain.value_objects.money import Money
 from src.modules.invoices.domain.entities.invoice import Invoice
 from src.modules.invoices.domain.entities.invoice_line_item import InvoiceLineItem
-from src.modules.invoices.domain.entities.payment_record import PaymentRecord, PaymentMethod
-from src.modules.invoices.domain.value_objects.invoice_status import InvoiceStatus
-from src.modules.invoices.domain.exceptions.exceptions import (
-    StandaloneInvoiceError,
-    InvoiceEditForbiddenError,
-)
+from src.modules.invoices.domain.entities.payment_record import PaymentMethod, PaymentRecord
 from src.modules.invoices.domain.events.invoice_events import (
     InvoiceCreatedEvent,
+    InvoiceOverdueEvent,
+    InvoicePaidEvent,
     InvoiceSentEvent,
     PaymentRecordedEvent,
-    InvoicePaidEvent,
-    InvoiceOverdueEvent,
 )
+from src.modules.invoices.domain.exceptions.exceptions import (
+    InvoiceEditForbiddenError,
+    StandaloneInvoiceError,
+)
+from src.modules.invoices.domain.value_objects.invoice_status import InvoiceStatus
+from src.shared.domain.base import DomainEvent
+from src.shared.domain.value_objects.money import Money
 
 
 @dataclass
@@ -45,7 +45,7 @@ class InvoiceAggregate:
     ) -> "InvoiceAggregate":
         if deal_id is None and contract_id is None:
             raise StandaloneInvoiceError()
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         invoice_id = uuid.uuid4()
         zero = Money.zero(currency)
         invoice = Invoice(
@@ -111,7 +111,7 @@ class InvoiceAggregate:
             raise InvoiceEditForbiddenError(self.invoice.status)
         self.invoice.tax_amount = tax_amount
         self.invoice.total = self.invoice.subtotal.add(tax_amount)
-        self.invoice.updated_at = datetime.now(timezone.utc)
+        self.invoice.updated_at = datetime.now(UTC)
 
     def send(self) -> None:
         self.invoice.send()
@@ -186,7 +186,7 @@ class InvoiceAggregate:
                 total = total.add(item.line_total)
             self.invoice.subtotal = total
         self.invoice.total = self.invoice.subtotal.add(self.invoice.tax_amount)
-        self.invoice.updated_at = datetime.now(timezone.utc)
+        self.invoice.updated_at = datetime.now(UTC)
 
     def pull_events(self) -> list[DomainEvent]:
         events = list(self._pending_events)

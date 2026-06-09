@@ -1,21 +1,18 @@
 """Unified API response envelope."""
 
-from datetime import datetime, timezone
-from typing import Generic, TypeVar
+from datetime import UTC, datetime
 
 from pydantic import BaseModel, Field
 
-from .error import ApiError
+from .error import ApiError, ValidationErrorDetail
 from .pagination import PaginationMetadata
-
-T = TypeVar("T")
 
 
 def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
-class ApiResponse(BaseModel, Generic[T]):
+class ApiResponse[T](BaseModel):
     success: bool = True
     code: int
     timestamp: str = Field(default_factory=_now_iso)
@@ -30,7 +27,7 @@ class ApiResponse(BaseModel, Generic[T]):
         return cls.ok(data, code=201)
 
 
-class PaginatedResponse(BaseModel, Generic[T]):
+class PaginatedResponse[T](BaseModel):
     success: bool = True
     code: int = 200
     timestamp: str = Field(default_factory=_now_iso)

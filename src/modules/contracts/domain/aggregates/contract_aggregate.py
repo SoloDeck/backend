@@ -1,20 +1,20 @@
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
-from src.shared.domain.base import DomainEvent
-from src.shared.domain.value_objects.money import Money
 from src.modules.contracts.domain.entities.contract import Contract
 from src.modules.contracts.domain.entities.contract_version import ContractVersion
 from src.modules.contracts.domain.entities.payment_milestone import PaymentMilestone
-from src.modules.contracts.domain.value_objects.contract_status import ContractStatus
 from src.modules.contracts.domain.events.contract_events import (
-    ContractCreatedEvent,
-    ContractSignedEvent,
-    ContractMilestoneReachedEvent,
     ContractCompletedEvent,
+    ContractCreatedEvent,
+    ContractMilestoneReachedEvent,
+    ContractSignedEvent,
     ContractTerminatedEvent,
 )
+from src.modules.contracts.domain.value_objects.contract_status import ContractStatus
+from src.shared.domain.base import DomainEvent
+from src.shared.domain.value_objects.money import Money
 
 
 @dataclass
@@ -37,7 +37,7 @@ class ContractAggregate:
         client_snapshot: dict[str, object],
         ai_generated: bool = False,
     ) -> "ContractAggregate":
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         contract_id = uuid.uuid4()
         contract = Contract(
             id=contract_id,

@@ -1,9 +1,10 @@
-"""uproposalugenerator LangChain chain — skeleton."""
+"""ProposalGenerator LangChain chain — skeleton."""
 from typing import Any
+
 from src.ai.shared.base import BaseAIChain
 
 
-class uproposalugenerator(BaseAIChain):
+class ProposalGenerator(BaseAIChain):
     module_name = "proposal_generator"
 
     def _build_chain(self) -> Any:

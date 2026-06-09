@@ -1,6 +1,5 @@
 import uuid
 from dataclasses import dataclass
-from decimal import Decimal
 
 from src.modules.subscriptions.domain.value_objects.entitlement import Entitlement
 from src.shared.domain.value_objects.money import Money

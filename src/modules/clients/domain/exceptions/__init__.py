@@ -1,9 +1,9 @@
 from .exceptions import (
-    ClientDomainError,
-    InvalidClientStatusTransitionError,
     ArchivedClientError,
-    DuplicateClientEmailError,
+    ClientDomainError,
     ClientNotFoundError,
+    DuplicateClientEmailError,
+    InvalidClientStatusTransitionError,
 )
 
 __all__ = [

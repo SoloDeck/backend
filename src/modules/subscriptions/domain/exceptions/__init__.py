@@ -1,8 +1,8 @@
 from .exceptions import (
-    SubscriptionDomainError,
-    InvalidSubscriptionTransitionError,
     DuplicateSubscriptionError,
     EntitlementViolationError,
+    InvalidSubscriptionTransitionError,
+    SubscriptionDomainError,
 )
 
 __all__ = [

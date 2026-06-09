@@ -1,9 +1,10 @@
-"""ufollowupugenerator LangChain chain — skeleton."""
+"""FollowUpGenerator LangChain chain — skeleton."""
 from typing import Any
+
 from src.ai.shared.base import BaseAIChain
 
 
-class ufollowupugenerator(BaseAIChain):
+class FollowUpGenerator(BaseAIChain):
     module_name = "followup_generator"
 
     def _build_chain(self) -> Any:

@@ -19,7 +19,8 @@ def send_pending_reminders() -> None:
 @celery_app.task(name="src.workers.reminder_jobs.tasks.mark_overdue_invoices")
 def mark_overdue_invoices() -> None:
     """Beat task: mark invoices past due_date as overdue."""
-    # TODO: UPDATE invoices SET status='overdue' WHERE due_date < NOW() AND status IN ('sent','partially_paid')
+    # TODO: UPDATE invoices SET status='overdue'
+    # WHERE due_date < NOW() AND status IN ('sent','partially_paid')
     raise NotImplementedError
 
 

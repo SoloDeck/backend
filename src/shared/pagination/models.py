@@ -1,10 +1,7 @@
 import math
-from typing import Generic, TypeVar
 
 from fastapi import Query
 from pydantic import BaseModel, computed_field
-
-T = TypeVar("T")
 
 
 class PaginationParams:
@@ -38,7 +35,7 @@ class PaginationMeta(BaseModel):
         return max(1, math.ceil(self.total / self.page_size))
 
 
-class Page(BaseModel, Generic[T]):
+class Page[T](BaseModel):
     items: list[T]
     pagination: PaginationMeta
 

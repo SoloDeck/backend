@@ -1,4 +1,3 @@
-import pytest
 
 from src.shared.security.passwords import hash_password, verify_password
 

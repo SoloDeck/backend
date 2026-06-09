@@ -1,19 +1,18 @@
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timezone
-from enum import Enum
+from datetime import UTC, datetime
+from enum import StrEnum
 
+from src.modules.reminders.domain.value_objects.reminder_status import (
+    TERMINAL_REMINDER_STATUSES,
+    ReminderStatus,
+)
 from src.modules.reminders.domain.value_objects.reminder_target import (
     ReminderTarget,
-    ReminderTargetType,
-)
-from src.modules.reminders.domain.value_objects.reminder_status import (
-    ReminderStatus,
-    TERMINAL_REMINDER_STATUSES,
 )
 
 
-class ReminderType(str, Enum):
+class ReminderType(StrEnum):
     FOLLOW_UP = "follow_up"
     PROPOSAL_FOLLOW_UP = "proposal_follow_up"
     CONTRACT_SIGNING_NUDGE = "contract_signing_nudge"
@@ -62,7 +61,7 @@ class Reminder:
         from src.modules.reminders.domain.exceptions.exceptions import TerminalReminderError
         if self.is_terminal:
             raise TerminalReminderError(self.status)
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         self.status = ReminderStatus.SENT
         self.sent_at = now
         self.updated_at = now
@@ -72,13 +71,13 @@ class Reminder:
         if self.is_terminal:
             raise TerminalReminderError(self.status)
         self.status = ReminderStatus.FAILED
-        self.updated_at = datetime.now(timezone.utc)
+        self.updated_at = datetime.now(UTC)
 
     def cancel(self, reason: str | None = None) -> None:
         from src.modules.reminders.domain.exceptions.exceptions import ReminderNotCancellableError
         if not self.is_cancellable:
             raise ReminderNotCancellableError(self.status)
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         self.status = ReminderStatus.CANCELLED
         self.cancelled_at = now
         self.cancel_reason = reason

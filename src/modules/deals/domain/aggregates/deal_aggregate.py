@@ -6,25 +6,25 @@ LeadScore, DealActivity, or DealStageHistory from outside is forbidden.
 
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
-from src.shared.domain.base import DomainEvent
-from src.shared.domain.value_objects.money import Money
 from src.modules.deals.domain.entities.deal import Deal
-from src.modules.deals.domain.entities.lead_score import LeadScore
 from src.modules.deals.domain.entities.deal_activity import DealActivity, DealActivityType
 from src.modules.deals.domain.entities.deal_stage_history import DealStageHistory
-from src.modules.deals.domain.value_objects.deal_stage import DealStage
-from src.modules.deals.domain.value_objects.ai_confidence import AIConfidence
-from src.modules.deals.domain.events.deal_created import DealCreatedEvent
-from src.modules.deals.domain.events.lead_scored import LeadScoredEvent
-from src.modules.deals.domain.events.deal_stage_changed import DealStageChangedEvent
+from src.modules.deals.domain.entities.lead_score import LeadScore
 from src.modules.deals.domain.events.deal_completed import DealCompletedEvent
+from src.modules.deals.domain.events.deal_created import DealCreatedEvent
+from src.modules.deals.domain.events.deal_stage_changed import DealStageChangedEvent
+from src.modules.deals.domain.events.lead_scored import LeadScoredEvent
 from src.modules.deals.domain.exceptions.exceptions import (
+    InvalidLeadScoreError,
     InvalidStageTransitionError,
     TerminalDealError,
-    InvalidLeadScoreError,
 )
+from src.modules.deals.domain.value_objects.ai_confidence import AIConfidence
+from src.modules.deals.domain.value_objects.deal_stage import DealStage
+from src.shared.domain.base import DomainEvent
+from src.shared.domain.value_objects.money import Money
 
 
 @dataclass
@@ -60,7 +60,7 @@ class DealAggregate:
         source: str | None = None,
         expected_close_date: datetime | None = None,
     ) -> "DealAggregate":
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         deal_id = uuid.uuid4()
         deal = Deal(
             id=deal_id,
@@ -173,10 +173,12 @@ class DealAggregate:
             confidence=ai_confidence,
             reasoning=reasoning,
             model_version=model_version,
-            generated_at=datetime.now(timezone.utc),
+            generated_at=datetime.now(UTC),
         )
         self.lead_scores.append(lead_score)
-        self.deal.apply_lead_score(score, ai_confidence, recommendation or ("qualify" if score >= 60 else "pass"))
+        self.deal.apply_lead_score(
+            score, ai_confidence, recommendation or ("qualify" if score >= 60 else "pass")
+        )
 
         self.activities.append(
             DealActivity(
@@ -212,7 +214,7 @@ class DealAggregate:
                 owner_user_id=actor_user_id,
                 activity_type=DealActivityType.NOTE_ADDED,
                 description=note,
-                occurred_at=datetime.now(timezone.utc),
+                occurred_at=datetime.now(UTC),
             )
         )
 

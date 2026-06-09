@@ -1,10 +1,10 @@
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 
 
-class UsageFeature(str, Enum):
+class UsageFeature(StrEnum):
     AI_LEAD_QUALIFY = "ai_lead_qualify"
     AI_PROPOSAL_GENERATE = "ai_proposal_generate"
     AI_CONTRACT_GENERATE = "ai_contract_generate"

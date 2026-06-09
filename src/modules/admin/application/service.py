@@ -6,8 +6,8 @@ from dataclasses import dataclass
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.shared.exceptions.domain import NotFoundError
 from src.modules.admin.schemas.request import AdminPlanRequest, AdminUpdateUserRequest
+from src.shared.exceptions.domain import NotFoundError
 
 
 @dataclass

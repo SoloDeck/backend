@@ -1,13 +1,14 @@
 """Auth API router."""
 
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, status
 from fastapi.responses import RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.config.settings import settings
 from src.infrastructure.database.session import get_db_session
 from src.modules.auth.application.service import AuthService
 from src.modules.auth.schemas.request import (
@@ -21,7 +22,6 @@ from src.modules.auth.schemas.request import (
 from src.modules.auth.schemas.response import AuthTokenResponse, MessageResponse
 from src.shared.dependencies.auth import CurrentUser
 from src.shared.responses.response import ApiResponse
-from src.config.settings import settings
 
 router = APIRouter()
 
@@ -77,7 +77,7 @@ async def logout(
     current_user: CurrentUser,
     db: DBSession,
 ) -> ApiResponse[MessageResponse]:
-    expires_at = datetime.now(timezone.utc) + timedelta(
+    expires_at = datetime.now(UTC) + timedelta(
         minutes=settings.jwt_access_token_expire_minutes
     )
     await AuthService(db=db).logout(

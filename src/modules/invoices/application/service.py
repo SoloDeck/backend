@@ -3,13 +3,13 @@
 import secrets
 import uuid
 from dataclasses import dataclass
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.shared.exceptions.domain import BusinessRuleError, NotFoundError
 from src.modules.invoices.schemas.request import InvoiceRequest
+from src.shared.exceptions.domain import BusinessRuleError, NotFoundError
 
 
 @dataclass
@@ -37,7 +37,9 @@ class InvoicesService:
 
         tax_amount = payload.subtotal * payload.tax_rate
         total = payload.subtotal + tax_amount
-        invoice_number = f"INV-{datetime.now(timezone.utc).strftime('%Y%m%d')}-{secrets.token_hex(2).upper()}"
+        invoice_number = (
+            f"INV-{datetime.now(UTC).strftime('%Y%m%d')}-{secrets.token_hex(2).upper()}"
+        )
 
         invoice = InvoiceModel(
             owner_user_id=user_id,

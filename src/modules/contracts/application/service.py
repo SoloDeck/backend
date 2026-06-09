@@ -6,8 +6,8 @@ from dataclasses import dataclass
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.shared.exceptions.domain import NotFoundError
 from src.modules.contracts.schemas.request import ContractRequest
+from src.shared.exceptions.domain import NotFoundError
 
 
 @dataclass
@@ -28,7 +28,7 @@ class ContractsService:
         return contract
 
     async def create(self, user_id: uuid.UUID, payload: ContractRequest):  # type: ignore[return]
-        from src.infrastructure.database.models import ContractModel, ClientModel
+        from src.infrastructure.database.models import ClientModel, ContractModel
 
         count_result = await self.db.scalar(
             select(func.count()).select_from(ContractModel).where(

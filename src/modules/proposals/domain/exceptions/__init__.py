@@ -1,8 +1,8 @@
 from .exceptions import (
-    ProposalDomainError,
     InvalidProposalTransitionError,
-    TerminalProposalError,
+    ProposalDomainError,
     ProposalEditForbiddenError,
+    TerminalProposalError,
 )
 
 __all__ = [

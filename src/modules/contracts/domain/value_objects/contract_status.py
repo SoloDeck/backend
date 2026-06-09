@@ -1,7 +1,7 @@
-from enum import Enum
+from enum import StrEnum
 
 
-class ContractStatus(str, Enum):
+class ContractStatus(StrEnum):
     DRAFT = "draft"
     PENDING_SIGNATURES = "pending_signatures"
     ACTIVE = "active"

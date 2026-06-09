@@ -5,7 +5,7 @@ All DB calls are mocked via AsyncMock — no real database required.
 
 import uuid
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, call, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -13,7 +13,6 @@ from src.modules.auth.application.service import AuthService
 from src.modules.auth.schemas.request import LoginRequest, RegisterRequest
 from src.shared.exceptions.domain import AlreadyExistsError, AuthenticationError
 from src.shared.security.passwords import hash_password
-
 
 # ---------------------------------------------------------------------------
 # Fixture helpers

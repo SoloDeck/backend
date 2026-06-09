@@ -2,7 +2,7 @@
 
 import uuid
 from abc import ABC, abstractmethod
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import structlog
@@ -36,7 +36,7 @@ class BaseAIChain(ABC):
     )
     async def run(self, **kwargs: Any) -> dict[str, Any]:
         generation_id = uuid.uuid4()
-        started_at = datetime.now(timezone.utc)
+        started_at = datetime.now(UTC)
 
         log.info(
             "ai.generation.started",
@@ -52,7 +52,7 @@ class BaseAIChain(ABC):
                 "ai.generation.completed",
                 module=self.module_name,
                 generation_id=str(generation_id),
-                duration_ms=(datetime.now(timezone.utc) - started_at).total_seconds() * 1000,
+                duration_ms=(datetime.now(UTC) - started_at).total_seconds() * 1000,
             )
             return result
         except AIOutputParseError:

@@ -1,9 +1,9 @@
 from .exceptions import (
     DealDomainError,
+    DealNotFoundError,
+    InvalidLeadScoreError,
     InvalidStageTransitionError,
     TerminalDealError,
-    InvalidLeadScoreError,
-    DealNotFoundError,
 )
 
 __all__ = [

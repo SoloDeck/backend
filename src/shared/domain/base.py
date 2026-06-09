@@ -5,7 +5,7 @@ Import from here in all domain modules — never re-implement these.
 
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 
 @dataclass(frozen=True)
@@ -21,7 +21,7 @@ class DomainEvent:
         return cls(
             event_id=uuid.uuid4(),
             aggregate_id=aggregate_id,
-            occurred_at=datetime.now(timezone.utc),
+            occurred_at=datetime.now(UTC),
             **kwargs,  # type: ignore[arg-type]
         )
 

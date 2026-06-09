@@ -1,21 +1,21 @@
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
-from src.shared.domain.base import DomainEvent
+from src.modules.reminders.domain.entities.delivery_record import DeliveryOutcome, DeliveryRecord
 from src.modules.reminders.domain.entities.reminder import Reminder, ReminderType
-from src.modules.reminders.domain.entities.delivery_record import DeliveryRecord, DeliveryOutcome
+from src.modules.reminders.domain.events.reminder_events import (
+    ReminderCancelledEvent,
+    ReminderDeliveredEvent,
+    ReminderFailedEvent,
+    ReminderScheduledEvent,
+)
+from src.modules.reminders.domain.value_objects.reminder_status import ReminderStatus
 from src.modules.reminders.domain.value_objects.reminder_target import (
     ReminderTarget,
     ReminderTargetType,
 )
-from src.modules.reminders.domain.value_objects.reminder_status import ReminderStatus
-from src.modules.reminders.domain.events.reminder_events import (
-    ReminderScheduledEvent,
-    ReminderDeliveredEvent,
-    ReminderFailedEvent,
-    ReminderCancelledEvent,
-)
+from src.shared.domain.base import DomainEvent
 
 
 @dataclass
@@ -40,7 +40,7 @@ class ReminderAggregate:
         recurrence_interval_days: int | None = None,
         recurrence_end_date: datetime | None = None,
     ) -> "ReminderAggregate":
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         reminder_id = uuid.uuid4()
         reminder = Reminder(
             id=reminder_id,
@@ -99,7 +99,7 @@ class ReminderAggregate:
 
     def fail_delivery(self, channel: str, error: str | None = None) -> DeliveryRecord:
         self.reminder.mark_failed()
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         record = DeliveryRecord(
             id=uuid.uuid4(),
             reminder_id=self.reminder.id,
