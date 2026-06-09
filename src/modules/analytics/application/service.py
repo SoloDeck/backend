@@ -38,7 +38,9 @@ class AnalyticsService:
                 InvoiceModel.status == "paid",
             )
         )
-        total_revenue = Decimal(str(total_revenue_raw)) if total_revenue_raw is not None else Decimal("0")
+        total_revenue = (
+            Decimal(str(total_revenue_raw)) if total_revenue_raw is not None else Decimal("0")
+        )
 
         pending_invoices = await self.db.scalar(
             select(func.count()).select_from(InvoiceModel).where(

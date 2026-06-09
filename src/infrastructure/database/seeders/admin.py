@@ -5,9 +5,9 @@ Creates admin@solodesk.dev if the account does not already exist.
 """
 
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import select, text
+from sqlalchemy import select
 
 from src.infrastructure.database.models import PlanModel, SubscriptionModel, UserModel
 from src.shared.security.passwords import hash_password
@@ -32,7 +32,7 @@ class AdminSeeder(BaseSeeder):
             self._log.info("seeder.skip", reason="admin already exists")
             return
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         admin_id = uuid.uuid4()
 
         admin = UserModel(

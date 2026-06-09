@@ -1,4 +1,4 @@
+from .delivery_record import DeliveryOutcome, DeliveryRecord
 from .reminder import Reminder, ReminderType
-from .delivery_record import DeliveryRecord, DeliveryOutcome
 
 __all__ = ["Reminder", "ReminderType", "DeliveryRecord", "DeliveryOutcome"]

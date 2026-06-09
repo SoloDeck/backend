@@ -1,7 +1,7 @@
-from enum import Enum
+from enum import StrEnum
 
 
-class ProposalStatus(str, Enum):
+class ProposalStatus(StrEnum):
     DRAFT = "draft"
     SENT = "sent"
     ACCEPTED = "accepted"

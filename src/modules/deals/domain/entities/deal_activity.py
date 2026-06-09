@@ -1,10 +1,10 @@
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 
 
-class DealActivityType(str, Enum):
+class DealActivityType(StrEnum):
     STAGE_CHANGE = "stage_change"
     NOTE_ADDED = "note_added"
     DOCUMENT_ATTACHED = "document_attached"

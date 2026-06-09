@@ -15,8 +15,6 @@ Test coverage:
 
 from unittest.mock import patch
 
-import pytest
-import pytest_asyncio
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -24,7 +22,6 @@ from src.infrastructure.database.models import PlanModel, UserModel
 from src.infrastructure.database.seeders.admin import ADMIN_EMAIL, AdminSeeder
 from src.infrastructure.database.seeders.plans import PlansSeeder
 from src.infrastructure.database.seeders.run import run_all
-
 
 # ---------------------------------------------------------------------------
 # Helpers

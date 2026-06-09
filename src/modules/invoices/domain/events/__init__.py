@@ -1,9 +1,9 @@
 from .invoice_events import (
     InvoiceCreatedEvent,
+    InvoiceOverdueEvent,
+    InvoicePaidEvent,
     InvoiceSentEvent,
     PaymentRecordedEvent,
-    InvoicePaidEvent,
-    InvoiceOverdueEvent,
 )
 
 __all__ = [

@@ -2,6 +2,7 @@ import logging
 import sys
 
 import structlog
+
 from src.config.settings import settings
 
 

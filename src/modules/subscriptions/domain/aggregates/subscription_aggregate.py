@@ -1,18 +1,18 @@
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
-from src.shared.domain.base import DomainEvent
 from src.modules.subscriptions.domain.entities.subscription import Subscription
 from src.modules.subscriptions.domain.entities.subscription_plan import SubscriptionPlan
-from src.modules.subscriptions.domain.entities.usage_record import UsageRecord, UsageFeature
-from src.modules.subscriptions.domain.value_objects.entitlement import SubscriptionStatus
+from src.modules.subscriptions.domain.entities.usage_record import UsageFeature, UsageRecord
 from src.modules.subscriptions.domain.events.subscription_events import (
-    SubscriptionCreatedEvent,
     PlanChangedEvent,
-    SubscriptionSuspendedEvent,
+    SubscriptionCreatedEvent,
     SubscriptionReactivatedEvent,
+    SubscriptionSuspendedEvent,
 )
+from src.modules.subscriptions.domain.value_objects.entitlement import SubscriptionStatus
+from src.shared.domain.base import DomainEvent
 
 
 @dataclass
@@ -27,7 +27,7 @@ class SubscriptionAggregate:
     def create_free(
         cls, user_id: uuid.UUID, free_plan: SubscriptionPlan
     ) -> "SubscriptionAggregate":
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         sub_id = uuid.uuid4()
         subscription = Subscription(
             id=sub_id,
@@ -99,9 +99,11 @@ class SubscriptionAggregate:
         tokens_used: int | None = None,
         cost_usd: float | None = None,
     ) -> UsageRecord:
-        entitlement_feature = "can_export_pdf" if feature == UsageFeature.PDF_EXPORT else "can_use_ai"
+        entitlement_feature = (
+            "can_export_pdf" if feature == UsageFeature.PDF_EXPORT else "can_use_ai"
+        )
         self.subscription.check_entitlement(entitlement_feature)
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         record = UsageRecord(
             id=uuid.uuid4(),
             user_id=self.subscription.user_id,

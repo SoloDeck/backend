@@ -1,9 +1,9 @@
 from .exceptions import (
     ContractDomainError,
-    InvalidContractTransitionError,
-    TerminalContractError,
     ContractEditForbiddenError,
+    InvalidContractTransitionError,
     MilestoneAlreadyCompletedError,
+    TerminalContractError,
 )
 
 __all__ = [

@@ -1,8 +1,7 @@
-import uuid
 from dataclasses import dataclass
 
-from src.shared.domain.base import DomainEvent
 from src.modules.users.domain.value_objects.user_status import UserRole
+from src.shared.domain.base import DomainEvent
 
 
 @dataclass(frozen=True)

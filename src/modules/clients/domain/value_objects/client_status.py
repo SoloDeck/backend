@@ -1,14 +1,14 @@
-from enum import Enum
+from enum import StrEnum
 
 
-class ClientStatus(str, Enum):
+class ClientStatus(StrEnum):
     PROSPECT = "prospect"
     ACTIVE = "active"
     INACTIVE = "inactive"
     ARCHIVED = "archived"
 
 
-class ClientType(str, Enum):
+class ClientType(StrEnum):
     INDIVIDUAL = "individual"
     COMPANY = "company"
 

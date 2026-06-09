@@ -1,18 +1,18 @@
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
+from src.modules.proposals.domain.entities.proposal import Proposal
+from src.modules.proposals.domain.events.proposal_events import (
+    ProposalAcceptedEvent,
+    ProposalCreatedEvent,
+    ProposalExpiredEvent,
+    ProposalRejectedEvent,
+    ProposalSentEvent,
+)
+from src.modules.proposals.domain.value_objects.proposal_status import ProposalStatus
 from src.shared.domain.base import DomainEvent
 from src.shared.domain.value_objects.money import Money
-from src.modules.proposals.domain.entities.proposal import Proposal
-from src.modules.proposals.domain.value_objects.proposal_status import ProposalStatus
-from src.modules.proposals.domain.events.proposal_events import (
-    ProposalCreatedEvent,
-    ProposalSentEvent,
-    ProposalAcceptedEvent,
-    ProposalRejectedEvent,
-    ProposalExpiredEvent,
-)
 
 
 @dataclass
@@ -34,7 +34,7 @@ class ProposalAggregate:
         ai_generated: bool = False,
         previous_version: int = 0,
     ) -> "ProposalAggregate":
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         proposal_id = uuid.uuid4()
         version = previous_version + 1
         proposal = Proposal(

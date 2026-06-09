@@ -1,18 +1,18 @@
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
-from src.shared.domain.base import DomainEvent
 from src.modules.clients.domain.entities.client import Client
 from src.modules.clients.domain.entities.client_contact import ClientContact
 from src.modules.clients.domain.entities.client_note import ClientNote
-from src.modules.clients.domain.value_objects.client_status import ClientStatus, ClientType
 from src.modules.clients.domain.events.client_events import (
-    ClientCreatedEvent,
-    ClientStatusChangedEvent,
     ClientArchivedEvent,
+    ClientCreatedEvent,
     ClientDeletedEvent,
+    ClientStatusChangedEvent,
 )
+from src.modules.clients.domain.value_objects.client_status import ClientStatus, ClientType
+from src.shared.domain.base import DomainEvent
 
 
 @dataclass
@@ -34,7 +34,7 @@ class ClientAggregate:
         phone: str | None = None,
         company_name: str | None = None,
     ) -> "ClientAggregate":
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         client_id = uuid.uuid4()
         client = Client(
             id=client_id,
@@ -82,7 +82,7 @@ class ClientAggregate:
             email=email,
             phone=phone,
             is_primary=is_primary,
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
         )
         self.contacts.append(contact)
         return contact
@@ -93,7 +93,7 @@ class ClientAggregate:
             client_id=self.client.id,
             author_user_id=author_user_id,
             content=content,
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
         )
         self.notes.append(note)
         return note
@@ -101,7 +101,7 @@ class ClientAggregate:
     def change_status(self, target: ClientStatus) -> None:
         old_status = self.client.status
         self.client.change_status(target)
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         self._pending_events.append(
             ClientStatusChangedEvent(
                 event_id=uuid.uuid4(),

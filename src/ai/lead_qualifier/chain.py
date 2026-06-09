@@ -1,9 +1,10 @@
-"""uleaduqualifier LangChain chain — skeleton."""
+"""LeadQualifier LangChain chain — skeleton."""
 from typing import Any
+
 from src.ai.shared.base import BaseAIChain
 
 
-class uleaduqualifier(BaseAIChain):
+class LeadQualifier(BaseAIChain):
     module_name = "lead_qualifier"
 
     def _build_chain(self) -> Any:

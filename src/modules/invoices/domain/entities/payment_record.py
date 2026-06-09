@@ -1,12 +1,12 @@
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 
 from src.shared.domain.value_objects.money import Money
 
 
-class PaymentMethod(str, Enum):
+class PaymentMethod(StrEnum):
     BANK_TRANSFER = "bank_transfer"
     MOMO = "momo"
     CASH = "cash"

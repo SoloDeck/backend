@@ -1,9 +1,9 @@
 from .proposal_events import (
-    ProposalCreatedEvent,
-    ProposalSentEvent,
     ProposalAcceptedEvent,
-    ProposalRejectedEvent,
+    ProposalCreatedEvent,
     ProposalExpiredEvent,
+    ProposalRejectedEvent,
+    ProposalSentEvent,
 )
 
 __all__ = [

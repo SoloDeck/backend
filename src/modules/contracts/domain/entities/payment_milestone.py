@@ -1,6 +1,6 @@
 import uuid
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 
 from src.shared.domain.value_objects.money import Money
 
@@ -20,8 +20,9 @@ class PaymentMilestone:
         return self.completed_at is not None
 
     def complete(self) -> None:
-        from src.modules.contracts.domain.exceptions.exceptions import MilestoneAlreadyCompletedError
+        from src.modules.contracts.domain.exceptions.exceptions import (
+            MilestoneAlreadyCompletedError,
+        )
         if self.is_completed:
             raise MilestoneAlreadyCompletedError(self.id)
-        from datetime import timezone
-        self.completed_at = datetime.now(timezone.utc)
+        self.completed_at = datetime.now(UTC)

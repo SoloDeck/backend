@@ -83,7 +83,7 @@ class Settings(BaseSettings):
     smtp_port: int = 1025
     smtp_user: str = ""
     smtp_password: str = ""
-    smtp_from_email: str = "noreply@solodesk.app"
+    smtp_from_email: str = "noreply@solodesk.space"
     smtp_from_name: str = "SoloDesk"
     smtp_tls: bool = False
 

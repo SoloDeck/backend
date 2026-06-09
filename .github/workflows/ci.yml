@@ -1,0 +1,124 @@
+name: CI / CD
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build-test:
+    name: Build / Test
+    runs-on: ubuntu-latest
+    container:
+      image: python:3.13-slim
+    services:
+      db:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: solodesk
+          POSTGRES_PASSWORD: solodesk
+          POSTGRES_DB: solodesk_test
+      redis:
+        image: redis:7-alpine
+    timeout-minutes: 15
+    if: github.event_name == 'pull_request' && github.base_ref == 'main'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          ref: ${{ github.head_ref }}
+
+      - name: Install dependencies
+        run: |
+          pip install hatch
+          pip install ".[dev]"
+
+      - name: Run tests
+        env:
+          TEST_DATABASE_URL: postgresql+asyncpg://solodesk:solodesk@db:5432/solodesk_test
+          DATABASE_URL: postgresql+asyncpg://solodesk:solodesk@db:5432/solodesk_test
+          REDIS_URL: redis://redis:6379/0
+          SECRET_KEY: ci-test-secret-key-32-chars-min!!
+          JWT_SECRET_KEY: ci-test-jwt-key-32-chars-minimum!
+        run: pytest tests/unit tests/integration -v
+
+  build-image:
+    name: Build / Image
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: write
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+      - name: Login to Docker Hub
+        uses: docker/login-action@v2
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Lowercase repository name
+        run: |
+          REPO_LOWER=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          echo "REGISTRY=ghcr.io/$REPO_LOWER" >> $GITHUB_ENV
+      - name: Build and push
+        run: |
+          docker compose build api worker beat
+          docker tag backend-api:latest ${{ env.REGISTRY }}/solodesk-backend:latest
+          docker tag backend-worker:latest ${{ env.REGISTRY }}/solodesk-backend-worker:latest
+          docker tag backend-beat:latest ${{ env.REGISTRY }}/solodesk-backend-beat:latest
+          docker push ${{ env.REGISTRY }}/solodesk-backend:latest
+          docker push ${{ env.REGISTRY }}/solodesk-backend-worker:latest
+          docker push ${{ env.REGISTRY }}/solodesk-backend-beat:latest
+
+  deploy-api:
+    name: Deploy / API / Main
+    runs-on: [self-hosted]
+    needs: build-image
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: write
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      REDIS_URL: ${{ secrets.REDIS_URL }}
+      SECRET_KEY: ${{ secrets.SECRET_KEY }}
+      JWT_SECRET_KEY: ${{ secrets.JWT_SECRET_KEY }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      SENDGRID_API_KEY: ${{ secrets.SENDGRID_API_KEY }}
+      ZALO_OA_ACCESS_TOKEN: ${{ secrets.ZALO_OA_ACCESS_TOKEN }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Login to Docker Hub
+        uses: docker/login-action@v2
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Lowercase repository name
+        shell: powershell
+        run: |
+          $repoLower = "${{ github.repository }}".ToLower()
+          echo "REGISTRY=ghcr.io/$repoLower" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      - name: Pull Images
+        shell: powershell
+        run: |
+          docker pull ${{ env.REGISTRY }}/solodesk-backend:latest
+          docker pull ${{ env.REGISTRY }}/solodesk-backend-worker:latest
+          docker pull ${{ env.REGISTRY }}/solodesk-backend-beat:latest
+      - name: Deploy
+        shell: powershell
+        run: docker compose up -d api worker beat
+      - name: Cleanup
+        shell: powershell
+        run: docker image prune -a -f

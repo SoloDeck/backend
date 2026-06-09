@@ -1,10 +1,10 @@
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 
 
-class DeliveryOutcome(str, Enum):
+class DeliveryOutcome(StrEnum):
     SUCCESS = "success"
     FAILURE = "failure"
 

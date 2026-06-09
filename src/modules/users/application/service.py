@@ -2,13 +2,14 @@
 
 import uuid
 from dataclasses import dataclass
+from datetime import UTC
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.modules.users.schemas.request import ChangePasswordRequest, UpdateUserRequest
 from src.shared.exceptions.domain import AuthenticationError, NotFoundError
 from src.shared.security.passwords import hash_password, verify_password
-from src.modules.users.schemas.request import ChangePasswordRequest, UpdateUserRequest
 
 
 @dataclass
@@ -39,10 +40,10 @@ class UsersService:
         return user
 
     async def delete_me(self, user_id: uuid.UUID) -> None:
-        from datetime import datetime, timezone
+        from datetime import datetime
 
         user = await self.get_me(user_id)
-        user.deleted_at = datetime.now(timezone.utc)
+        user.deleted_at = datetime.now(UTC)
         user.status = "deleted"
         await self.db.flush()
 

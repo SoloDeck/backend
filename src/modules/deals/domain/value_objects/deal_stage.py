@@ -1,7 +1,7 @@
-from enum import Enum
+from enum import StrEnum
 
 
-class DealStage(str, Enum):
+class DealStage(StrEnum):
     NEW_LEAD = "new_lead"
     QUALIFIED = "qualified"
     PROPOSAL_SENT = "proposal_sent"

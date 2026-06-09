@@ -1,9 +1,9 @@
 import uuid
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 
 
-class ReminderTargetType(str, Enum):
+class ReminderTargetType(StrEnum):
     DEAL = "deal"
     CLIENT = "client"
     INVOICE = "invoice"

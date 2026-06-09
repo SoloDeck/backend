@@ -1,7 +1,7 @@
 from .exceptions import (
     ReminderDomainError,
-    TerminalReminderError,
     ReminderNotCancellableError,
+    TerminalReminderError,
 )
 
 __all__ = ["ReminderDomainError", "TerminalReminderError", "ReminderNotCancellableError"]

@@ -37,19 +37,18 @@ TEST_DATABASE_URL = os.getenv(
 os.environ.setdefault("DATABASE_URL", TEST_DATABASE_URL)
 
 # ── src imports (settings singleton initialised here with DATABASE_URL above) ──
-import pytest
-import pytest_asyncio
-from httpx import ASGITransport, AsyncClient
-from sqlalchemy.ext.asyncio import (
+import pytest  # noqa: E402
+import pytest_asyncio  # noqa: E402
+from httpx import ASGITransport, AsyncClient  # noqa: E402
+from sqlalchemy.ext.asyncio import (  # noqa: E402
     AsyncSession,
     create_async_engine,
 )
-from sqlalchemy.pool import NullPool
+from sqlalchemy.pool import NullPool  # noqa: E402
 
-import src.infrastructure.database.models  # noqa: F401 — registers all ORM models with Base
-from src.infrastructure.database.session import get_db_session
-from src.main import app
-
+import src.infrastructure.database.models  # noqa: F401,E402 — registers all ORM models with Base
+from src.infrastructure.database.session import get_db_session  # noqa: E402
+from src.main import app  # noqa: E402
 
 # ── Helpers that run once at import time (before the event loop starts) ────────
 
@@ -89,8 +88,9 @@ def _run_migrations() -> None:
     alembic/env.py reads DATABASE_URL via settings — which was already pointed
     at the test DB before the settings singleton was created (see top of file).
     """
-    from alembic import command
     from alembic.config import Config
+
+    from alembic import command
 
     root = Path(__file__).resolve().parents[1]
     cfg = Config(str(root / "alembic.ini"))
@@ -98,8 +98,9 @@ def _run_migrations() -> None:
     command.upgrade(cfg, "head")
 
 
-_ensure_test_db()
-_run_migrations()
+if os.getenv("SKIP_DB_INIT") != "1":
+    _ensure_test_db()
+    _run_migrations()
 
 
 # ── Fixtures ───────────────────────────────────────────────────────────────────
@@ -113,7 +114,7 @@ def event_loop():
 
 
 @pytest_asyncio.fixture
-async def db_session() -> AsyncGenerator[AsyncSession, None]:
+async def db_session() -> AsyncGenerator[AsyncSession]:
     """Per-test isolated session using outer-transaction + savepoint pattern.
 
     NullPool ensures each test gets a fresh connection with no pool contamination.
@@ -134,7 +135,7 @@ async def db_session() -> AsyncGenerator[AsyncSession, None]:
 
 
 @pytest_asyncio.fixture
-async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
+async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient]:
     async def override_db():
         yield db_session
 

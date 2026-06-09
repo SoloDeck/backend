@@ -6,12 +6,8 @@ Asserts the standard response envelope shape on every response.
 
 import uuid
 
-import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
-
-from src.shared.security.passwords import hash_password
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -134,6 +130,7 @@ class TestLoginEndpoint:
         self, client: AsyncClient, db_session: AsyncSession
     ) -> None:
         from sqlalchemy import select
+
         from src.infrastructure.database.models import UserModel
 
         payload = _register_payload()

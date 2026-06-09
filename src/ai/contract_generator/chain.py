@@ -1,9 +1,10 @@
-"""ucontractugenerator LangChain chain — skeleton."""
+"""ContractGenerator LangChain chain — skeleton."""
 from typing import Any
+
 from src.ai.shared.base import BaseAIChain
 
 
-class ucontractugenerator(BaseAIChain):
+class ContractGenerator(BaseAIChain):
     module_name = "contract_generator"
 
     def _build_chain(self) -> Any:
