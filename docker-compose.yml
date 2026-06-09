@@ -65,6 +65,7 @@ services:
   # FastAPI app
   # -------------------------------------------------------------------------
   api:
+    image: ${IMAGE_NAME:-solodesk-backend:local}
     build:
       context: .
       target: runtime
@@ -101,6 +102,7 @@ services:
   # Celery worker
   # -------------------------------------------------------------------------
   worker:
+    image: ${IMAGE_NAME:-solodesk-backend:local}-worker
     build:
       context: .
       target: worker
@@ -128,6 +130,7 @@ services:
   # Celery beat (scheduler)
   # -------------------------------------------------------------------------
   beat:
+    image: ${IMAGE_NAME:-solodesk-backend:local}-beat
     build:
       context: .
       target: beat
