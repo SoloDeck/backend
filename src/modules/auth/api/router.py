@@ -136,9 +136,8 @@ async def password_reset_request(
     payload: PasswordResetRequestBody,
     db: DBSession,
 ) -> ApiResponse[MessageResponse]:
-    token = await AuthService(db=db).request_password_reset(payload)
-    detail = f"Reset token: {token}" if token else "If email exists, reset instructions sent"
-    return ApiResponse.ok(MessageResponse(detail=detail))
+    await AuthService(db=db).request_password_reset(payload)
+    return ApiResponse.ok(MessageResponse(detail="Nếu email tồn tại, mã OTP đã được gửi"))
 
 
 @router.post(

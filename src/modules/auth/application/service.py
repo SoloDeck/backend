@@ -297,8 +297,9 @@ class AuthService:
             user_id=new_user.id, email=new_user.email, role=new_user.role
         )
 
-    async def request_password_reset(self, payload: PasswordResetRequestBody) -> str:
-        from src.infrastructure.database.models import PasswordResetTokenModel, UserModel
+    async def request_password_reset(self, payload: PasswordResetRequestBody) -> None:
+        from src.infrastructure.database.models import UserModel, PasswordResetTokenModel
+        from src.shared.email.smtp import send_email
 
         user = await self.db.scalar(
             select(UserModel).where(
@@ -306,11 +307,13 @@ class AuthService:
                 UserModel.deleted_at.is_(None),
             )
         )
+        # Always return without revealing whether the email exists
         if user is None:
-            return ""
+            return
 
-        token = secrets.token_urlsafe(32)
-        token_hash = hashlib.sha256(token.encode()).hexdigest()
+        # Generate a 6-digit OTP and store its SHA-256 hash
+        otp = f"{secrets.randbelow(1_000_000):06d}"
+        token_hash = hashlib.sha256(otp.encode()).hexdigest()
 
         reset_token = PasswordResetTokenModel(
             user_id=user.id,
@@ -320,13 +323,31 @@ class AuthService:
         self.db.add(reset_token)
         await self.db.flush()
 
-        return token
+        html = f"""
+        <p>Xin chào <strong>{user.full_name}</strong>,</p>
+        <p>Mã OTP đặt lại mật khẩu của bạn là:</p>
+        <h2 style="letter-spacing:6px;">{otp}</h2>
+        <p>Mã có hiệu lực trong <strong>15 phút</strong>. Vui lòng không chia sẻ mã này với bất kỳ ai.</p>
+        <p>Nếu bạn không yêu cầu đặt lại mật khẩu, hãy bỏ qua email này.</p>
+        """
+        plain = (
+            f"Xin chào {user.full_name},\n\n"
+            f"Mã OTP đặt lại mật khẩu của bạn là: {otp}\n\n"
+            "Mã có hiệu lực trong 15 phút.\n"
+            "Nếu bạn không yêu cầu đặt lại mật khẩu, hãy bỏ qua email này."
+        )
+        await send_email(
+            to=user.email,
+            subject="[SoloDesk] Mã OTP đặt lại mật khẩu",
+            html=html,
+            plain=plain,
+        )
 
     async def confirm_password_reset(self, payload: PasswordResetConfirmRequest) -> None:
         from src.infrastructure.database.models import PasswordResetTokenModel, UserModel
 
-        token_hash = hashlib.sha256(payload.token.encode()).hexdigest()
-        now = datetime.now(UTC)
+        token_hash = hashlib.sha256(payload.otp.encode()).hexdigest()
+        now = datetime.now(timezone.utc)
 
         reset_token = await self.db.scalar(
             select(PasswordResetTokenModel).where(

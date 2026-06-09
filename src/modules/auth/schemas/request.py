@@ -35,7 +35,7 @@ class PasswordResetRequestBody(BaseModel):
 
 
 class PasswordResetConfirmRequest(BaseModel):
-    token: str
+    otp: str
     new_password: str
 
 
