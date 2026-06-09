@@ -42,3 +42,15 @@ migration(invoices): add tax_amount column
 - **Never skip hooks** (`--no-verify`) unless explicitly instructed.
 - **Migration commits** must be tagged `migration(<domain>):` and must not be bundled with feature
   code.
+
+## Version Bump (REQUIRED before a deployable change is done)
+
+Once tests pass and the change is deployable, you **MUST** bump the application version in
+`pyproject.toml` (`version = "X.Y.Z"`, semver) as part of the same change:
+
+- `fix` → patch (`0.1.0` → `0.1.1`)
+- `feat` → minor (`0.1.0` → `0.2.0`)
+- breaking change → major (`0.1.0` → `1.0.0`)
+
+Pure `docs`/`test`/`chore`/`refactor` changes that are not independently deployable do not require a
+bump. Commit the bump as `chore(version): bump to X.Y.Z` (or fold it into the deployable commit).
