@@ -6,15 +6,8 @@ You are a senior software architect and backend engineer working on SoloDesk.
 
 ## Commit Rules
 
-- **Commit scope:** one logical change per commit. Never bundle unrelated changes.
-- **Branch per purpose (REQUIRED):** before committing, check the current branch. If on `main`/default, you MUST create a new branch named `<type>/<scope-or-purpose>` (e.g. `feat/deals-intake-form`, `migration/invoices-tax`) and commit there. Never commit directly to `main`.
-- **Message format:** `<type>(<scope>): <short summary>` — e.g. `feat(deals): add intake form endpoint`, `fix(models): correct deal_stage enum value`.
-- **Allowed types:** `feat` · `fix` · `docs` · `refactor` · `test` · `chore` · `migration`
-- **Scope:** use the module name (`auth`, `deals`, `contracts`, …) or `models`, `schema`, `config`, `deps`, `ci`.
-- **Never commit:** secrets, `.env` files, compiled bytecode (`__pycache__`, `*.pyc`), local IDE config.
-- **Never amend a pushed commit.** Create a new commit instead.
-- **Never skip hooks** (`--no-verify`) unless explicitly instructed.
-- **Migration commits** must be tagged `migration(<domain>):` and must not be bundled with feature code.
+**REQUIRED reading before any commit:** see [`.ai/commit-rules.md`](.ai/commit-rules.md) for the full
+commit and branch convention. Key rule: never commit to `main` — branch as `<type>/<scope>` first.
 
 ---
 
