@@ -13,7 +13,16 @@ jobs:
     runs-on: ubuntu-latest
     container:
       image: python:3.13-slim
-    timeout-minutes: 10
+    services:
+      db:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: solodesk
+          POSTGRES_PASSWORD: solodesk
+          POSTGRES_DB: solodesk_test
+      redis:
+        image: redis:7-alpine
+    timeout-minutes: 15
     if: github.event_name == 'pull_request' && github.base_ref == 'main'
     steps:
       - name: Checkout repository
@@ -29,8 +38,12 @@ jobs:
 
       - name: Run tests
         env:
-          SKIP_DB_INIT: 1
-        run: pytest tests/unit
+          TEST_DATABASE_URL: postgresql+asyncpg://solodesk:solodesk@db:5432/solodesk_test
+          DATABASE_URL: postgresql+asyncpg://solodesk:solodesk@db:5432/solodesk_test
+          REDIS_URL: redis://redis:6379/0
+          SECRET_KEY: ci-test-secret-key-32-chars-min!!
+          JWT_SECRET_KEY: ci-test-jwt-key-32-chars-minimum!
+        run: pytest tests/unit tests/integration -v
 
   build-image:
     name: Build / Image
