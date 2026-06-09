@@ -98,8 +98,9 @@ def _run_migrations() -> None:
     command.upgrade(cfg, "head")
 
 
-_ensure_test_db()
-_run_migrations()
+if os.getenv("SKIP_DB_INIT") != "1":
+    _ensure_test_db()
+    _run_migrations()
 
 
 # ── Fixtures ───────────────────────────────────────────────────────────────────
