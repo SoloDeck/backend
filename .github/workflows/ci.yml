@@ -1,0 +1,257 @@
+name: Backend CI
+
+on:
+  push:
+    branches-ignore: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Phase 1: lint + typecheck + unit — run in parallel
+  # ---------------------------------------------------------------------------
+  lint:
+    name: Lint (ruff)
+    runs-on: [self-hosted, windows, X64]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build test image
+        run: docker compose build test
+
+      - name: Lint
+        run: docker compose run --rm test ruff check src tests
+
+  typecheck:
+    name: Type Check (mypy)
+    runs-on: [self-hosted, windows, X64]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build test image
+        run: docker compose build test
+
+      - name: Type check
+        run: docker compose run --rm test mypy src
+
+  unit-test:
+    name: Unit Tests
+    runs-on: [self-hosted, windows, X64]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build test image
+        run: docker compose build test
+
+      - name: Run unit tests
+        run: |
+          docker compose run --rm test \
+            pytest tests/unit -v --cov=src --cov-report=xml --cov-report=term-missing
+
+      - name: Upload coverage
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: backend-coverage
+          path: coverage.xml
+
+      - name: Upload to Codecov
+        uses: codecov/codecov-action@v4
+        if: always()
+        with:
+          files: coverage.xml
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: false
+
+  # ---------------------------------------------------------------------------
+  # Phase 2: integration tests — needs all three above
+  # ---------------------------------------------------------------------------
+  integration-test:
+    name: Integration Tests
+    needs: [lint, typecheck, unit-test]
+    runs-on: [self-hosted, windows, X64]
+    env:
+      SECRET_KEY: ${{ secrets.SECRET_KEY_CI || 'ci-test-secret-key-32-chars-min!!' }}
+      JWT_SECRET_KEY: ${{ secrets.JWT_SECRET_KEY_CI || 'ci-test-jwt-key-32-chars-minimum!' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build images
+        run: docker compose build test migrate
+
+      - name: Start db + redis
+        run: docker compose up -d db redis
+
+      - name: Run migrations + seed
+        run: docker compose run --rm migrate python scripts/bootstrap.py
+
+      - name: Run integration tests
+        run: |
+          docker compose run --rm \
+            -e SECRET_KEY \
+            -e JWT_SECRET_KEY \
+            test pytest tests/integration -v
+
+      - name: Cleanup
+        if: always()
+        run: docker compose down -v --remove-orphans
+
+  # ---------------------------------------------------------------------------
+  # Phase 3: build Docker images — only on push to main
+  # ---------------------------------------------------------------------------
+  build-image:
+    name: Build & Push Images
+    needs: [integration-test]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+
+    runs-on: [self-hosted, windows, X64]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        run: |
+          echo "${{ secrets.GHCR_TOKEN }}" | \
+            docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Build + push runtime
+        run: |
+          docker buildx build --target runtime \
+            -t ghcr.io/${{ github.repository_owner }}/solodesk-backend:${{ github.sha }} \
+            -t ghcr.io/${{ github.repository_owner }}/solodesk-backend:latest \
+            --push .
+
+      - name: Build + push worker
+        run: |
+          docker buildx build --target worker \
+            -t ghcr.io/${{ github.repository_owner }}/solodesk-backend-worker:${{ github.sha }} \
+            -t ghcr.io/${{ github.repository_owner }}/solodesk-backend-worker:latest \
+            --push .
+
+      - name: Build + push beat
+        run: |
+          docker buildx build --target beat \
+            -t ghcr.io/${{ github.repository_owner }}/solodesk-backend-beat:${{ github.sha }} \
+            -t ghcr.io/${{ github.repository_owner }}/solodesk-backend-beat:latest \
+            --push .
+
+  # ---------------------------------------------------------------------------
+  # Phase 4a: deploy staging — auto, no approval gate
+  # Secrets are scoped to the "staging" GitHub Environment.
+  # ---------------------------------------------------------------------------
+  deploy-staging:
+    name: Deploy to Staging
+    needs: [build-image]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: [self-hosted, windows, X64]
+    environment:
+      name: staging
+      url: https://staging-api.solodesk.space
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Write staging .env from secrets
+        run: |
+          cat > .env <<EOF
+          DATABASE_URL=${{ secrets.DATABASE_URL }}
+          REDIS_URL=${{ secrets.REDIS_URL }}
+          CELERY_BROKER_URL=${{ secrets.REDIS_URL }}
+          CELERY_RESULT_BACKEND=${{ secrets.REDIS_URL }}
+          SECRET_KEY=${{ secrets.SECRET_KEY }}
+          JWT_SECRET_KEY=${{ secrets.JWT_SECRET_KEY }}
+          OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}
+          STRIPE_SECRET_KEY=${{ secrets.STRIPE_SECRET_KEY }}
+          STRIPE_WEBHOOK_SECRET=${{ secrets.STRIPE_WEBHOOK_SECRET }}
+          STRIPE_FREE_PLAN_PRICE_ID=${{ secrets.STRIPE_FREE_PLAN_PRICE_ID }}
+          STORAGE_ENDPOINT=${{ secrets.STORAGE_ENDPOINT }}
+          STORAGE_ACCESS_KEY=${{ secrets.STORAGE_ACCESS_KEY }}
+          STORAGE_SECRET_KEY=${{ secrets.STORAGE_SECRET_KEY }}
+          STORAGE_REGION=${{ secrets.STORAGE_REGION }}
+          SMTP_HOST=${{ secrets.SMTP_HOST }}
+          SMTP_PORT=${{ secrets.SMTP_PORT }}
+          SMTP_USER=${{ secrets.SMTP_USER }}
+          SMTP_PASSWORD=${{ secrets.SMTP_PASSWORD }}
+          GOOGLE_CLIENT_ID=${{ secrets.GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET=${{ secrets.GOOGLE_CLIENT_SECRET }}
+          ZALO_OA_ACCESS_TOKEN=${{ secrets.ZALO_OA_ACCESS_TOKEN }}
+          APP_ENV=staging
+          EOF
+
+      - name: Pull latest images
+        run: docker compose pull api worker beat
+
+      - name: Deploy
+        run: docker compose up -d api worker beat
+
+      - name: Verify health
+        run: |
+          sleep 15
+          docker compose exec api curl -f http://localhost:8000/health
+
+      - name: Remove .env
+        if: always()
+        run: rm -f .env
+
+  # ---------------------------------------------------------------------------
+  # Phase 4b: deploy production — requires manual approval
+  # ---------------------------------------------------------------------------
+  deploy:
+    name: Deploy to Production
+    needs: [deploy-staging]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: [self-hosted, windows, X64]
+    environment:
+      name: production
+      url: https://api.solodesk.space
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Write production .env from secrets
+        run: |
+          cat > .env <<EOF
+          DATABASE_URL=${{ secrets.DATABASE_URL }}
+          REDIS_URL=${{ secrets.REDIS_URL }}
+          CELERY_BROKER_URL=${{ secrets.REDIS_URL }}
+          CELERY_RESULT_BACKEND=${{ secrets.REDIS_URL }}
+          SECRET_KEY=${{ secrets.SECRET_KEY }}
+          JWT_SECRET_KEY=${{ secrets.JWT_SECRET_KEY }}
+          OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}
+          STRIPE_SECRET_KEY=${{ secrets.STRIPE_SECRET_KEY }}
+          STRIPE_WEBHOOK_SECRET=${{ secrets.STRIPE_WEBHOOK_SECRET }}
+          STRIPE_FREE_PLAN_PRICE_ID=${{ secrets.STRIPE_FREE_PLAN_PRICE_ID }}
+          STORAGE_ENDPOINT=${{ secrets.STORAGE_ENDPOINT }}
+          STORAGE_ACCESS_KEY=${{ secrets.STORAGE_ACCESS_KEY }}
+          STORAGE_SECRET_KEY=${{ secrets.STORAGE_SECRET_KEY }}
+          STORAGE_REGION=${{ secrets.STORAGE_REGION }}
+          SMTP_HOST=${{ secrets.SMTP_HOST }}
+          SMTP_PORT=${{ secrets.SMTP_PORT }}
+          SMTP_USER=${{ secrets.SMTP_USER }}
+          SMTP_PASSWORD=${{ secrets.SMTP_PASSWORD }}
+          GOOGLE_CLIENT_ID=${{ secrets.GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET=${{ secrets.GOOGLE_CLIENT_SECRET }}
+          ZALO_OA_ACCESS_TOKEN=${{ secrets.ZALO_OA_ACCESS_TOKEN }}
+          APP_ENV=production
+          EOF
+
+      - name: Pull latest images
+        run: docker compose pull api worker beat
+
+      - name: Deploy
+        run: docker compose up -d api worker beat
+
+      - name: Verify health
+        run: |
+          echo "Waiting for API to start..."
+          sleep 15
+          docker compose exec api curl -f http://localhost:8000/health
+
+      - name: Remove .env
+        if: always()
+        run: rm -f .env

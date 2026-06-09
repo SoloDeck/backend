@@ -29,6 +29,8 @@ htmlcov/
 .env
 .env.*
 !.env.example
+!.env.staging.example
+!.env.production.example
 
 # IDE
 .idea/
