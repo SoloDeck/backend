@@ -162,7 +162,7 @@ services:
   test:
     build:
       context: .
-      target: dev
+      target: test
     restart: "no"
     environment:
       DATABASE_URL: postgresql+asyncpg://solodesk:solodesk@db:5432/solodesk_test
