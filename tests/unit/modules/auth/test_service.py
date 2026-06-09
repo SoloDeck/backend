@@ -136,7 +136,7 @@ from unittest.mock import patch
 from src.modules.auth.schemas.request import PasswordResetRequestBody, PasswordResetConfirmRequest
 
 class TestPasswordReset:
-    @patch("src.modules.auth.application.service.send_email")
+    @patch("src.shared.email.smtp.send_email")
     async def test_request_reset_success(self, mock_send_email: AsyncMock) -> None:
         user = _make_user()
         db = _mock_db([user])
@@ -147,7 +147,7 @@ class TestPasswordReset:
         db.flush.assert_called_once()
         mock_send_email.assert_called_once()
         
-    @patch("src.modules.auth.application.service.send_email")
+    @patch("src.shared.email.smtp.send_email")
     async def test_request_reset_user_not_found_returns_silently(self, mock_send_email: AsyncMock) -> None:
         db = _mock_db([None])
         service = AuthService(db=db)

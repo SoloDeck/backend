@@ -5,7 +5,7 @@ import secrets
 import urllib.parse
 import uuid
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, timezone
 
 import httpx
 from jose import JWTError, jwt
@@ -347,7 +347,7 @@ class AuthService:
         from src.infrastructure.database.models import PasswordResetTokenModel, UserModel
 
         token_hash = hashlib.sha256(payload.otp.encode()).hexdigest()
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         reset_token = await self.db.scalar(
             select(PasswordResetTokenModel).where(
