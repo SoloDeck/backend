@@ -24,10 +24,12 @@ def _make_user(
     status: str = "active",
     role: str = "freelancer",
     email: str = "user@example.com",
+    full_name: str = "Test User",
 ) -> SimpleNamespace:
     return SimpleNamespace(
         id=uuid.uuid4(),
         email=email,
+        full_name=full_name,
         hashed_password=hash_password("Test@1234!"),
         status=status,
         role=role,
