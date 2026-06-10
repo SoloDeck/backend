@@ -12,8 +12,33 @@ permissions:
   contents: read
 
 jobs:
-  build-test:
-    name: Build / Test
+  test-unit:
+    name: Test / Unit
+    runs-on: ubuntu-latest
+    container:
+      image: python:3.13-slim
+    timeout-minutes: 15
+    if: github.event_name == 'pull_request' && github.base_ref == 'main'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          ref: ${{ github.head_ref || github.ref }}
+
+      - name: Install dependencies
+        run: |
+          pip install hatch
+          pip install ".[dev]"
+
+      - name: Run unit tests
+        env:
+          SECRET_KEY: ci-test-secret-key-32-chars-min!!
+          JWT_SECRET_KEY: ci-test-jwt-key-32-chars-minimum!
+        run: pytest tests/unit -v
+
+  test-integration:
+    name: Test / Integration
     runs-on: ubuntu-latest
     container:
       image: python:3.13-slim
@@ -27,9 +52,7 @@ jobs:
       redis:
         image: redis:7-alpine
     timeout-minutes: 15
-    if: >
-      (github.event_name == 'pull_request' && github.base_ref == 'main') ||
-      (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -42,19 +65,19 @@ jobs:
           pip install hatch
           pip install ".[dev]"
 
-      - name: Run tests
+      - name: Run integration tests
         env:
           TEST_DATABASE_URL: postgresql+asyncpg://solodesk:solodesk@db:5432/solodesk_test
           DATABASE_URL: postgresql+asyncpg://solodesk:solodesk@db:5432/solodesk_test
           REDIS_URL: redis://redis:6379/0
           SECRET_KEY: ci-test-secret-key-32-chars-min!!
           JWT_SECRET_KEY: ci-test-jwt-key-32-chars-minimum!
-        run: pytest tests/unit tests/integration -v
+        run: pytest tests/integration -v
 
   build-image:
     name: Build / Image
     runs-on: ubuntu-latest
-    needs: build-test
+    needs: test-integration
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     timeout-minutes: 10
     permissions:
