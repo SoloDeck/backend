@@ -144,9 +144,6 @@ jobs:
         shell: powershell
         run: Remove-Item -Force .env -ErrorAction SilentlyContinue
 
-      - name: Cleanup old images
-        shell: powershell
-        run: docker image prune -a -f
 
   deploy-production:
     name: Deploy / Production
@@ -207,6 +204,3 @@ jobs:
         shell: powershell
         run: Remove-Item -Force .env -ErrorAction SilentlyContinue
 
-      - name: Cleanup old images
-        shell: powershell
-        run: docker image prune -a -f
