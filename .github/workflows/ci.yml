@@ -141,9 +141,11 @@ jobs:
       - name: Pull & deploy
         shell: powershell
         run: |
+          $repoLower = "${{ github.repository }}".ToLower()
+          $env:IMAGE_NAME = "ghcr.io/$repoLower/solodesk-backend"
           $env:API_PORT = "${{ vars.API_PORT }}"
-          docker pull ${{ env.REGISTRY }}/solodesk-backend:latest
-          docker compose up -d api worker beat
+          docker compose -p solodesk-backend-staging pull api worker beat
+          docker compose -p solodesk-backend-staging up -d api worker beat
 
       - name: Remove .env
         if: always()
@@ -207,9 +209,11 @@ jobs:
       - name: Pull & deploy
         shell: powershell
         run: |
+          $repoLower = "${{ github.repository }}".ToLower()
+          $env:IMAGE_NAME = "ghcr.io/$repoLower/solodesk-backend"
           $env:API_PORT = "${{ vars.API_PORT }}"
-          docker pull ${{ env.REGISTRY }}/solodesk-backend:latest
-          docker compose up -d api worker beat
+          docker compose -p solodesk-backend-production pull api worker beat
+          docker compose -p solodesk-backend-production up -d api worker beat
 
       - name: Remove .env
         if: always()
