@@ -90,7 +90,7 @@ class Settings(BaseSettings):
     # -----------------------------------------------------------------------
     # CORS
     # -----------------------------------------------------------------------
-    cors_origins: list[str] = ["http://localhost:3000", "http://localhost:5173"]
+    cors_origins: list[str] = ["*"]
 
     @field_validator("cors_origins", mode="before")
     @classmethod
