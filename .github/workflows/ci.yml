@@ -12,13 +12,18 @@ permissions:
   contents: read
 
 jobs:
+  # -------------------------------------------------------------------------
+  # Phase 1: Unit Tests (No Database)
+  # -------------------------------------------------------------------------
   test-unit:
     name: Test / Unit
     runs-on: ubuntu-latest
     container:
       image: python:3.13-slim
-    timeout-minutes: 15
-    if: github.event_name == 'pull_request' && github.base_ref == 'main'
+    timeout-minutes: 10
+    if: >
+      (github.event_name == 'pull_request' && github.base_ref == 'main') ||
+      (github.event_name == 'push' && github.ref == 'refs/heads/main')
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -33,10 +38,14 @@ jobs:
 
       - name: Run unit tests
         env:
+          SKIP_DB_INIT: 1
           SECRET_KEY: ci-test-secret-key-32-chars-min!!
           JWT_SECRET_KEY: ci-test-jwt-key-32-chars-minimum!
         run: pytest tests/unit -v
 
+  # -------------------------------------------------------------------------
+  # Phase 2: Integration Tests (With Database & Redis)
+  # -------------------------------------------------------------------------
   test-integration:
     name: Test / Integration
     runs-on: ubuntu-latest
@@ -52,7 +61,9 @@ jobs:
       redis:
         image: redis:7-alpine
     timeout-minutes: 15
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: >
+      (github.event_name == 'pull_request' && github.base_ref == 'main') ||
+      (github.event_name == 'push' && github.ref == 'refs/heads/main')
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -74,10 +85,13 @@ jobs:
           JWT_SECRET_KEY: ci-test-jwt-key-32-chars-minimum!
         run: pytest tests/integration -v
 
+  # -------------------------------------------------------------------------
+  # Phase 3: Build Image (Only if all tests pass)
+  # -------------------------------------------------------------------------
   build-image:
     name: Build / Image
     runs-on: ubuntu-latest
-    needs: test-integration
+    needs: [test-unit, test-integration]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     timeout-minutes: 10
     permissions:
@@ -108,20 +122,17 @@ jobs:
           docker push ${{ env.REGISTRY }}/solodesk-backend-worker:latest
           docker push ${{ env.REGISTRY }}/solodesk-backend-beat:latest
 
+  # -------------------------------------------------------------------------
+  # Phase 4: Deploy
+  # -------------------------------------------------------------------------
   deploy-staging:
     name: Deploy / Staging
     runs-on: [self-hosted]
     needs: build-image
-    permissions:
-      contents: read
-      packages: read   # pull image from GHCR
-    environment:
-      name: staging
-      url: https://staging-api.solodesk.space
+    environment: staging
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
       - name: Login to GHCR
         uses: docker/login-action@v3
         with:
@@ -155,10 +166,7 @@ jobs:
           STRIPE_WEBHOOK_SECRET=${{ secrets.STRIPE_WEBHOOK_SECRET }}
           CORS_ORIGINS=${{ vars.CORS_ORIGINS }}
           API_PORT=${{ vars.API_PORT }}
-          GOOGLE_CLIENT_ID=${{ secrets.GOOGLE_CLIENT_ID }}
-          GOOGLE_CLIENT_SECRET=${{ secrets.GOOGLE_CLIENT_SECRET }}
           GOOGLE_REDIRECT_URI=${{ vars.GOOGLE_REDIRECT_URI }}
-          OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}
           "@ | Out-File -FilePath .env -Encoding utf8
 
       - name: Pull & deploy
@@ -175,21 +183,14 @@ jobs:
         shell: powershell
         run: Remove-Item -Force .env -ErrorAction SilentlyContinue
 
-
   deploy-production:
     name: Deploy / Production
     runs-on: [self-hosted]
     needs: deploy-staging
-    permissions:
-      contents: read
-      packages: read   # pull image from GHCR
-    environment:
-      name: production
-      url: https://api.solodesk.space
+    environment: production
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
       - name: Login to GHCR
         uses: docker/login-action@v3
         with:
@@ -223,10 +224,7 @@ jobs:
           STRIPE_WEBHOOK_SECRET=${{ secrets.STRIPE_WEBHOOK_SECRET }}
           CORS_ORIGINS=${{ vars.CORS_ORIGINS }}
           API_PORT=${{ vars.API_PORT }}
-          GOOGLE_CLIENT_ID=${{ secrets.GOOGLE_CLIENT_ID }}
-          GOOGLE_CLIENT_SECRET=${{ secrets.GOOGLE_CLIENT_SECRET }}
           GOOGLE_REDIRECT_URI=${{ vars.GOOGLE_REDIRECT_URI }}
-          OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}
           "@ | Out-File -FilePath .env -Encoding utf8
 
       - name: Pull & deploy
@@ -242,4 +240,3 @@ jobs:
         if: always()
         shell: powershell
         run: Remove-Item -Force .env -ErrorAction SilentlyContinue
-
