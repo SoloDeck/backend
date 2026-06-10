@@ -78,10 +78,9 @@ jobs:
           echo "REGISTRY=ghcr.io/$REPO_LOWER" >> $GITHUB_ENV
       - name: Build and push
         run: |
-          docker compose build api worker beat
-          docker tag backend-api:latest ${{ env.REGISTRY }}/solodesk-backend:latest
-          docker tag backend-worker:latest ${{ env.REGISTRY }}/solodesk-backend-worker:latest
-          docker tag backend-beat:latest ${{ env.REGISTRY }}/solodesk-backend-beat:latest
+          docker build --target runtime -t ${{ env.REGISTRY }}/solodesk-backend:latest .
+          docker build --target worker  -t ${{ env.REGISTRY }}/solodesk-backend-worker:latest .
+          docker build --target beat    -t ${{ env.REGISTRY }}/solodesk-backend-beat:latest .
           docker push ${{ env.REGISTRY }}/solodesk-backend:latest
           docker push ${{ env.REGISTRY }}/solodesk-backend-worker:latest
           docker push ${{ env.REGISTRY }}/solodesk-backend-beat:latest
