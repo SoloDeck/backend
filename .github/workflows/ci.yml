@@ -130,12 +130,18 @@ jobs:
           ZALO_OA_ACCESS_TOKEN=${{ secrets.ZALO_OA_ACCESS_TOKEN }}
           STRIPE_SECRET_KEY=${{ secrets.STRIPE_SECRET_KEY }}
           STRIPE_WEBHOOK_SECRET=${{ secrets.STRIPE_WEBHOOK_SECRET }}
-          CORS_ORIGINS=https://staging.solodesk.space,http://localhost:5173
+          CORS_ORIGINS=${{ vars.CORS_ORIGINS }}
+          API_PORT=${{ vars.API_PORT }}
+          GOOGLE_CLIENT_ID=${{ secrets.GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET=${{ secrets.GOOGLE_CLIENT_SECRET }}
+          GOOGLE_REDIRECT_URI=${{ vars.GOOGLE_REDIRECT_URI }}
+          OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}
           "@ | Out-File -FilePath .env -Encoding utf8
 
       - name: Pull & deploy
         shell: powershell
         run: |
+          $env:API_PORT = "${{ vars.API_PORT }}"
           docker pull ${{ env.REGISTRY }}/solodesk-backend:latest
           docker compose up -d api worker beat
 
@@ -190,12 +196,18 @@ jobs:
           ZALO_OA_ACCESS_TOKEN=${{ secrets.ZALO_OA_ACCESS_TOKEN }}
           STRIPE_SECRET_KEY=${{ secrets.STRIPE_SECRET_KEY }}
           STRIPE_WEBHOOK_SECRET=${{ secrets.STRIPE_WEBHOOK_SECRET }}
-          CORS_ORIGINS=https://app.solodesk.space
+          CORS_ORIGINS=${{ vars.CORS_ORIGINS }}
+          API_PORT=${{ vars.API_PORT }}
+          GOOGLE_CLIENT_ID=${{ secrets.GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET=${{ secrets.GOOGLE_CLIENT_SECRET }}
+          GOOGLE_REDIRECT_URI=${{ vars.GOOGLE_REDIRECT_URI }}
+          OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}
           "@ | Out-File -FilePath .env -Encoding utf8
 
       - name: Pull & deploy
         shell: powershell
         run: |
+          $env:API_PORT = "${{ vars.API_PORT }}"
           docker pull ${{ env.REGISTRY }}/solodesk-backend:latest
           docker compose up -d api worker beat
 
