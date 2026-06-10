@@ -7,6 +7,10 @@ on:
     branches:
       - main
 
+# Deny all permissions by default — each job grants only what it needs
+permissions:
+  contents: read
+
 jobs:
   build-test:
     name: Build / Test
@@ -23,13 +27,15 @@ jobs:
       redis:
         image: redis:7-alpine
     timeout-minutes: 15
-    if: github.event_name == 'pull_request' && github.base_ref == 'main'
+    if: >
+      (github.event_name == 'pull_request' && github.base_ref == 'main') ||
+      (github.event_name == 'push' && github.ref == 'refs/heads/main')
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
-          ref: ${{ github.head_ref }}
+          ref: ${{ github.head_ref || github.ref }}
 
       - name: Install dependencies
         run: |
@@ -48,11 +54,12 @@ jobs:
   build-image:
     name: Build / Image
     runs-on: ubuntu-latest
+    needs: build-test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     timeout-minutes: 10
     permissions:
       contents: read
       packages: write
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -79,46 +86,128 @@ jobs:
           docker push ${{ env.REGISTRY }}/solodesk-backend-worker:latest
           docker push ${{ env.REGISTRY }}/solodesk-backend-beat:latest
 
-  deploy-api:
-    name: Deploy / API / Main
+  deploy-staging:
+    name: Deploy / Staging
     runs-on: [self-hosted]
     needs: build-image
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    timeout-minutes: 10
     permissions:
       contents: read
-      packages: write
-    env:
-      DATABASE_URL: ${{ secrets.DATABASE_URL }}
-      REDIS_URL: ${{ secrets.REDIS_URL }}
-      SECRET_KEY: ${{ secrets.SECRET_KEY }}
-      JWT_SECRET_KEY: ${{ secrets.JWT_SECRET_KEY }}
-      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-      SENDGRID_API_KEY: ${{ secrets.SENDGRID_API_KEY }}
-      ZALO_OA_ACCESS_TOKEN: ${{ secrets.ZALO_OA_ACCESS_TOKEN }}
+      packages: read   # pull image from GHCR
+    environment:
+      name: staging
+      url: https://staging-api.solodesk.space
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-      - name: Login to Docker Hub
+
+      - name: Login to GHCR
         uses: docker/login-action@v2
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Lowercase repository name
+
+      - name: Set registry name
         shell: powershell
         run: |
           $repoLower = "${{ github.repository }}".ToLower()
-          echo "REGISTRY=ghcr.io/$repoLower" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-      - name: Pull Images
+          "REGISTRY=ghcr.io/$repoLower" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Write staging .env
+        shell: powershell
+        run: |
+          @"
+          APP_ENV=staging
+          DATABASE_URL=${{ secrets.DATABASE_URL }}
+          REDIS_URL=${{ secrets.REDIS_URL }}
+          CELERY_BROKER_URL=${{ secrets.REDIS_URL }}
+          CELERY_RESULT_BACKEND=${{ secrets.REDIS_URL }}
+          SECRET_KEY=${{ secrets.SECRET_KEY }}
+          JWT_SECRET_KEY=${{ secrets.JWT_SECRET_KEY }}
+          OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}
+          SENDGRID_API_KEY=${{ secrets.SENDGRID_API_KEY }}
+          GOOGLE_CLIENT_ID=${{ secrets.GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET=${{ secrets.GOOGLE_CLIENT_SECRET }}
+          ZALO_OA_ACCESS_TOKEN=${{ secrets.ZALO_OA_ACCESS_TOKEN }}
+          STRIPE_SECRET_KEY=${{ secrets.STRIPE_SECRET_KEY }}
+          STRIPE_WEBHOOK_SECRET=${{ secrets.STRIPE_WEBHOOK_SECRET }}
+          CORS_ORIGINS=https://staging.solodesk.space,http://localhost:5173
+          "@ | Out-File -FilePath .env -Encoding utf8
+
+      - name: Pull & deploy
         shell: powershell
         run: |
           docker pull ${{ env.REGISTRY }}/solodesk-backend:latest
-          docker pull ${{ env.REGISTRY }}/solodesk-backend-worker:latest
-          docker pull ${{ env.REGISTRY }}/solodesk-backend-beat:latest
-      - name: Deploy
+          docker compose up -d api worker beat
+
+      - name: Remove .env
+        if: always()
         shell: powershell
-        run: docker compose up -d api worker beat
-      - name: Cleanup
+        run: Remove-Item -Force .env -ErrorAction SilentlyContinue
+
+      - name: Cleanup old images
+        shell: powershell
+        run: docker image prune -a -f
+
+  deploy-production:
+    name: Deploy / Production
+    runs-on: [self-hosted]
+    needs: deploy-staging
+    permissions:
+      contents: read
+      packages: read   # pull image from GHCR
+    environment:
+      name: production
+      url: https://api.solodesk.space
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Login to GHCR
+        uses: docker/login-action@v2
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set registry name
+        shell: powershell
+        run: |
+          $repoLower = "${{ github.repository }}".ToLower()
+          "REGISTRY=ghcr.io/$repoLower" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Write production .env
+        shell: powershell
+        run: |
+          @"
+          APP_ENV=production
+          DATABASE_URL=${{ secrets.DATABASE_URL }}
+          REDIS_URL=${{ secrets.REDIS_URL }}
+          CELERY_BROKER_URL=${{ secrets.REDIS_URL }}
+          CELERY_RESULT_BACKEND=${{ secrets.REDIS_URL }}
+          SECRET_KEY=${{ secrets.SECRET_KEY }}
+          JWT_SECRET_KEY=${{ secrets.JWT_SECRET_KEY }}
+          OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}
+          SENDGRID_API_KEY=${{ secrets.SENDGRID_API_KEY }}
+          GOOGLE_CLIENT_ID=${{ secrets.GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET=${{ secrets.GOOGLE_CLIENT_SECRET }}
+          ZALO_OA_ACCESS_TOKEN=${{ secrets.ZALO_OA_ACCESS_TOKEN }}
+          STRIPE_SECRET_KEY=${{ secrets.STRIPE_SECRET_KEY }}
+          STRIPE_WEBHOOK_SECRET=${{ secrets.STRIPE_WEBHOOK_SECRET }}
+          CORS_ORIGINS=https://app.solodesk.space
+          "@ | Out-File -FilePath .env -Encoding utf8
+
+      - name: Pull & deploy
+        shell: powershell
+        run: |
+          docker pull ${{ env.REGISTRY }}/solodesk-backend:latest
+          docker compose up -d api worker beat
+
+      - name: Remove .env
+        if: always()
+        shell: powershell
+        run: Remove-Item -Force .env -ErrorAction SilentlyContinue
+
+      - name: Cleanup old images
         shell: powershell
         run: docker image prune -a -f
