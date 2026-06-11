@@ -547,36 +547,23 @@ paths:
       summary: List clients
       description: |
         Returns only clients owned by the authenticated user (`owner_user_id` filter is
-        applied automatically). Archived (soft-deleted) clients are excluded unless
-        `status=archived` is passed.
+        applied automatically). Soft-deleted clients are always excluded.
       parameters:
-        - $ref: '#/components/parameters/Page'
-        - $ref: '#/components/parameters/PageSize'
         - name: status
           in: query
+          description: Filter by status
           schema:
             $ref: '#/components/schemas/ClientStatus'
-        - name: type
+        - name: name
           in: query
-          schema:
-            $ref: '#/components/schemas/ClientType'
-        - name: search
-          in: query
-          description: Full-text search on name and email
+          description: Search by name (case-insensitive, partial match)
           schema:
             type: string
-        - name: tag
+        - name: email
           in: query
-          description: Filter by tag (exact match, lowercase)
+          description: Search by email (case-insensitive, partial match)
           schema:
             type: string
-        - name: sort_by
-          in: query
-          schema:
-            type: string
-            enum: [name, created_at, updated_at, status]
-            default: created_at
-        - $ref: '#/components/parameters/SortOrder'
       responses:
         '200':
           description: Paginated client list

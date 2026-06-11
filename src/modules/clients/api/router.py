@@ -36,9 +36,11 @@ async def create_client(
 async def list_clients(
     user_id: CurrentUserId,
     db: DBSession,
-    status: str | None = Query(default=None, description="Filter by client status (prospect, active, inactive, archived)"),
+    status: str | None = Query(default=None, description="Filter by status: prospect, active, inactive, archived"),
+    name: str | None = Query(default=None, description="Search by name (case-insensitive, partial match)"),
+    email: str | None = Query(default=None, description="Search by email (case-insensitive, partial match)"),
 ) -> ApiResponse[list[ClientResponse]]:
-    clients = await ClientsService(db=db).list_all(user_id, status=status)
+    clients = await ClientsService(db=db).list_all(user_id, status=status, name=name, email=email)
     return ApiResponse.ok([ClientResponse.model_validate(c) for c in clients])
 
 

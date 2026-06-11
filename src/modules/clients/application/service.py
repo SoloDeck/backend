@@ -51,7 +51,13 @@ class ClientsService:
         await self.db.refresh(client)
         return client
 
-    async def list_all(self, user_id: uuid.UUID, status: str | None = None) -> list:
+    async def list_all(
+        self,
+        user_id: uuid.UUID,
+        status: str | None = None,
+        name: str | None = None,
+        email: str | None = None,
+    ) -> list:
         from src.infrastructure.database.models import ClientModel
 
         conditions = [
@@ -60,6 +66,10 @@ class ClientsService:
         ]
         if status is not None:
             conditions.append(ClientModel.status == status)
+        if name is not None:
+            conditions.append(ClientModel.name.ilike(f"%{name}%"))
+        if email is not None:
+            conditions.append(ClientModel.email.ilike(f"%{email}%"))
 
         result = await self.db.execute(select(ClientModel).where(*conditions))
         return list(result.scalars().all())

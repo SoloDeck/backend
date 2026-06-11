@@ -163,11 +163,43 @@ class TestListClients:
         assert "prospect" in statuses
         assert "active" in statuses
 
+    async def test_name_search(self, client: AsyncClient) -> None:
+        headers = await _auth_headers(client)
+        await _create_client(client, headers, name="Nguyen Van Alpha")
+        await _create_client(client, headers, name="Tran Thi Beta")
+
+        resp = await client.get("/api/v1/clients?name=alpha", headers=headers)
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        assert len(data) >= 1
+        assert all("alpha" in c["name"].lower() for c in data)
+
+    async def test_email_search(self, client: AsyncClient) -> None:
+        headers = await _auth_headers(client)
+        unique = uuid.uuid4().hex[:8]
+        await _create_client(client, headers, email=f"find_{unique}@example.com")
+        await _create_client(client, headers, email=f"other_{unique}@example.com")
+
+        resp = await client.get(f"/api/v1/clients?email=find_{unique}", headers=headers)
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        assert len(data) == 1
+        assert f"find_{unique}" in data[0]["email"]
+
+    async def test_name_and_status_combined(self, client: AsyncClient) -> None:
+        headers = await _auth_headers(client)
+        await _create_client(client, headers, name="Combo Client", status="active")
+        await _create_client(client, headers, name="Combo Client", status="inactive")
+
+        resp = await client.get("/api/v1/clients?name=Combo&status=active", headers=headers)
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        assert len(data) >= 1
+        assert all(c["status"] == "active" for c in data)
+
     async def test_unauthenticated_returns_401(self, client: AsyncClient) -> None:
         resp = await client.get("/api/v1/clients")
         assert resp.status_code == 401
-
-    async def test_tenant_isolation(self, client: AsyncClient) -> None:
         """User A's clients must not appear in User B's list."""
         headers_a = await _auth_headers(client)
         headers_b = await _auth_headers(client)
