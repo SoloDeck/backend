@@ -1,12 +1,11 @@
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from src.modules.clients.domain.value_objects.client_status import (
+    CLIENT_STATUS_TRANSITIONS,
     ClientStatus,
     ClientType,
-    CLIENT_STATUS_TRANSITIONS,
-    TERMINAL_CLIENT_STATUSES,
 )
 
 
@@ -51,15 +50,15 @@ class Client:
 
     def change_status(self, target: ClientStatus) -> None:
         from src.modules.clients.domain.exceptions.exceptions import (
-            InvalidClientStatusTransitionError,
             ArchivedClientError,
+            InvalidClientStatusTransitionError,
         )
         if self.is_archived:
             raise ArchivedClientError()
         if not self.can_transition_to(target):
             raise InvalidClientStatusTransitionError(self.status, target)
         self.status = target
-        self.updated_at = datetime.now(timezone.utc)
+        self.updated_at = datetime.now(UTC)
 
     def update_contact_info(
         self,
@@ -87,7 +86,7 @@ class Client:
             self.address = address
         if website is not None:
             self.website = website
-        self.updated_at = datetime.now(timezone.utc)
+        self.updated_at = datetime.now(UTC)
 
     def add_tag(self, tag: str) -> None:
         from src.modules.clients.domain.exceptions.exceptions import ArchivedClientError
@@ -100,17 +99,17 @@ class Client:
             raise ValueError(f"Client cannot have more than {self.MAX_TAGS} tags")
         if normalized not in self.tags:
             self.tags.append(normalized)
-            self.updated_at = datetime.now(timezone.utc)
+            self.updated_at = datetime.now(UTC)
 
     def remove_tag(self, tag: str) -> None:
         normalized = tag.strip().lower()
         if normalized in self.tags:
             self.tags.remove(normalized)
-            self.updated_at = datetime.now(timezone.utc)
+            self.updated_at = datetime.now(UTC)
 
     def archive(self) -> None:
         self.change_status(ClientStatus.ARCHIVED)
 
     def soft_delete(self) -> None:
-        self.deleted_at = datetime.now(timezone.utc)
-        self.updated_at = datetime.now(timezone.utc)
+        self.deleted_at = datetime.now(UTC)
+        self.updated_at = datetime.now(UTC)

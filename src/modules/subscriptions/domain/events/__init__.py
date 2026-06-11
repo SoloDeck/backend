@@ -1,8 +1,8 @@
 from .subscription_events import (
-    SubscriptionCreatedEvent,
     PlanChangedEvent,
-    SubscriptionSuspendedEvent,
+    SubscriptionCreatedEvent,
     SubscriptionReactivatedEvent,
+    SubscriptionSuspendedEvent,
     UsageLimitReachedEvent,
 )
 

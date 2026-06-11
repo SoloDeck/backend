@@ -1,12 +1,11 @@
 import uuid
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from decimal import Decimal
+from dataclasses import dataclass
+from datetime import UTC, datetime
 
 from src.modules.proposals.domain.value_objects.proposal_status import (
-    ProposalStatus,
     PROPOSAL_TRANSITIONS,
     TERMINAL_PROPOSAL_STATUSES,
+    ProposalStatus,
 )
 from src.shared.domain.value_objects.money import Money
 
@@ -57,7 +56,7 @@ class Proposal:
             raise ProposalEditForbiddenError(self.status)
         self.content = content
         self.total_value = total_value
-        self.updated_at = datetime.now(timezone.utc)
+        self.updated_at = datetime.now(UTC)
 
     def send(self) -> None:
         from src.modules.proposals.domain.exceptions.exceptions import (
@@ -68,7 +67,7 @@ class Proposal:
         if self.total_value.is_zero():
             raise ValueError("Cannot send a proposal with zero value")
         self.status = ProposalStatus.SENT
-        self.sent_at = datetime.now(timezone.utc)
+        self.sent_at = datetime.now(UTC)
         self.updated_at = self.sent_at
 
     def accept(self) -> None:
@@ -77,7 +76,7 @@ class Proposal:
         )
         if not self.can_transition_to(ProposalStatus.ACCEPTED):
             raise InvalidProposalTransitionError(self.status, ProposalStatus.ACCEPTED)
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         self.status = ProposalStatus.ACCEPTED
         self.accepted_at = now
         self.updated_at = now
@@ -88,7 +87,7 @@ class Proposal:
         )
         if not self.can_transition_to(ProposalStatus.REJECTED):
             raise InvalidProposalTransitionError(self.status, ProposalStatus.REJECTED)
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         self.status = ProposalStatus.REJECTED
         self.rejection_reason = reason
         self.rejected_at = now
@@ -101,9 +100,9 @@ class Proposal:
         if not self.can_transition_to(ProposalStatus.EXPIRED):
             raise InvalidProposalTransitionError(self.status, ProposalStatus.EXPIRED)
         self.status = ProposalStatus.EXPIRED
-        self.updated_at = datetime.now(timezone.utc)
+        self.updated_at = datetime.now(UTC)
 
     def supersede(self) -> None:
         """Mark this proposal as superseded by a newer version."""
         self.status = ProposalStatus.SUPERSEDED
-        self.updated_at = datetime.now(timezone.utc)
+        self.updated_at = datetime.now(UTC)

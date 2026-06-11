@@ -1,8 +1,8 @@
 from .reminder_events import (
-    ReminderScheduledEvent,
+    ReminderCancelledEvent,
     ReminderDeliveredEvent,
     ReminderFailedEvent,
-    ReminderCancelledEvent,
+    ReminderScheduledEvent,
 )
 
 __all__ = [

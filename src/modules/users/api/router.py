@@ -26,7 +26,11 @@ async def get_me(
     return ApiResponse.ok(UserResponse.model_validate(user))
 
 
-@router.patch("/me", response_model=ApiResponse[UserResponse], summary="Update current user profile")
+@router.patch(
+    "/me",
+    response_model=ApiResponse[UserResponse],
+    summary="Update current user profile",
+)
 async def update_me(
     payload: UpdateUserRequest,
     user_id: CurrentUserId,
@@ -36,7 +40,11 @@ async def update_me(
     return ApiResponse.ok(UserResponse.model_validate(user))
 
 
-@router.delete("/me", response_model=ApiResponse[MessageResponse], summary="Delete current user account")
+@router.delete(
+    "/me",
+    response_model=ApiResponse[MessageResponse],
+    summary="Delete current user account",
+)
 async def delete_me(
     user_id: CurrentUserId,
     db: DBSession,

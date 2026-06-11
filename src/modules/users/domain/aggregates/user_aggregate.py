@@ -1,18 +1,18 @@
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
-from src.shared.domain.base import DomainEvent
 from src.modules.users.domain.entities.user import User
-from src.modules.users.domain.value_objects.user_status import UserStatus, UserRole
-from src.modules.users.domain.value_objects.professional_profile import ProfessionalProfile
-from src.modules.users.domain.value_objects.preferences import Preferences
 from src.modules.users.domain.events.user_events import (
     UserCreatedEvent,
-    UserSuspendedEvent,
-    UserReactivatedEvent,
     UserDeletedEvent,
+    UserReactivatedEvent,
+    UserSuspendedEvent,
 )
+from src.modules.users.domain.value_objects.preferences import Preferences
+from src.modules.users.domain.value_objects.professional_profile import ProfessionalProfile
+from src.modules.users.domain.value_objects.user_status import UserRole, UserStatus
+from src.shared.domain.base import DomainEvent
 
 
 @dataclass
@@ -30,7 +30,7 @@ class UserAggregate:
         hashed_password: str | None = None,
         role: UserRole = UserRole.FREELANCER,
     ) -> "UserAggregate":
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         user_id = uuid.uuid4()
         user = User(
             id=user_id,

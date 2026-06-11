@@ -5,15 +5,15 @@ DealAggregate, which calls methods here and collects child objects.
 """
 
 import uuid
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from dataclasses import dataclass
+from datetime import UTC, datetime
 
+from src.modules.deals.domain.value_objects.ai_confidence import AIConfidence
 from src.modules.deals.domain.value_objects.deal_stage import (
-    DealStage,
     STAGE_TRANSITIONS,
     TERMINAL_STAGES,
+    DealStage,
 )
-from src.modules.deals.domain.value_objects.ai_confidence import AIConfidence
 from src.shared.domain.value_objects.money import Money
 
 
@@ -61,9 +61,9 @@ class Deal:
     def apply_stage_transition(self, target: DealStage) -> None:
         """Mutate stage. Caller must validate via can_transition_to first."""
         self.stage = target
-        self.updated_at = datetime.now(timezone.utc)
+        self.updated_at = datetime.now(UTC)
         if target in TERMINAL_STAGES:
-            self.closed_at = datetime.now(timezone.utc)
+            self.closed_at = datetime.now(UTC)
 
     def apply_lead_score(
         self, score: int, confidence: AIConfidence, recommendation: str
@@ -71,18 +71,18 @@ class Deal:
         self.ai_score = score
         self.ai_confidence = confidence
         self.ai_recommendation = recommendation
-        self.updated_at = datetime.now(timezone.utc)
+        self.updated_at = datetime.now(UTC)
 
     def update_title(self, title: str) -> None:
         if not title.strip():
             raise ValueError("Deal title must not be blank")
         self.title = title.strip()
-        self.updated_at = datetime.now(timezone.utc)
+        self.updated_at = datetime.now(UTC)
 
     def update_value(self, value: Money) -> None:
         self.value = value
-        self.updated_at = datetime.now(timezone.utc)
+        self.updated_at = datetime.now(UTC)
 
     def soft_delete(self) -> None:
-        self.deleted_at = datetime.now(timezone.utc)
-        self.updated_at = datetime.now(timezone.utc)
+        self.deleted_at = datetime.now(UTC)
+        self.updated_at = datetime.now(UTC)

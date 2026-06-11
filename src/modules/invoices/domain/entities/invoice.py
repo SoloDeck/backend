@@ -1,13 +1,12 @@
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timezone
-from decimal import Decimal
+from datetime import UTC, datetime
 
-from src.shared.domain.value_objects.money import Money
 from src.modules.invoices.domain.value_objects.invoice_status import (
-    InvoiceStatus,
     TERMINAL_INVOICE_STATUSES,
+    InvoiceStatus,
 )
+from src.shared.domain.value_objects.money import Money
 
 
 @dataclass
@@ -58,20 +57,20 @@ class Invoice:
 
     def send(self) -> None:
         from src.modules.invoices.domain.exceptions.exceptions import (
-            InvoiceEditForbiddenError,
             InvalidInvoiceTotalError,
+            InvoiceEditForbiddenError,
         )
         if self.status != InvoiceStatus.DRAFT:
             raise InvoiceEditForbiddenError(self.status)
         if not self.validate_total():
             raise InvalidInvoiceTotalError()
         self.status = InvoiceStatus.SENT
-        self.updated_at = datetime.now(timezone.utc)
+        self.updated_at = datetime.now(UTC)
 
     def apply_payment(self, amount: Money) -> None:
         from src.modules.invoices.domain.exceptions.exceptions import (
-            TerminalInvoiceError,
             OverpaymentError,
+            TerminalInvoiceError,
         )
         if self.is_terminal:
             raise TerminalInvoiceError(self.status)
@@ -79,7 +78,7 @@ class Invoice:
         if new_paid.amount > self.total.amount:
             raise OverpaymentError()
         self.amount_paid = new_paid
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         if self.is_fully_paid:
             self.status = InvoiceStatus.PAID
             self.paid_at = now
@@ -90,11 +89,11 @@ class Invoice:
     def mark_overdue(self) -> None:
         if self.status in {InvoiceStatus.SENT, InvoiceStatus.PARTIALLY_PAID}:
             self.status = InvoiceStatus.OVERDUE
-            self.updated_at = datetime.now(timezone.utc)
+            self.updated_at = datetime.now(UTC)
 
     def void(self) -> None:
         from src.modules.invoices.domain.exceptions.exceptions import TerminalInvoiceError
         if self.status == InvoiceStatus.PAID:
             raise TerminalInvoiceError(self.status)
         self.status = InvoiceStatus.VOID
-        self.updated_at = datetime.now(timezone.utc)
+        self.updated_at = datetime.now(UTC)

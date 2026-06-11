@@ -1,8 +1,8 @@
 from .user_events import (
     UserCreatedEvent,
-    UserSuspendedEvent,
-    UserReactivatedEvent,
     UserDeletedEvent,
+    UserReactivatedEvent,
+    UserSuspendedEvent,
 )
 
 __all__ = [

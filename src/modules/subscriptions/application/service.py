@@ -6,8 +6,8 @@ from dataclasses import dataclass
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.shared.exceptions.domain import NotFoundError
 from src.modules.subscriptions.schemas.response import SubscriptionResponse
+from src.shared.exceptions.domain import NotFoundError
 
 
 @dataclass
@@ -23,7 +23,7 @@ class SubscriptionsService:
         return list(result.scalars().all())
 
     async def get_my_subscription(self, user_id: uuid.UUID) -> SubscriptionResponse:
-        from src.infrastructure.database.models import SubscriptionModel, PlanModel
+        from src.infrastructure.database.models import PlanModel, SubscriptionModel
 
         sub = await self.db.scalar(
             select(SubscriptionModel).where(SubscriptionModel.user_id == user_id)

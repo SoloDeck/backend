@@ -6,8 +6,8 @@ from dataclasses import dataclass
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.shared.exceptions.domain import NotFoundError
 from src.modules.proposals.schemas.request import ProposalRequest
+from src.shared.exceptions.domain import NotFoundError
 
 
 @dataclass

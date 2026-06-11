@@ -15,10 +15,10 @@ from typing import Any
 
 import structlog
 
-from src.ai.lead_qualifier.chain import LeadQualifier
-from src.ai.proposal_generator.chain import ProposalGenerator
 from src.ai.contract_generator.chain import ContractGenerator
 from src.ai.followup_generator.chain import FollowUpGenerator
+from src.ai.lead_qualifier.chain import LeadQualifier
+from src.ai.proposal_generator.chain import ProposalGenerator
 from src.shared.exceptions.domain import EntitlementError
 
 log = structlog.get_logger()

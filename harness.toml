@@ -1,0 +1,28 @@
+# Harness v4 Configuration — SoloDesk backend (FastAPI)
+# Applies when Claude Code is launched rooted in this submodule.
+# Edit this file, then run `harness sync` only if vendoring the harness; consumers just keep it as guardrail config.
+
+[project]
+name = "SoloDesk-backend"
+version = "0.1.0"
+description = "SoloDesk backend — FastAPI + SQLAlchemy 2 (async) + pydantic 2 + alembic. API source of truth: contracts/openapi.yaml."
+
+[agent]
+# default = "security-reviewer"
+
+[env]
+CLAUDE_CODE_SUBPROCESS_ENV_SCRUB = "1"
+
+[safety.permissions]
+deny = [
+  "Bash(sudo:*)",
+]
+ask = [
+  "Bash(rm -r:*)",
+  "Bash(git push --force:*)",
+  # Migrations and DB changes are destructive — confirm before applying.
+  "Bash(alembic downgrade:*)",
+]
+
+[safety.sandbox]
+failIfUnavailable = false

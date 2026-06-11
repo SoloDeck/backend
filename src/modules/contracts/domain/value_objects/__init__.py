@@ -1,3 +1,3 @@
-from .contract_status import ContractStatus, TERMINAL_CONTRACT_STATUSES, CONTRACT_TRANSITIONS
+from .contract_status import CONTRACT_TRANSITIONS, TERMINAL_CONTRACT_STATUSES, ContractStatus
 
 __all__ = ["ContractStatus", "TERMINAL_CONTRACT_STATUSES", "CONTRACT_TRANSITIONS"]

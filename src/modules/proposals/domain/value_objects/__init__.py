@@ -1,3 +1,3 @@
-from .proposal_status import ProposalStatus, TERMINAL_PROPOSAL_STATUSES, PROPOSAL_TRANSITIONS
+from .proposal_status import PROPOSAL_TRANSITIONS, TERMINAL_PROPOSAL_STATUSES, ProposalStatus
 
 __all__ = ["ProposalStatus", "TERMINAL_PROPOSAL_STATUSES", "PROPOSAL_TRANSITIONS"]

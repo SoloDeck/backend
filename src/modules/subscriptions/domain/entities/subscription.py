@@ -1,12 +1,12 @@
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
+from src.modules.subscriptions.domain.entities.subscription_plan import SubscriptionPlan
 from src.modules.subscriptions.domain.value_objects.entitlement import (
     Entitlement,
     SubscriptionStatus,
 )
-from src.modules.subscriptions.domain.entities.subscription_plan import SubscriptionPlan
 
 
 @dataclass
@@ -55,12 +55,11 @@ class Subscription:
         ent = self.entitlement
         if feature == "can_use_ai":
             ent.check_ai_access()
-        elif feature == "can_export_pdf":
-            if not ent.can_export_pdf:
-                from src.modules.subscriptions.domain.value_objects.entitlement import (
-                    EntitlementViolationError,
-                )
-                raise EntitlementViolationError("PDF export requires a paid subscription")
+        elif feature == "can_export_pdf" and not ent.can_export_pdf:
+            from src.modules.subscriptions.domain.value_objects.entitlement import (
+                EntitlementViolationError,
+            )
+            raise EntitlementViolationError("PDF export requires a paid subscription")
 
     # ------------------------------------------------------------------ #
     # Commands                                                             #
@@ -68,7 +67,7 @@ class Subscription:
 
     def change_plan(self, new_plan: SubscriptionPlan) -> None:
         self.plan = new_plan
-        self.updated_at = datetime.now(timezone.utc)
+        self.updated_at = datetime.now(UTC)
 
     def suspend(self) -> None:
         from src.modules.subscriptions.domain.exceptions.exceptions import (
@@ -77,7 +76,7 @@ class Subscription:
         if self.status not in {SubscriptionStatus.ACTIVE, SubscriptionStatus.PAST_DUE}:
             raise InvalidSubscriptionTransitionError(self.status, SubscriptionStatus.SUSPENDED)
         self.status = SubscriptionStatus.SUSPENDED
-        self.updated_at = datetime.now(timezone.utc)
+        self.updated_at = datetime.now(UTC)
 
     def reactivate(self) -> None:
         from src.modules.subscriptions.domain.exceptions.exceptions import (
@@ -86,13 +85,13 @@ class Subscription:
         if self.status not in {SubscriptionStatus.SUSPENDED, SubscriptionStatus.PAST_DUE}:
             raise InvalidSubscriptionTransitionError(self.status, SubscriptionStatus.ACTIVE)
         self.status = SubscriptionStatus.ACTIVE
-        self.updated_at = datetime.now(timezone.utc)
+        self.updated_at = datetime.now(UTC)
 
     def cancel(self) -> None:
         self.status = SubscriptionStatus.CANCELLED
-        self.cancelled_at = datetime.now(timezone.utc)
+        self.cancelled_at = datetime.now(UTC)
         self.updated_at = self.cancelled_at
 
     def mark_past_due(self) -> None:
         self.status = SubscriptionStatus.PAST_DUE
-        self.updated_at = datetime.now(timezone.utc)
+        self.updated_at = datetime.now(UTC)

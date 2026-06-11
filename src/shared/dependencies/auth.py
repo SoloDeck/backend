@@ -33,11 +33,11 @@ async def get_current_user(
             algorithms=[settings.jwt_algorithm],
         )
         return TokenClaims(**payload)
-    except (JWTError, Exception):
+    except (JWTError, Exception) as err:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail={"error": "UNAUTHORIZED", "message": "Invalid or expired token"},
-        )
+        ) from err
 
 
 async def require_admin(

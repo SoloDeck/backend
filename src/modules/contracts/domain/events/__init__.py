@@ -1,8 +1,8 @@
 from .contract_events import (
-    ContractCreatedEvent,
-    ContractSignedEvent,
-    ContractMilestoneReachedEvent,
     ContractCompletedEvent,
+    ContractCreatedEvent,
+    ContractMilestoneReachedEvent,
+    ContractSignedEvent,
     ContractTerminatedEvent,
 )
 

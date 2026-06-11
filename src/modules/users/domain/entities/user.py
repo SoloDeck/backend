@@ -1,10 +1,10 @@
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
-from src.modules.users.domain.value_objects.user_status import UserStatus, UserRole
-from src.modules.users.domain.value_objects.professional_profile import ProfessionalProfile
 from src.modules.users.domain.value_objects.preferences import Preferences
+from src.modules.users.domain.value_objects.professional_profile import ProfessionalProfile
+from src.modules.users.domain.value_objects.user_status import UserRole, UserStatus
 
 
 @dataclass
@@ -72,21 +72,21 @@ class User:
             self.bio = bio
         if phone is not None:
             self.phone = phone
-        self.updated_at = datetime.now(timezone.utc)
+        self.updated_at = datetime.now(UTC)
 
     def update_professional_profile(self, profile: ProfessionalProfile) -> None:
         from src.modules.users.domain.exceptions.exceptions import UserAlreadyDeletedError
         if self.is_deleted:
             raise UserAlreadyDeletedError()
         self.professional_profile = profile
-        self.updated_at = datetime.now(timezone.utc)
+        self.updated_at = datetime.now(UTC)
 
     def update_preferences(self, preferences: Preferences) -> None:
         from src.modules.users.domain.exceptions.exceptions import UserAlreadyDeletedError
         if self.is_deleted:
             raise UserAlreadyDeletedError()
         self.preferences = preferences
-        self.updated_at = datetime.now(timezone.utc)
+        self.updated_at = datetime.now(UTC)
 
     def suspend(self) -> None:
         from src.modules.users.domain.exceptions.exceptions import (
@@ -98,7 +98,7 @@ class User:
         if not self.is_active:
             raise InvalidUserStatusTransitionError(self.status, UserStatus.SUSPENDED)
         self.status = UserStatus.SUSPENDED
-        self.updated_at = datetime.now(timezone.utc)
+        self.updated_at = datetime.now(UTC)
 
     def reactivate(self) -> None:
         from src.modules.users.domain.exceptions.exceptions import (
@@ -110,13 +110,13 @@ class User:
         if not self.is_suspended:
             raise InvalidUserStatusTransitionError(self.status, UserStatus.ACTIVE)
         self.status = UserStatus.ACTIVE
-        self.updated_at = datetime.now(timezone.utc)
+        self.updated_at = datetime.now(UTC)
 
     def soft_delete(self) -> None:
         from src.modules.users.domain.exceptions.exceptions import UserAlreadyDeletedError
         if self.is_deleted:
             raise UserAlreadyDeletedError()
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         self.status = UserStatus.DELETED
         self.deleted_at = now
         self.updated_at = now

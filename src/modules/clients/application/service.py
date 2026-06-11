@@ -2,7 +2,7 @@
 
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -80,7 +80,7 @@ class ClientsService:
 
     async def delete(self, user_id: uuid.UUID, client_id: uuid.UUID) -> None:
         client = await self._get_client(user_id, client_id)
-        client.deleted_at = datetime.now(timezone.utc)
+        client.deleted_at = datetime.now(UTC)
         await self.db.flush()
 
     async def add_comm_log(self, user_id: uuid.UUID, client_id: uuid.UUID, payload: CommLogRequest):  # type: ignore[return]

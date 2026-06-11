@@ -91,6 +91,6 @@ async def list_comm_logs(
     db: DBSession,
 ) -> ApiResponse[list[CommLogResponse]]:
     logs = await ClientsService(db=db).list_comm_logs(user_id, client_id)
-    return ApiResponse.ok([CommLogResponse.model_validate(l) for l in logs])
+    return ApiResponse.ok([CommLogResponse.model_validate(log) for log in logs])
 
 

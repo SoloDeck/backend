@@ -2,8 +2,8 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime
 
-from src.shared.domain.base import DomainEvent
 from src.modules.reminders.domain.value_objects.reminder_target import ReminderTargetType
+from src.shared.domain.base import DomainEvent
 
 
 @dataclass(frozen=True)

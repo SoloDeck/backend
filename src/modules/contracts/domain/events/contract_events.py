@@ -1,6 +1,5 @@
 import uuid
 from dataclasses import dataclass
-from decimal import Decimal
 
 from src.shared.domain.base import DomainEvent
 from src.shared.domain.value_objects.money import Money

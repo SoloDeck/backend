@@ -5,7 +5,7 @@ import secrets
 import urllib.parse
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 
 import httpx
 from jose import JWTError, jwt
@@ -13,8 +13,6 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config.settings import settings
-from src.shared.exceptions.domain import AlreadyExistsError, AuthenticationError
-from src.shared.security.passwords import hash_password, verify_password
 from src.modules.auth.schemas.request import (
     GoogleAuthRequest,
     LoginRequest,
@@ -24,14 +22,18 @@ from src.modules.auth.schemas.request import (
     RegisterRequest,
 )
 from src.modules.auth.schemas.response import AuthTokenResponse
+from src.shared.exceptions.domain import AlreadyExistsError, AuthenticationError
+from src.shared.security.passwords import hash_password, verify_password
 
 
 @dataclass
 class AuthService:
     db: AsyncSession
 
-    async def _issue_tokens(self, *, user_id: uuid.UUID, email: str, role: str) -> AuthTokenResponse:
-        from src.infrastructure.database.models import SubscriptionModel, PlanModel
+    async def _issue_tokens(
+        self, *, user_id: uuid.UUID, email: str, role: str
+    ) -> AuthTokenResponse:
+        from src.infrastructure.database.models import PlanModel, SubscriptionModel
 
         subscription_tier = "free"
         sub = await self.db.scalar(
@@ -44,7 +46,7 @@ class AuthService:
             if plan is not None:
                 subscription_tier = plan.slug
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         access_expires = now + timedelta(minutes=settings.jwt_access_token_expire_minutes)
         refresh_expires = now + timedelta(days=settings.jwt_refresh_token_expire_days)
         access_jti = str(uuid.uuid4())
@@ -83,7 +85,7 @@ class AuthService:
         )
 
     async def register(self, payload: RegisterRequest) -> AuthTokenResponse:
-        from src.infrastructure.database.models import UserModel, SubscriptionModel, PlanModel
+        from src.infrastructure.database.models import PlanModel, SubscriptionModel, UserModel
 
         existing = await self.db.scalar(
             select(UserModel).where(
@@ -94,7 +96,7 @@ class AuthService:
         if existing:
             raise AlreadyExistsError(f"Email '{payload.email}' is already registered")
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         user_id = uuid.uuid4()
 
         user = UserModel(
@@ -161,8 +163,8 @@ class AuthService:
                 settings.jwt_secret_key,
                 algorithms=[settings.jwt_algorithm],
             )
-        except JWTError:
-            raise AuthenticationError("Invalid or expired refresh token")
+        except JWTError as err:
+            raise AuthenticationError("Invalid or expired refresh token") from err
 
         if claims.get("type") != "refresh":
             raise AuthenticationError("Invalid token type")
@@ -186,13 +188,13 @@ class AuthService:
             jti=jti,
             user_id=user_id,
             expires_at=expires_at,
-            blacklisted_at=datetime.now(timezone.utc),
+            blacklisted_at=datetime.now(UTC),
         )
         self.db.add(entry)
         await self.db.flush()
 
     async def google_auth(self, payload: GoogleAuthRequest) -> AuthTokenResponse:
-        from src.infrastructure.database.models import UserModel, OAuthIdentityModel
+        from src.infrastructure.database.models import OAuthIdentityModel, UserModel
 
         async with httpx.AsyncClient() as client:
             resp = await client.get(
@@ -252,9 +254,9 @@ class AuthService:
                 user_id=existing_user.id, email=existing_user.email, role=existing_user.role
             )
 
-        from src.infrastructure.database.models import SubscriptionModel, PlanModel
+        from src.infrastructure.database.models import PlanModel, SubscriptionModel
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         new_user = UserModel(
             email=email,
             full_name=name,
@@ -291,7 +293,9 @@ class AuthService:
 
         await self.db.flush()
 
-        return await self._issue_tokens(user_id=new_user.id, email=new_user.email, role=new_user.role)
+        return await self._issue_tokens(
+            user_id=new_user.id, email=new_user.email, role=new_user.role
+        )
 
     async def request_password_reset(self, payload: PasswordResetRequestBody) -> None:
         from src.infrastructure.database.models import UserModel, PasswordResetTokenModel
@@ -314,7 +318,7 @@ class AuthService:
         reset_token = PasswordResetTokenModel(
             user_id=user.id,
             token_hash=token_hash,
-            expires_at=datetime.now(timezone.utc) + timedelta(minutes=15),
+            expires_at=datetime.now(UTC) + timedelta(minutes=15),
         )
         self.db.add(reset_token)
         await self.db.flush()
@@ -340,10 +344,10 @@ class AuthService:
         )
 
     async def confirm_password_reset(self, payload: PasswordResetConfirmRequest) -> None:
-        from src.infrastructure.database.models import UserModel, PasswordResetTokenModel
+        from src.infrastructure.database.models import PasswordResetTokenModel, UserModel
 
         token_hash = hashlib.sha256(payload.otp.encode()).hexdigest()
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         reset_token = await self.db.scalar(
             select(PasswordResetTokenModel).where(
@@ -376,7 +380,7 @@ class AuthService:
             {
                 "type": "oauth_state",
                 "nonce": secrets.token_hex(16),
-                "exp": datetime.now(timezone.utc) + timedelta(minutes=10),
+                "exp": datetime.now(UTC) + timedelta(minutes=10),
             },
             settings.jwt_secret_key,
             algorithm=settings.jwt_algorithm,
@@ -405,8 +409,8 @@ class AuthService:
                 settings.jwt_secret_key,
                 algorithms=[settings.jwt_algorithm],
             )
-        except JWTError:
-            raise AuthenticationError("Invalid or expired OAuth state parameter")
+        except JWTError as err:
+            raise AuthenticationError("Invalid or expired OAuth state parameter") from err
 
         if claims.get("type") != "oauth_state":
             raise AuthenticationError("Malformed OAuth state parameter")

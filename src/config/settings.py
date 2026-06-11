@@ -1,4 +1,4 @@
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import PostgresDsn, RedisDsn, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -83,21 +83,31 @@ class Settings(BaseSettings):
     smtp_port: int = 1025
     smtp_user: str = ""
     smtp_password: str = ""
-    smtp_from_email: str = "noreply@solodesk.app"
+    smtp_from_email: str = "noreply@solodesk.space"
     smtp_from_name: str = "SoloDesk"
     smtp_tls: bool = False
 
     # -----------------------------------------------------------------------
     # CORS
     # -----------------------------------------------------------------------
-    cors_origins: list[str] = ["http://localhost:3000", "http://localhost:5173"]
+    cors_origins: Any = ["*"]
 
     @field_validator("cors_origins", mode="before")
     @classmethod
-    def parse_cors(cls, v: str | list[str]) -> list[str]:
+    def parse_cors(cls, v: Any) -> list[str]:
         if isinstance(v, str):
-            return [origin.strip() for origin in v.split(",")]
-        return v
+            if not v.strip():
+                return ["*"]
+            if v.startswith("[") and v.endswith("]"):
+                try:
+                    import json
+                    return json.loads(v)
+                except Exception:
+                    pass
+            return [origin.strip() for origin in v.split(",") if origin.strip()]
+        if isinstance(v, list):
+            return v
+        return ["*"]
 
     @property
     def is_production(self) -> bool:
