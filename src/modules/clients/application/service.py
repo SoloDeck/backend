@@ -8,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.shared.exceptions.domain import NotFoundError
-from src.modules.clients.schemas.request import ClientRequest, CommLogRequest, TagRequest
+from src.modules.clients.schemas.request import ClientRequest, CommLogRequest
 
 
 @dataclass
@@ -44,21 +44,24 @@ class ClientsService:
             address_country=payload.address_country,
             status=payload.status,
             notes=payload.notes,
+            description=payload.description,
         )
         self.db.add(client)
         await self.db.flush()
         await self.db.refresh(client)
         return client
 
-    async def list_all(self, user_id: uuid.UUID) -> list:
+    async def list_all(self, user_id: uuid.UUID, status: str | None = None) -> list:
         from src.infrastructure.database.models import ClientModel
 
-        result = await self.db.execute(
-            select(ClientModel).where(
-                ClientModel.owner_user_id == user_id,
-                ClientModel.deleted_at.is_(None),
-            )
-        )
+        conditions = [
+            ClientModel.owner_user_id == user_id,
+            ClientModel.deleted_at.is_(None),
+        ]
+        if status is not None:
+            conditions.append(ClientModel.status == status)
+
+        result = await self.db.execute(select(ClientModel).where(*conditions))
         return list(result.scalars().all())
 
     async def get_one(self, user_id: uuid.UUID, client_id: uuid.UUID):  # type: ignore[return]
@@ -67,7 +70,7 @@ class ClientsService:
     async def update(self, user_id: uuid.UUID, client_id: uuid.UUID, payload: ClientRequest):  # type: ignore[return]
         client = await self._get_client(user_id, client_id)
         for field in ("name", "email", "phone", "type", "website", "linkedin_url",
-                      "address_city", "address_country", "status", "notes"):
+                      "address_city", "address_country", "status", "notes", "description"):
             value = getattr(payload, field, None)
             if value is not None:
                 setattr(client, field, value)
@@ -108,36 +111,4 @@ class ClientsService:
         )
         return list(result.scalars().all())
 
-    async def add_tag(self, user_id: uuid.UUID, client_id: uuid.UUID, payload: TagRequest):  # type: ignore[return]
-        from src.infrastructure.database.models import ClientTagModel
 
-        await self._get_client(user_id, client_id)
-        tag = ClientTagModel(client_id=client_id, tag=payload.tag)
-        self.db.add(tag)
-        await self.db.flush()
-        await self.db.refresh(tag)
-        return tag
-
-    async def list_tags(self, user_id: uuid.UUID, client_id: uuid.UUID) -> list:
-        from src.infrastructure.database.models import ClientTagModel
-
-        await self._get_client(user_id, client_id)
-        result = await self.db.execute(
-            select(ClientTagModel).where(ClientTagModel.client_id == client_id)
-        )
-        return list(result.scalars().all())
-
-    async def remove_tag(self, user_id: uuid.UUID, client_id: uuid.UUID, tag: str) -> None:
-        from src.infrastructure.database.models import ClientTagModel
-
-        await self._get_client(user_id, client_id)
-        tag_obj = await self.db.scalar(
-            select(ClientTagModel).where(
-                ClientTagModel.client_id == client_id,
-                ClientTagModel.tag == tag,
-            )
-        )
-        if tag_obj is None:
-            raise NotFoundError(f"Tag '{tag}' not found")
-        await self.db.delete(tag_obj)
-        await self.db.flush()

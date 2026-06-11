@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.config.settings import settings
 
 from .admin import AdminSeeder
+from .clients import ClientsSeeder
 from .plans import PlansSeeder
 
 logger = structlog.get_logger(__name__)
@@ -23,5 +24,6 @@ async def run_all(db: AsyncSession) -> None:
 
     if settings.app_env == "development":
         await AdminSeeder(db).run()
+        await ClientsSeeder(db).run()
 
     log.info("seeders.done")
