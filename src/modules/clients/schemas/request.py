@@ -14,6 +14,7 @@ class ClientRequest(BaseModel):
     address_country: str | None = None
     status: str = "prospect"
     notes: str | None = None
+    description: str | None = None
 
 
 class CommLogRequest(BaseModel):

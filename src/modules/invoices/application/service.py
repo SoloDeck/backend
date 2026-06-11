@@ -63,12 +63,20 @@ class InvoicesService:
         await self.db.refresh(invoice)
         return invoice
 
-    async def list_all(self, user_id: uuid.UUID) -> list:
+    async def list_all(
+        self,
+        user_id: uuid.UUID,
+        status: str | None = None,
+        invoice_number: str | None = None,
+    ) -> list:
         from src.infrastructure.database.models import InvoiceModel
 
-        result = await self.db.execute(
-            select(InvoiceModel).where(InvoiceModel.owner_user_id == user_id)
-        )
+        conditions = [InvoiceModel.owner_user_id == user_id]
+        if status is not None:
+            conditions.append(InvoiceModel.status == status)
+        if invoice_number is not None:
+            conditions.append(InvoiceModel.invoice_number.ilike(f"%{invoice_number}%"))
+        result = await self.db.execute(select(InvoiceModel).where(*conditions))
         return list(result.scalars().all())
 
     async def get_one(self, user_id: uuid.UUID, invoice_id: uuid.UUID):  # type: ignore[return]

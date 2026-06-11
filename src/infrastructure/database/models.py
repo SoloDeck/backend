@@ -389,27 +389,11 @@ class ClientModel(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     address_country: Mapped[str | None] = mapped_column(String(100), nullable=True)
     status: Mapped[str] = mapped_column(_client_status, nullable=False, server_default="prospect")
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     __table_args__ = (
         Index("idx_clients_owner_status", "owner_user_id", "status"),
         Index("idx_clients_owner_deleted", "owner_user_id", "deleted_at"),
-    )
-
-
-class ClientTagModel(UUIDMixin, Base):
-    __tablename__ = "client_tags"
-
-    client_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("clients.id"), nullable=False
-    )
-    tag: Mapped[str] = mapped_column(String(100), nullable=False)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), nullable=False
-    )
-
-    __table_args__ = (
-        UniqueConstraint("client_id", "tag", name="uq_client_tags_tag"),
-        Index("idx_client_tags_client", "client_id"),
     )
 
 

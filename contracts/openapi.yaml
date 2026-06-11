@@ -28,7 +28,7 @@ tags:
   - name: Subscriptions
     description: Plan catalog, subscription lifecycle, plan changes, and AI usage counters.
   - name: Clients
-    description: Client address book, contact info, communication logs, and tags.
+    description: Client address book, contact info, communication logs, and description.
   - name: Deals
     description: Deal CRUD, pipeline stage transitions, activity timeline, and AI lead qualification.
   - name: Proposals
@@ -547,36 +547,23 @@ paths:
       summary: List clients
       description: |
         Returns only clients owned by the authenticated user (`owner_user_id` filter is
-        applied automatically). Archived (soft-deleted) clients are excluded unless
-        `status=archived` is passed.
+        applied automatically). Soft-deleted clients are always excluded.
       parameters:
-        - $ref: '#/components/parameters/Page'
-        - $ref: '#/components/parameters/PageSize'
         - name: status
           in: query
+          description: Filter by status
           schema:
             $ref: '#/components/schemas/ClientStatus'
-        - name: type
+        - name: name
           in: query
-          schema:
-            $ref: '#/components/schemas/ClientType'
-        - name: search
-          in: query
-          description: Full-text search on name and email
+          description: Search by name (case-insensitive, partial match)
           schema:
             type: string
-        - name: tag
+        - name: email
           in: query
-          description: Filter by tag (exact match, lowercase)
+          description: Search by email (case-insensitive, partial match)
           schema:
             type: string
-        - name: sort_by
-          in: query
-          schema:
-            type: string
-            enum: [name, created_at, updated_at, status]
-            default: created_at
-        - $ref: '#/components/parameters/SortOrder'
       responses:
         '200':
           description: Paginated client list
@@ -745,71 +732,6 @@ paths:
         '400':
           $ref: '#/components/responses/BadRequest'
 
-  /clients/{client_id}/tags:
-    parameters:
-      - $ref: '#/components/parameters/ClientId'
-    get:
-      tags: [Clients]
-      summary: List tags on a client
-      responses:
-        '200':
-          description: Tag list
-          content:
-            application/json:
-              schema:
-                allOf:
-                  - $ref: '#/components/schemas/ApiResponseBase'
-                  - type: object
-                    properties:
-                      data:
-                        type: array
-                        items:
-                          $ref: '#/components/schemas/ClientTagResponse'
-    post:
-      tags: [Clients]
-      summary: Add a tag to a client
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/AddTagRequest'
-      responses:
-        '201':
-          description: Tag added
-          content:
-            application/json:
-              schema:
-                allOf:
-                  - $ref: '#/components/schemas/ApiResponseBase'
-                  - type: object
-                    properties:
-                      data:
-                        $ref: '#/components/schemas/ClientTagResponse'
-        '409':
-          description: Tag already exists or client has 10 tags
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-
-  /clients/{client_id}/tags/{tag}:
-    parameters:
-      - $ref: '#/components/parameters/ClientId'
-      - name: tag
-        in: path
-        required: true
-        schema:
-          type: string
-    delete:
-      tags: [Clients]
-      summary: Remove a tag from a client
-      responses:
-        '204':
-          description: Tag removed
-        '404':
-          $ref: '#/components/responses/NotFound'
-
   # -------------------------------------------------------------------------
   # DEALS
   # -------------------------------------------------------------------------
@@ -823,15 +745,16 @@ paths:
       parameters:
         - $ref: '#/components/parameters/Page'
         - $ref: '#/components/parameters/PageSize'
-        - name: stage
+        - name: title
           in: query
-          schema:
-            $ref: '#/components/schemas/DealStage'
-        - name: client_id
-          in: query
+          description: Search by title (case-insensitive, partial match)
           schema:
             type: string
-            format: uuid
+        - name: stage
+          in: query
+          description: Filter by stage
+          schema:
+            $ref: '#/components/schemas/DealStage'
         - name: source
           in: query
           schema:
@@ -1096,13 +1019,9 @@ paths:
       parameters:
         - $ref: '#/components/parameters/Page'
         - $ref: '#/components/parameters/PageSize'
-        - name: deal_id
-          in: query
-          schema:
-            type: string
-            format: uuid
         - name: status
           in: query
+          description: Filter by status
           schema:
             $ref: '#/components/schemas/ProposalStatus'
         - name: ai_generated
@@ -1356,18 +1275,9 @@ paths:
       parameters:
         - $ref: '#/components/parameters/Page'
         - $ref: '#/components/parameters/PageSize'
-        - name: deal_id
-          in: query
-          schema:
-            type: string
-            format: uuid
-        - name: client_id
-          in: query
-          schema:
-            type: string
-            format: uuid
         - name: status
           in: query
+          description: Filter by status
           schema:
             $ref: '#/components/schemas/ContractStatus'
         - name: from_date
@@ -1771,23 +1681,14 @@ paths:
         - $ref: '#/components/parameters/PageSize'
         - name: status
           in: query
+          description: Filter by status
           schema:
             $ref: '#/components/schemas/InvoiceStatus'
-        - name: client_id
+        - name: invoice_number
           in: query
+          description: Search by invoice number (partial match)
           schema:
             type: string
-            format: uuid
-        - name: deal_id
-          in: query
-          schema:
-            type: string
-            format: uuid
-        - name: contract_id
-          in: query
-          schema:
-            type: string
-            format: uuid
         - name: from_issue_date
           in: query
           schema:
@@ -2208,7 +2109,7 @@ paths:
     get:
       tags: [Reminders]
       summary: List reminders
-      description: Returns reminders owned by the authenticated user. Use `target_type` + `target_id` to fetch reminders scoped to a specific deal, client, invoice, or contract.
+      description: Returns reminders owned by the authenticated user. Use `target_type` to fetch reminders scoped to a specific deal, proposal, invoice, or contract.
       parameters:
         - $ref: '#/components/parameters/Page'
         - $ref: '#/components/parameters/PageSize'
@@ -2218,13 +2119,9 @@ paths:
             $ref: '#/components/schemas/ReminderStatus'
         - name: target_type
           in: query
+          description: "Filter by target type: deal, proposal, contract, invoice"
           schema:
             $ref: '#/components/schemas/ReminderTargetType'
-        - name: target_id
-          in: query
-          schema:
-            type: string
-            format: uuid
         - name: reminder_type
           in: query
           schema:
@@ -2933,11 +2830,6 @@ paths:
       parameters:
         - $ref: '#/components/parameters/Page'
         - $ref: '#/components/parameters/PageSize'
-        - name: user_id
-          in: query
-          schema:
-            type: string
-            format: uuid
         - name: ai_module
           in: query
           schema:
@@ -2975,11 +2867,6 @@ paths:
       parameters:
         - $ref: '#/components/parameters/Page'
         - $ref: '#/components/parameters/PageSize'
-        - name: actor_user_id
-          in: query
-          schema:
-            type: string
-            format: uuid
         - name: event_type
           in: query
           schema:
@@ -2988,11 +2875,6 @@ paths:
           in: query
           schema:
             type: string
-        - name: target_id
-          in: query
-          schema:
-            type: string
-            format: uuid
         - name: from_date
           in: query
           schema:
@@ -3868,12 +3750,9 @@ components:
         notes:
           type: string
           nullable: true
-        contact_info:
-          $ref: '#/components/schemas/ContactInfoDTO'
-        tags:
-          type: array
-          items:
-            type: string
+        description:
+          type: string
+          nullable: true
         created_at:
           type: string
           format: date-time
@@ -3985,30 +3864,6 @@ components:
         communicated_at:
           type: string
           format: date-time
-
-    ClientTagResponse:
-      type: object
-      required: [id, client_id, tag, created_at]
-      properties:
-        id:
-          type: string
-          format: uuid
-        client_id:
-          type: string
-          format: uuid
-        tag:
-          type: string
-        created_at:
-          type: string
-          format: date-time
-
-    AddTagRequest:
-      type: object
-      required: [tag]
-      properties:
-        tag:
-          type: string
-          maxLength: 100
 
     # --- Deals ---
     DealResponse:

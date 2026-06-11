@@ -3,7 +3,7 @@
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -37,8 +37,9 @@ async def create_proposal(
 async def list_proposals(
     user_id: CurrentUserId,
     db: DBSession,
+    status: str | None = Query(default=None, description="Filter by status: draft, sent, accepted, rejected, expired"),
 ) -> ApiResponse[list[ProposalResponse]]:
-    proposals = await ProposalsService(db=db).list_all(user_id)
+    proposals = await ProposalsService(db=db).list_all(user_id, status=status)
     return ApiResponse.ok([ProposalResponse.model_validate(p) for p in proposals])
 
 

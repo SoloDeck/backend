@@ -15,6 +15,7 @@ class ClientResponse(BaseModel):
     type: str
     status: str
     notes: str | None
+    description: str | None
     created_at: datetime
     updated_at: datetime
 
@@ -27,15 +28,6 @@ class CommLogResponse(BaseModel):
     channel: str
     summary: str
     communicated_at: datetime
-    created_at: datetime
-
-
-class TagResponse(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: uuid.UUID
-    client_id: uuid.UUID
-    tag: str
     created_at: datetime
 
 
