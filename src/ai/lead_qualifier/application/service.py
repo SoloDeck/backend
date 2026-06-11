@@ -38,7 +38,7 @@ class LeadQualifierService:
             os.path.dirname(__file__),
             "..",
             "prompts",
-            "prompt.txt"
+            "prompts.txt"
         )
 
         with open(prompt_path, "r", encoding="utf-8") as f:
