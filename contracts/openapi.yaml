@@ -28,7 +28,7 @@ tags:
   - name: Subscriptions
     description: Plan catalog, subscription lifecycle, plan changes, and AI usage counters.
   - name: Clients
-    description: Client address book, contact info, communication logs, and tags.
+    description: Client address book, contact info, communication logs, and description.
   - name: Deals
     description: Deal CRUD, pipeline stage transitions, activity timeline, and AI lead qualification.
   - name: Proposals
@@ -744,71 +744,6 @@ paths:
                         $ref: '#/components/schemas/CommunicationLogResponse'
         '400':
           $ref: '#/components/responses/BadRequest'
-
-  /clients/{client_id}/tags:
-    parameters:
-      - $ref: '#/components/parameters/ClientId'
-    get:
-      tags: [Clients]
-      summary: List tags on a client
-      responses:
-        '200':
-          description: Tag list
-          content:
-            application/json:
-              schema:
-                allOf:
-                  - $ref: '#/components/schemas/ApiResponseBase'
-                  - type: object
-                    properties:
-                      data:
-                        type: array
-                        items:
-                          $ref: '#/components/schemas/ClientTagResponse'
-    post:
-      tags: [Clients]
-      summary: Add a tag to a client
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/AddTagRequest'
-      responses:
-        '201':
-          description: Tag added
-          content:
-            application/json:
-              schema:
-                allOf:
-                  - $ref: '#/components/schemas/ApiResponseBase'
-                  - type: object
-                    properties:
-                      data:
-                        $ref: '#/components/schemas/ClientTagResponse'
-        '409':
-          description: Tag already exists or client has 10 tags
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-
-  /clients/{client_id}/tags/{tag}:
-    parameters:
-      - $ref: '#/components/parameters/ClientId'
-      - name: tag
-        in: path
-        required: true
-        schema:
-          type: string
-    delete:
-      tags: [Clients]
-      summary: Remove a tag from a client
-      responses:
-        '204':
-          description: Tag removed
-        '404':
-          $ref: '#/components/responses/NotFound'
 
   # -------------------------------------------------------------------------
   # DEALS
@@ -3868,12 +3803,9 @@ components:
         notes:
           type: string
           nullable: true
-        contact_info:
-          $ref: '#/components/schemas/ContactInfoDTO'
-        tags:
-          type: array
-          items:
-            type: string
+        description:
+          type: string
+          nullable: true
         created_at:
           type: string
           format: date-time
@@ -3985,30 +3917,6 @@ components:
         communicated_at:
           type: string
           format: date-time
-
-    ClientTagResponse:
-      type: object
-      required: [id, client_id, tag, created_at]
-      properties:
-        id:
-          type: string
-          format: uuid
-        client_id:
-          type: string
-          format: uuid
-        tag:
-          type: string
-        created_at:
-          type: string
-          format: date-time
-
-    AddTagRequest:
-      type: object
-      required: [tag]
-      properties:
-        tag:
-          type: string
-          maxLength: 100
 
     # --- Deals ---
     DealResponse:
