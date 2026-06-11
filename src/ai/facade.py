@@ -41,15 +41,16 @@ class AIFacade:
             )
 
     async def qualify_lead(
-        self,
-        *,
-        deal_data: dict[str, Any],
-        client_data: dict[str, Any],
-        user_can_use_ai: bool,
+            self,
+            *,
+            inquiry_text: str,
+            user_can_use_ai: bool,
     ) -> dict[str, Any]:
         self._check_entitlement(user_can_use_ai)
-        return await self.lead_qualifier.run(deal_data=deal_data, client_data=client_data)
 
+        return await self.lead_qualifier.run(
+            inquiry_text=inquiry_text
+        )
     async def generate_proposal(
         self,
         *,

@@ -472,6 +472,53 @@ class DealModel(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
         Index("idx_deals_stage_closed", "stage", "closed_at"),
     )
 
+class DealIntakeModel(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
+    __tablename__ = "deal_intakes"
+
+    owner_user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id"),
+        nullable=False,
+    )
+
+    client_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("clients.id"),
+        nullable=False,
+    )
+
+    inquiry_text: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+    )
+
+    estimated_budget: Mapped[str | None] = mapped_column(
+        String(255),
+        nullable=True,
+    )
+
+    desired_timeline: Mapped[str | None] = mapped_column(
+        String(255),
+        nullable=True,
+    )
+
+    source: Mapped[str | None] = mapped_column(
+        _deal_source,
+        nullable=True,
+    )
+
+    submitted_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        Index("idx_deal_intakes_owner", "owner_user_id"),
+        Index("idx_deal_intakes_client", "client_id"),
+        Index("idx_deal_intakes_submitted", "submitted_at"),
+        Index("idx_deal_intakes_owner_deleted", "owner_user_id", "deleted_at"),
+    )
 
 class DealActivityEntryModel(UUIDMixin, Base):
     __tablename__ = "deal_activity_entries"

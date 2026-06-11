@@ -10,6 +10,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.shared.exceptions.domain import InvalidStateTransitionError, NotFoundError
 from src.modules.deals.schemas.request import DealRequest, DealStageRequest
 
+from src.ai.lead_qualifier.application.service import (
+    LeadQualifierService
+)
+
 VALID_TRANSITIONS: dict[str, list[str]] = {
     "new_lead": ["qualified", "lost"],
     "qualified": ["proposal_sent", "lost"],
@@ -38,6 +42,26 @@ class DealsService:
         if deal is None:
             raise NotFoundError(f"Deal {deal_id} not found")
         return deal
+
+    async def _get_intake(
+            self,
+            user_id: uuid.UUID,
+            intake_id: uuid.UUID,
+    ):
+        from src.infrastructure.database.models import DealIntakeModel
+
+        intake = await self.db.scalar(
+            select(DealIntakeModel).where(
+                DealIntakeModel.id == intake_id,
+                DealIntakeModel.owner_user_id == user_id,
+                DealIntakeModel.deleted_at.is_(None),  # remove if not present
+            )
+        )
+
+        if intake is None:
+            raise NotFoundError(f"Deal intake {intake_id} not found")
+
+        return intake
 
     async def create(self, user_id: uuid.UUID, payload: DealRequest):  # type: ignore[return]
         from src.infrastructure.database.models import DealModel
@@ -98,3 +122,26 @@ class DealsService:
         await self.db.flush()
         await self.db.refresh(deal)
         return deal
+
+    async def qualify_deal_intake(
+            self,
+            user_id: uuid.UUID,
+            intake_id: uuid.UUID,
+    ):
+        intake = await self._get_intake(
+            user_id,
+            intake_id,
+        )
+
+        if not intake.inquiry_text:
+            raise ValueError(
+                "Deal intake has no inquiry text"
+            )
+
+        return LeadQualifierService.qualify(
+            intake.inquiry_text
+        )
+
+
+
+

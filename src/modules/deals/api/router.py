@@ -82,3 +82,18 @@ async def transition_stage(
 ) -> ApiResponse[DealResponse]:
     deal = await DealsService(db=db).transition_stage(user_id, deal_id, payload)
     return ApiResponse.ok(DealResponse.model_validate(deal))
+
+@router.post("/intakes/{intake_id}/qualify")
+async def qualify_deal_intake(
+    intake_id: uuid.UUID,
+    user_id: CurrentUserId,
+    db: DBSession,
+):
+    result = await DealsService(
+        db=db
+    ).qualify_deal_intake(
+        user_id,
+        intake_id,
+    )
+
+    return ApiResponse.ok(result)
