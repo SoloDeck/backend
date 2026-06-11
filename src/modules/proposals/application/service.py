@@ -50,12 +50,13 @@ class ProposalsService:
         await self.db.refresh(proposal)
         return proposal
 
-    async def list_all(self, user_id: uuid.UUID) -> list:
+    async def list_all(self, user_id: uuid.UUID, status: str | None = None) -> list:
         from src.infrastructure.database.models import ProposalModel
 
-        result = await self.db.execute(
-            select(ProposalModel).where(ProposalModel.owner_user_id == user_id)
-        )
+        conditions = [ProposalModel.owner_user_id == user_id]
+        if status is not None:
+            conditions.append(ProposalModel.status == status)
+        result = await self.db.execute(select(ProposalModel).where(*conditions))
         return list(result.scalars().all())
 
     async def get_one(self, user_id: uuid.UUID, proposal_id: uuid.UUID):  # type: ignore[return]

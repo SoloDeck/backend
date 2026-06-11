@@ -745,15 +745,16 @@ paths:
       parameters:
         - $ref: '#/components/parameters/Page'
         - $ref: '#/components/parameters/PageSize'
-        - name: stage
+        - name: title
           in: query
-          schema:
-            $ref: '#/components/schemas/DealStage'
-        - name: client_id
-          in: query
+          description: Search by title (case-insensitive, partial match)
           schema:
             type: string
-            format: uuid
+        - name: stage
+          in: query
+          description: Filter by stage
+          schema:
+            $ref: '#/components/schemas/DealStage'
         - name: source
           in: query
           schema:
@@ -1018,13 +1019,9 @@ paths:
       parameters:
         - $ref: '#/components/parameters/Page'
         - $ref: '#/components/parameters/PageSize'
-        - name: deal_id
-          in: query
-          schema:
-            type: string
-            format: uuid
         - name: status
           in: query
+          description: Filter by status
           schema:
             $ref: '#/components/schemas/ProposalStatus'
         - name: ai_generated
@@ -1278,18 +1275,9 @@ paths:
       parameters:
         - $ref: '#/components/parameters/Page'
         - $ref: '#/components/parameters/PageSize'
-        - name: deal_id
-          in: query
-          schema:
-            type: string
-            format: uuid
-        - name: client_id
-          in: query
-          schema:
-            type: string
-            format: uuid
         - name: status
           in: query
+          description: Filter by status
           schema:
             $ref: '#/components/schemas/ContractStatus'
         - name: from_date
@@ -1693,23 +1681,14 @@ paths:
         - $ref: '#/components/parameters/PageSize'
         - name: status
           in: query
+          description: Filter by status
           schema:
             $ref: '#/components/schemas/InvoiceStatus'
-        - name: client_id
+        - name: invoice_number
           in: query
+          description: Search by invoice number (partial match)
           schema:
             type: string
-            format: uuid
-        - name: deal_id
-          in: query
-          schema:
-            type: string
-            format: uuid
-        - name: contract_id
-          in: query
-          schema:
-            type: string
-            format: uuid
         - name: from_issue_date
           in: query
           schema:
@@ -2130,7 +2109,7 @@ paths:
     get:
       tags: [Reminders]
       summary: List reminders
-      description: Returns reminders owned by the authenticated user. Use `target_type` + `target_id` to fetch reminders scoped to a specific deal, client, invoice, or contract.
+      description: Returns reminders owned by the authenticated user. Use `target_type` to fetch reminders scoped to a specific deal, proposal, invoice, or contract.
       parameters:
         - $ref: '#/components/parameters/Page'
         - $ref: '#/components/parameters/PageSize'
@@ -2140,13 +2119,9 @@ paths:
             $ref: '#/components/schemas/ReminderStatus'
         - name: target_type
           in: query
+          description: "Filter by target type: deal, proposal, contract, invoice"
           schema:
             $ref: '#/components/schemas/ReminderTargetType'
-        - name: target_id
-          in: query
-          schema:
-            type: string
-            format: uuid
         - name: reminder_type
           in: query
           schema:
@@ -2855,11 +2830,6 @@ paths:
       parameters:
         - $ref: '#/components/parameters/Page'
         - $ref: '#/components/parameters/PageSize'
-        - name: user_id
-          in: query
-          schema:
-            type: string
-            format: uuid
         - name: ai_module
           in: query
           schema:
@@ -2897,11 +2867,6 @@ paths:
       parameters:
         - $ref: '#/components/parameters/Page'
         - $ref: '#/components/parameters/PageSize'
-        - name: actor_user_id
-          in: query
-          schema:
-            type: string
-            format: uuid
         - name: event_type
           in: query
           schema:
@@ -2910,11 +2875,6 @@ paths:
           in: query
           schema:
             type: string
-        - name: target_id
-          in: query
-          schema:
-            type: string
-            format: uuid
         - name: from_date
           in: query
           schema:

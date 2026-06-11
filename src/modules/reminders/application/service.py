@@ -45,12 +45,20 @@ class RemindersService:
         await self.db.refresh(reminder)
         return reminder
 
-    async def list_all(self, user_id: uuid.UUID) -> list:
+    async def list_all(
+        self,
+        user_id: uuid.UUID,
+        status: str | None = None,
+        target_type: str | None = None,
+    ) -> list:
         from src.infrastructure.database.models import ReminderModel
 
-        result = await self.db.execute(
-            select(ReminderModel).where(ReminderModel.owner_user_id == user_id)
-        )
+        conditions = [ReminderModel.owner_user_id == user_id]
+        if status is not None:
+            conditions.append(ReminderModel.status == status)
+        if target_type is not None:
+            conditions.append(ReminderModel.target_type == target_type)
+        result = await self.db.execute(select(ReminderModel).where(*conditions))
         return list(result.scalars().all())
 
     async def get_one(self, user_id: uuid.UUID, reminder_id: uuid.UUID):  # type: ignore[return]

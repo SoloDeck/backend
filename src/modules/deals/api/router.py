@@ -3,7 +3,7 @@
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -37,8 +37,10 @@ async def create_deal(
 async def list_deals(
     user_id: CurrentUserId,
     db: DBSession,
+    title: str | None = Query(default=None, description="Search by title (case-insensitive, partial match)"),
+    stage: str | None = Query(default=None, description="Filter by stage: new_lead, qualified, proposal_sent, in_negotiation, active, completed_and_billed, lost"),
 ) -> ApiResponse[list[DealResponse]]:
-    deals = await DealsService(db=db).list_all(user_id)
+    deals = await DealsService(db=db).list_all(user_id, title=title, stage=stage)
     return ApiResponse.ok([DealResponse.model_validate(d) for d in deals])
 
 

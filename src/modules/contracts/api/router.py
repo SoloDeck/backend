@@ -3,7 +3,7 @@
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -37,8 +37,9 @@ async def create_contract(
 async def list_contracts(
     user_id: CurrentUserId,
     db: DBSession,
+    status: str | None = Query(default=None, description="Filter by status: draft, pending_signatures, active, completed, terminated"),
 ) -> ApiResponse[list[ContractResponse]]:
-    contracts = await ContractsService(db=db).list_all(user_id)
+    contracts = await ContractsService(db=db).list_all(user_id, status=status)
     return ApiResponse.ok([ContractResponse.model_validate(c) for c in contracts])
 
 

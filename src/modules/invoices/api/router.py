@@ -3,7 +3,7 @@
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -37,8 +37,10 @@ async def create_invoice(
 async def list_invoices(
     user_id: CurrentUserId,
     db: DBSession,
+    status: str | None = Query(default=None, description="Filter by status: draft, sent, paid, overdue, cancelled"),
+    invoice_number: str | None = Query(default=None, description="Search by invoice number (partial match)"),
 ) -> ApiResponse[list[InvoiceResponse]]:
-    invoices = await InvoicesService(db=db).list_all(user_id)
+    invoices = await InvoicesService(db=db).list_all(user_id, status=status, invoice_number=invoice_number)
     return ApiResponse.ok([InvoiceResponse.model_validate(i) for i in invoices])
 
 

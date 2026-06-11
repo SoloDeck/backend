@@ -58,15 +58,23 @@ class DealsService:
         await self.db.refresh(deal)
         return deal
 
-    async def list_all(self, user_id: uuid.UUID) -> list:
+    async def list_all(
+        self,
+        user_id: uuid.UUID,
+        title: str | None = None,
+        stage: str | None = None,
+    ) -> list:
         from src.infrastructure.database.models import DealModel
 
-        result = await self.db.execute(
-            select(DealModel).where(
-                DealModel.owner_user_id == user_id,
-                DealModel.deleted_at.is_(None),
-            )
-        )
+        conditions = [
+            DealModel.owner_user_id == user_id,
+            DealModel.deleted_at.is_(None),
+        ]
+        if title is not None:
+            conditions.append(DealModel.title.ilike(f"%{title}%"))
+        if stage is not None:
+            conditions.append(DealModel.stage == stage)
+        result = await self.db.execute(select(DealModel).where(*conditions))
         return list(result.scalars().all())
 
     async def get_one(self, user_id: uuid.UUID, deal_id: uuid.UUID):  # type: ignore[return]

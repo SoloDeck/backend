@@ -64,12 +64,13 @@ class ContractsService:
         await self.db.refresh(contract)
         return contract
 
-    async def list_all(self, user_id: uuid.UUID) -> list:
+    async def list_all(self, user_id: uuid.UUID, status: str | None = None) -> list:
         from src.infrastructure.database.models import ContractModel
 
-        result = await self.db.execute(
-            select(ContractModel).where(ContractModel.owner_user_id == user_id)
-        )
+        conditions = [ContractModel.owner_user_id == user_id]
+        if status is not None:
+            conditions.append(ContractModel.status == status)
+        result = await self.db.execute(select(ContractModel).where(*conditions))
         return list(result.scalars().all())
 
     async def get_one(self, user_id: uuid.UUID, contract_id: uuid.UUID):  # type: ignore[return]
