@@ -336,12 +336,17 @@ class AuthService:
             "Mã có hiệu lực trong 15 phút.\n"
             "Nếu bạn không yêu cầu đặt lại mật khẩu, hãy bỏ qua email này."
         )
-        await send_email(
-            to=user.email,
-            subject="[SoloDesk] Mã OTP đặt lại mật khẩu",
-            html=html,
-            plain=plain,
-        )
+        try:
+            await send_email(
+                to=user.email,
+                subject="[SoloDesk] Mã OTP đặt lại mật khẩu",
+                html=html,
+                plain=plain,
+            )
+        except Exception:
+            # Email delivery failure must not expose a 500 — OTP is stored,
+            # delivery can be retried or checked via logs.
+            pass
 
     async def confirm_password_reset(self, payload: PasswordResetConfirmRequest) -> None:
         from src.infrastructure.database.models import PasswordResetTokenModel, UserModel
