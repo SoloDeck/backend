@@ -1,43 +1,27 @@
 import json
 import os
-from typing import Optional
-
-from dotenv import load_dotenv
-
-load_dotenv()
+from google import genai
 
 
 class LeadQualifierService:
-    """
-    AI service wrapper for lead qualification.
-    Client is lazily initialized to avoid CI import failures.
-    """
-
-    _client = None  # singleton cache
-
-    # ------------------------------------------------------------------
-    # Client initialization (lazy)
-    # ------------------------------------------------------------------
+    _client = None
 
     @classmethod
     def _get_client(cls):
         if cls._client is not None:
             return cls._client
 
-        from google import genai
-
         api_key = os.getenv("GOOGLE_API_KEY")
         if not api_key:
-            raise RuntimeError(
-                "GOOGLE_API_KEY is not set. Required for LeadQualifierService."
-            )
+            raise RuntimeError("GOOGLE_API_KEY is not set")
 
         cls._client = genai.Client(api_key=api_key)
         return cls._client
 
-    # ------------------------------------------------------------------
-    # Utilities
-    # ------------------------------------------------------------------
+    @classmethod
+    def set_client_for_tests(cls, client):
+        """ONLY used in unit tests"""
+        cls._client = client
 
     @staticmethod
     def clean_json_response(text: str) -> str:
@@ -45,10 +29,6 @@ class LeadQualifierService:
         text = text.replace("```json", "")
         text = text.replace("```", "")
         return text.strip()
-
-    # ------------------------------------------------------------------
-    # Main logic
-    # ------------------------------------------------------------------
 
     @classmethod
     def qualify(cls, inquiry_text: str):
@@ -64,11 +44,9 @@ class LeadQualifierService:
         with open(prompt_path, "r", encoding="utf-8") as f:
             prompt = f.read()
 
-        full_prompt = f"""
-{prompt}
+        full_prompt = f"""{prompt}
 
 Client Inquiry:
-
 {inquiry_text}
 """
 
@@ -79,5 +57,4 @@ Client Inquiry:
         )
 
         cleaned = cls.clean_json_response(response.text)
-
         return json.loads(cleaned)

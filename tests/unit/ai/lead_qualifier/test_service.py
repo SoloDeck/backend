@@ -4,9 +4,9 @@ import pytest
 from src.ai.lead_qualifier.application.service import LeadQualifierService
 
 
-# -----------------------------
-# MOCKS
-# -----------------------------
+# --------------------------------------------------
+# FIXTURES / MOCKS
+# --------------------------------------------------
 
 class MockResponse:
     text = """
@@ -42,7 +42,7 @@ class InvalidResponse:
     text = "This is not JSON"
 
 
-class FakeModels:
+class FakeModel:
     def __init__(self, response):
         self._response = response
 
@@ -52,18 +52,60 @@ class FakeModels:
 
 class FakeClient:
     def __init__(self, response):
-        self.models = FakeModels(response)
+        self.models = FakeModel(response)
 
 
-# -----------------------------
-# TESTS
-# -----------------------------
+# --------------------------------------------------
+# TEST CLEAN JSON RESPONSE
+# --------------------------------------------------
 
-def test_qualify_success(monkeypatch):
+def test_clean_json_response():
+    raw = """
+    ```json
+    {
+        "project_type": "Website"
+    }
+    ```
+    """
 
-    monkeypatch.setattr(
-        "google.genai.Client",
-        lambda *args, **kwargs: FakeClient(MockResponse())
+    cleaned = LeadQualifierService.clean_json_response(raw)
+
+    assert cleaned == """
+    {
+        "project_type": "Website"
+    }
+    """.strip()
+
+
+# --------------------------------------------------
+# TEST SUCCESSFUL QUALIFICATION
+# --------------------------------------------------
+
+def test_qualify_success():
+    LeadQualifierService.set_client_for_tests(
+        FakeClient(MockResponse())
+    )
+
+    result = LeadQualifierService.qualify("Need a website")
+
+    assert result == {
+        "project_type": "Website",
+        "budget_signal": "20 million",
+        "timeline_signal": "1 month",
+        "urgency_signal": "Medium",
+        "red_flags": [],
+        "suggested_lead_score": "WARM",
+        "reasoning": "Test",
+    }
+
+
+# --------------------------------------------------
+# TEST MARKDOWN CLEANING PATH
+# --------------------------------------------------
+
+def test_markdown_json_cleaning():
+    LeadQualifierService.set_client_for_tests(
+        FakeClient(MarkdownResponse())
     )
 
     result = LeadQualifierService.qualify("Need a website")
@@ -72,23 +114,13 @@ def test_qualify_success(monkeypatch):
     assert result["suggested_lead_score"] == "WARM"
 
 
-def test_markdown_json_cleaning(monkeypatch):
+# --------------------------------------------------
+# TEST INVALID JSON HANDLING
+# --------------------------------------------------
 
-    monkeypatch.setattr(
-        "google.genai.Client",
-        lambda *args, **kwargs: FakeClient(MarkdownResponse())
-    )
-
-    result = LeadQualifierService.qualify("Need a website")
-
-    assert result["project_type"] == "Website"
-
-
-def test_invalid_json(monkeypatch):
-
-    monkeypatch.setattr(
-        "google.genai.Client",
-        lambda *args, **kwargs: FakeClient(InvalidResponse())
+def test_invalid_json():
+    LeadQualifierService.set_client_for_tests(
+        FakeClient(InvalidResponse())
     )
 
     with pytest.raises(json.JSONDecodeError):
