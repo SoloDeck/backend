@@ -15,7 +15,7 @@ from src.modules.clients.schemas.response import (
     MessageResponse,
 )
 from src.shared.dependencies.auth import CurrentUserId
-from src.shared.responses.response import ApiResponse
+from src.shared.responses.response import ApiResponse, PaginatedResponse
 
 router = APIRouter()
 
@@ -32,16 +32,25 @@ async def create_client(
     return ApiResponse.created(ClientResponse.model_validate(client))
 
 
-@router.get("", response_model=ApiResponse[list[ClientResponse]])
+@router.get("", response_model=PaginatedResponse[ClientResponse])
 async def list_clients(
     user_id: CurrentUserId,
     db: DBSession,
     status: str | None = Query(default=None, description="Filter by status: prospect, active, inactive, archived"),
     name: str | None = Query(default=None, description="Search by name (case-insensitive, partial match)"),
     email: str | None = Query(default=None, description="Search by email (case-insensitive, partial match)"),
-) -> ApiResponse[list[ClientResponse]]:
-    clients = await ClientsService(db=db).list_all(user_id, status=status, name=name, email=email)
-    return ApiResponse.ok([ClientResponse.model_validate(c) for c in clients])
+    page: int = Query(default=1, ge=1, description="Page number"),
+    page_size: int = Query(default=20, ge=1, le=100, description="Items per page"),
+) -> PaginatedResponse[ClientResponse]:
+    clients, total = await ClientsService(db=db).list_all(
+        user_id, status=status, name=name, email=email, page=page, page_size=page_size
+    )
+    return PaginatedResponse.ok(
+        [ClientResponse.model_validate(c) for c in clients],
+        total=total,
+        page=page,
+        page_size=page_size,
+    )
 
 
 @router.get("/{client_id}", response_model=ApiResponse[ClientResponse])
