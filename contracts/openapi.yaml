@@ -5113,34 +5113,48 @@ components:
     # --- AI ---
     LeadQualificationRequest:
       type: object
-      required: [deal_id]
+      required:
+        - inquiry_text
       properties:
-        deal_id:
+        inquiry_text:
           type: string
-          format: uuid
-        additional_context:
-          type: string
-          description: Optional freeform context to help the AI
+          description: Raw lead inquiry text for AI classification
+          example: "Need a website for my business"
 
     LeadQualificationResponse:
       type: object
-      required: [deal_id, score, recommendation, reasoning]
+      required:
+        - project_type
+        - budget_signal
+        - timeline_signal
+        - urgency_signal
+        - red_flags
+        - suggested_lead_score
+        - reasoning
       properties:
-        deal_id:
+        project_type:
           type: string
-          format: uuid
-        score:
-          type: integer
-          minimum: 0
-          maximum: 100
-        recommendation:
+
+        budget_signal:
           type: string
-          enum: [qualify, pass]
+
+        timeline_signal:
+          type: string
+
+        urgency_signal:
+          type: string
+
+        red_flags:
+          type: array
+          items:
+            type: string
+
+        suggested_lead_score:
+          type: string
+          enum: [ HOT, WARM, COLD ]
+
         reasoning:
           type: string
-        generation_id:
-          type: string
-          format: uuid
 
     ProposalGenerationRequest:
       type: object

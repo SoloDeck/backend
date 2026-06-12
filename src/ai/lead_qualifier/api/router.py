@@ -12,14 +12,11 @@ from src.ai.lead_qualifier.application.service import (
     LeadQualifierService
 )
 
-router = APIRouter(
-    prefix="/ai/lead-qualifier",
-    tags=["Lead Qualifier"]
-)
+router = APIRouter(tags=["AI"])
 
 
 @router.post(
-    "",
+    "/leads/qualify",
     response_model=LeadQualificationResponse
 )
 def qualify_lead(
