@@ -15,6 +15,7 @@ commit and branch convention. Key rule: never commit to `main` — branch as `<t
 
 **Every task that adds or modifies a feature must follow this sequence — no exceptions:**
 
+0. **DO NOT HARDCODE:** Respect the root `GEMINI.md` principle. Use environment variables or dependency injection for all configuration.
 1. Implement the feature (service → repository → router).
 2. Write unit tests for every new/changed service method.
 3. Write integration tests for every new/changed API endpoint.

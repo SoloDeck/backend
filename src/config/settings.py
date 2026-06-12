@@ -47,11 +47,12 @@ class Settings(BaseSettings):
     jwt_refresh_token_expire_days: int = 30
 
     # -----------------------------------------------------------------------
-    # Google OAuth
+    # Google Services
     # -----------------------------------------------------------------------
     google_client_id: str = ""
     google_client_secret: str = ""
     google_redirect_uri: str = ""
+    google_api_key: str = ""  # For Gemini API or other Google services
 
     # -----------------------------------------------------------------------
     # OpenAI
