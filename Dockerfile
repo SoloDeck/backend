@@ -72,7 +72,7 @@ CMD ["celery", "-A", "src.infrastructure.celery.app.celery_app", "beat", \
 # Stage 5: dev / test — installs [dev] extras (pytest, httpx, mypy, ruff…)
 # Tests directory is mounted via docker-compose volume, not baked in.
 # ---------------------------------------------------------------------------
-FROM python:3.13-slim AS dev
+FROM python:3.13-slim AS test
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \

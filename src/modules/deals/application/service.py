@@ -10,9 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.modules.deals.schemas.request import DealRequest, DealStageRequest
 from src.shared.exceptions.domain import InvalidStateTransitionError, NotFoundError
 
-from src.ai.lead_qualifier.application.service import (
-    LeadQualifierService
-)
+from src.ai.facade import AIFacade
 
 VALID_TRANSITIONS: dict[str, list[str]] = {
     "new_lead": ["qualified", "lost"],
@@ -28,6 +26,7 @@ VALID_TRANSITIONS: dict[str, list[str]] = {
 @dataclass
 class DealsService:
     db: AsyncSession
+    ai_facade: AIFacade | None = None
 
     async def _get_deal(self, user_id: uuid.UUID, deal_id: uuid.UUID):  # type: ignore[return]
         from src.infrastructure.database.models import DealModel
@@ -148,8 +147,12 @@ class DealsService:
                 "Deal intake has no inquiry text"
             )
 
-        return LeadQualifierService.qualify(
-            intake.inquiry_text
+        if not self.ai_facade:
+            raise RuntimeError("AIFacade not initialized")
+
+        return await self.ai_facade.qualify_lead(
+            inquiry_text=intake.inquiry_text,
+            user_can_use_ai=True,  # TODO: get from subscriptions
         )
 
 
