@@ -60,8 +60,18 @@ def custom_openapi() -> dict:
 
     contract_path = Path(__file__).resolve().parents[1] / "contracts" / "openapi.yaml"
     with contract_path.open(encoding="utf-8") as spec_file:
-        app.openapi_schema = yaml.safe_load(spec_file)
+        schema = yaml.safe_load(spec_file)
 
+    # In development, promote the localhost server to the top so Swagger UI
+    # sends requests to the local instance instead of production.
+    if settings.debug or settings.app_env == "development":
+        servers: list[dict] = schema.get("servers", [])
+        local = [s for s in servers if "localhost" in s.get("url", "")]
+        others = [s for s in servers if "localhost" not in s.get("url", "")]
+        if local:
+            schema["servers"] = local + others
+
+    app.openapi_schema = schema
     return app.openapi_schema
 
 
@@ -99,6 +109,14 @@ app.include_router(invoices_router,      prefix=f"{API_V1}/invoices",      tags=
 app.include_router(reminders_router,     prefix=f"{API_V1}/reminders",     tags=["Reminders"])
 app.include_router(analytics_router,     prefix=f"{API_V1}/analytics",     tags=["Analytics"])
 app.include_router(admin_router,         prefix=f"{API_V1}/admin",         tags=["Admin"])
+
+
+# ---------------------------------------------------------------------------
+# API v1 root — Swagger UI probes this on load
+# ---------------------------------------------------------------------------
+@app.get(f"{API_V1}", include_in_schema=False)
+async def api_v1_root() -> dict:
+    return {"message": "SoloDesk API v1", "docs": "/docs"}
 
 
 # ---------------------------------------------------------------------------

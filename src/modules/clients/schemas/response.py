@@ -14,6 +14,10 @@ class ClientResponse(BaseModel):
     phone: str | None
     type: str
     status: str
+    website: str | None
+    linkedin_url: str | None
+    address_city: str | None
+    address_country: str | None
     notes: str | None
     description: str | None
     created_at: datetime

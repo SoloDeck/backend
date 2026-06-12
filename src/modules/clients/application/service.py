@@ -57,7 +57,10 @@ class ClientsService:
         status: str | None = None,
         name: str | None = None,
         email: str | None = None,
-    ) -> list:
+        page: int = 1,
+        page_size: int = 20,
+    ) -> tuple[list, int]:
+        from sqlalchemy import func
         from src.infrastructure.database.models import ClientModel
 
         conditions = [
@@ -71,8 +74,16 @@ class ClientsService:
         if email is not None:
             conditions.append(ClientModel.email.ilike(f"%{email}%"))
 
-        result = await self.db.execute(select(ClientModel).where(*conditions))
-        return list(result.scalars().all())
+        total_result = await self.db.execute(
+            select(func.count()).select_from(ClientModel).where(*conditions)
+        )
+        total = total_result.scalar_one()
+
+        offset = (page - 1) * page_size
+        result = await self.db.execute(
+            select(ClientModel).where(*conditions).offset(offset).limit(page_size)
+        )
+        return list(result.scalars().all()), total
 
     async def get_one(self, user_id: uuid.UUID, client_id: uuid.UUID):  # type: ignore[return]
         return await self._get_client(user_id, client_id)

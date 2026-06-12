@@ -90,3 +90,9 @@ COPY contracts ./contracts
 COPY alembic ./alembic
 COPY alembic.ini .
 COPY scripts ./scripts
+
+
+# ---------------------------------------------------------------------------
+# Stage 6: test — alias of dev, used by docker-compose test service
+# ---------------------------------------------------------------------------
+FROM dev AS test
