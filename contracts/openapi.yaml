@@ -170,33 +170,24 @@ paths:
           $ref: '#/components/responses/Unauthorized'
 
   /auth/google:
-    get:
+    post:
       tags: [Auth]
-      summary: Initiate Google OAuth 2.0 flow
+      summary: Exchange a Google ID token for SoloDesk tokens
       description: |
-        Redirects the browser to Google's authorization endpoint with PKCE state.
-        A new account is created automatically if the Google email is not yet registered.
+        Token Exchange Flow. The client obtains a Google `id_token` directly from the
+        native Google SDK (GIS on web, google_sign_in on mobile) and posts it here
+        together with the originating `platform`. The backend verifies the token offline
+        against Google's cached public certificates, selecting the expected audience from
+        the platform's client ID, then issues SoloDesk access and refresh tokens. A new
+        account is created automatically if the Google email is not yet registered; an
+        existing email/password account is linked to the Google identity.
       security: []
-      responses:
-        '302':
-          description: Redirect to Google authorization endpoint
-
-  /auth/google/callback:
-    get:
-      tags: [Auth]
-      summary: Handle Google OAuth callback
-      security: []
-      parameters:
-        - name: code
-          in: query
-          required: true
-          schema:
-            type: string
-        - name: state
-          in: query
-          required: true
-          schema:
-            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GoogleAuthRequest'
       responses:
         '200':
           description: Tokens issued
@@ -209,7 +200,9 @@ paths:
                     properties:
                       data:
                         $ref: '#/components/schemas/AuthTokenResponse'
-        '400':
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
           $ref: '#/components/responses/BadRequest'
 
   /auth/password-reset/request:
@@ -3487,6 +3480,18 @@ components:
       properties:
         refresh_token:
           type: string
+
+    GoogleAuthRequest:
+      type: object
+      required: [id_token, platform]
+      properties:
+        id_token:
+          type: string
+          description: Google-issued OpenID Connect ID token from the native Google SDK
+        platform:
+          type: string
+          enum: [web, android, ios]
+          description: Originating client platform — selects the expected Google audience (client ID)
 
     AuthTokenResponse:
       type: object
