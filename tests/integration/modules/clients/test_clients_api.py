@@ -6,9 +6,7 @@ clients matching that status.  Uses real PostgreSQL (rolled back per test).
 
 import uuid
 
-import pytest
 from httpx import AsyncClient
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -215,6 +213,50 @@ class TestListClients:
 # ---------------------------------------------------------------------------
 # GET /clients/{id}
 # ---------------------------------------------------------------------------
+
+
+class TestDealCount:
+    async def test_deal_count_zero_for_new_client(self, client: AsyncClient) -> None:
+        headers = await _auth_headers(client)
+        created = await _create_client(client, headers)
+
+        resp = await client.get(f"/api/v1/clients/{created['id']}", headers=headers)
+        assert resp.status_code == 200
+        assert resp.json()["data"]["deal_count"] == 0
+
+    async def test_deal_count_reflects_linked_deals(self, client: AsyncClient) -> None:
+        headers = await _auth_headers(client)
+        created = await _create_client(client, headers)
+        client_id = created["id"]
+
+        for i in range(3):
+            resp = await client.post(
+                "/api/v1/deals",
+                json={"client_id": client_id, "title": f"Deal {i}"},
+                headers=headers,
+            )
+            assert resp.status_code == 201, resp.text
+
+        resp = await client.get(f"/api/v1/clients/{client_id}", headers=headers)
+        assert resp.status_code == 200
+        assert resp.json()["data"]["deal_count"] == 3
+
+    async def test_deal_count_in_list(self, client: AsyncClient) -> None:
+        headers = await _auth_headers(client)
+        created = await _create_client(client, headers)
+        client_id = created["id"]
+
+        await client.post(
+            "/api/v1/deals",
+            json={"client_id": client_id, "title": "Deal A"},
+            headers=headers,
+        )
+
+        resp = await client.get("/api/v1/clients", headers=headers)
+        assert resp.status_code == 200
+        matching = [c for c in resp.json()["data"] if c["id"] == client_id]
+        assert len(matching) == 1
+        assert matching[0]["deal_count"] == 1
 
 
 class TestGetClient:
