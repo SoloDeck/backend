@@ -28,6 +28,10 @@ def _send_sync(*, to: str, subject: str, html: str, plain: str) -> None:
 
     smtp_cls = smtplib.SMTP_SSL if settings.smtp_tls else smtplib.SMTP
     with smtp_cls(settings.smtp_host, settings.smtp_port) as server:
+        if settings.smtp_starttls:
+            server.ehlo()
+            server.starttls()
+            server.ehlo()
         if settings.smtp_user and settings.smtp_password:
             server.login(settings.smtp_user, settings.smtp_password)
         server.sendmail(settings.smtp_from_email, [to], msg.as_string())

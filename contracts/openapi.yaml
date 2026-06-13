@@ -3734,7 +3734,7 @@ components:
 
     ClientResponse:
       type: object
-      required: [id, owner_user_id, type, name, status, created_at]
+      required: [id, owner_user_id, type, name, status, deal_count, created_at]
       properties:
         id:
           type: string
@@ -3758,6 +3758,11 @@ components:
         description:
           type: string
           nullable: true
+        deal_count:
+          type: integer
+          minimum: 0
+          default: 0
+          description: Number of non-deleted deals linked to this client.
         created_at:
           type: string
           format: date-time

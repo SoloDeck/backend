@@ -88,7 +88,8 @@ class Settings(BaseSettings):
     smtp_password: str = ""
     smtp_from_email: str = "noreply@solodesk.space"
     smtp_from_name: str = "SoloDesk"
-    smtp_tls: bool = False
+    smtp_tls: bool = False      # True → SMTP_SSL (port 465)
+    smtp_starttls: bool = False  # True → STARTTLS after connect (port 587)
 
     # -----------------------------------------------------------------------
     # CORS

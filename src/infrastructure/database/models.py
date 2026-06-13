@@ -22,11 +22,12 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     func,
+    select,
     text,
 )
 from sqlalchemy.dialects.postgresql import ARRAY, INET, JSONB, UUID
 from sqlalchemy.dialects.postgresql import ENUM as PgEnum  # noqa: N811
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, column_property, mapped_column, relationship
 
 from src.infrastructure.database.base import Base, SoftDeleteMixin, TimestampMixin, UUIDMixin
 
@@ -456,6 +457,17 @@ class DealModel(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
         Index("idx_deals_owner_created", "owner_user_id", "created_at"),
         Index("idx_deals_stage_closed", "stage", "closed_at"),
     )
+
+
+# Computed column — must be defined after DealModel so both sides of the FK exist.
+ClientModel.deal_count = column_property(
+    select(func.count(DealModel.id))
+    .where(DealModel.client_id == ClientModel.id)
+    .where(DealModel.deleted_at.is_(None))
+    .correlate_except(DealModel)
+    .scalar_subquery()
+)
+
 
 class DealIntakeModel(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     __tablename__ = "deal_intakes"
