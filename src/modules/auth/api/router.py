@@ -4,8 +4,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, status
-from fastapi.responses import RedirectResponse
+from fastapi import APIRouter, Depends, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config.settings import settings
@@ -98,32 +97,6 @@ async def google_auth(
     db: DBSession,
 ) -> ApiResponse[AuthTokenResponse]:
     result = await AuthService(db=db).google_auth(payload)
-    return ApiResponse.ok(result)
-
-
-@router.get(
-    "/google",
-    summary="Redirect to Google OAuth consent screen",
-    status_code=status.HTTP_302_FOUND,
-    response_class=RedirectResponse,
-    include_in_schema=True,
-)
-async def google_oauth_redirect() -> RedirectResponse:
-    url = AuthService.get_google_auth_url()
-    return RedirectResponse(url=url, status_code=status.HTTP_302_FOUND)
-
-
-@router.get(
-    "/google/callback",
-    response_model=ApiResponse[AuthTokenResponse],
-    summary="Handle Google OAuth callback and issue tokens",
-)
-async def google_oauth_callback(
-    code: Annotated[str, Query(description="Authorization code from Google")],
-    state: Annotated[str, Query(description="CSRF state token")],
-    db: DBSession,
-) -> ApiResponse[AuthTokenResponse]:
-    result = await AuthService(db=db).google_oauth_callback(code=code, state=state)
     return ApiResponse.ok(result)
 
 
