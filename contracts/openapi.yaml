@@ -58,6 +58,27 @@ paths:
   # -------------------------------------------------------------------------
   # AUTH
   # -------------------------------------------------------------------------
+  /auth/config:
+    get:
+      tags: [Auth]
+      summary: Get public configuration settings
+      description: |
+        Returns public environment configuration and client IDs (like Google Web Client ID)
+        required by the frontend client at startup. No authentication required.
+      security: []
+      responses:
+        '200':
+          description: Configuration retrieved successfully
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/ClientConfigResponse'
+
   /auth/register:
     post:
       tags: [Auth]
@@ -3508,6 +3529,16 @@ components:
           type: integer
           description: Access token TTL in seconds
           examples: 900
+
+    ClientConfigResponse:
+      type: object
+      required: [app_env, google_web_client_id]
+      properties:
+        app_env:
+          type: string
+          enum: [development, staging, production]
+        google_web_client_id:
+          type: string
 
     PasswordResetRequestBody:
       type: object

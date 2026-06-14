@@ -18,13 +18,31 @@ from src.modules.auth.schemas.request import (
     RefreshRequest,
     RegisterRequest,
 )
-from src.modules.auth.schemas.response import AuthTokenResponse, MessageResponse
+from src.modules.auth.schemas.response import (
+    AuthTokenResponse,
+    ClientConfigResponse,
+    MessageResponse,
+)
 from src.shared.dependencies.auth import CurrentUser
 from src.shared.responses.response import ApiResponse
 
 router = APIRouter()
 
 DBSession = Annotated[AsyncSession, Depends(get_db_session)]
+
+
+@router.get(
+    "/config",
+    response_model=ApiResponse[ClientConfigResponse],
+    summary="Get public configuration settings",
+)
+async def get_client_config() -> ApiResponse[ClientConfigResponse]:
+    return ApiResponse.ok(
+        ClientConfigResponse(
+            app_env=settings.app_env,
+            google_web_client_id=settings.google_web_client_id,
+        )
+    )
 
 
 @router.post(
