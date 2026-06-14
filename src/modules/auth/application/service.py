@@ -201,31 +201,40 @@ class AuthService:
         await self.db.flush()
 
     @staticmethod
-    def _google_audience(platform: str) -> str:
-        """Return the expected ID token audience (client ID) for a platform."""
-        return {
-            "web": settings.google_web_client_id,
-            "android": settings.google_android_client_id,
-            "ios": settings.google_ios_client_id,
+    def _allowed_audiences(platform: str) -> tuple[str, ...]:
+        """Accepted ID-token audiences for the platform.
+
+        google_sign_in (android/ios) mints the token for the web client when
+        serverClientId is set, but may use the native client id otherwise — accept
+        both. Web (GIS) always uses the web client. All are this app's own OAuth
+        clients, so accepting any of them is safe.
+        """
+        native = {
+            "web": (),
+            "android": (settings.google_android_client_id,),
+            "ios": (settings.google_ios_client_id,),
         }[platform]
+        return tuple(a for a in (settings.google_web_client_id, *native) if a)
 
     async def google_auth(self, payload: GoogleAuthRequest) -> AuthTokenResponse:
         from src.infrastructure.database.models import OAuthIdentityModel, UserModel
 
-        audience = self._google_audience(payload.platform)
+        allowed_audiences = self._allowed_audiences(payload.platform)
 
-        # Offline cryptographic verification against Google's cached public certs.
-        # verify_oauth2_token also enforces the audience and expiry; it is a blocking
-        # call, so run it in a worker thread to avoid stalling the event loop.
+        # Offline cryptographic verification against Google's cached public certs
+        # (signature + issuer + expiry). The audience is then checked against the
+        # platform's accepted set below. Blocking call — run in a worker thread.
         try:
             claims = await to_thread.run_sync(
                 google_id_token.verify_oauth2_token,
                 payload.id_token,
                 _google_transport_request,
-                audience,
             )
         except (ValueError, GoogleAuthError) as err:
             raise AuthenticationError("Invalid Google token") from err
+
+        if claims.get("aud") not in allowed_audiences:
+            raise AuthenticationError("Google token audience mismatch")
 
         if claims.get("iss") not in ("accounts.google.com", "https://accounts.google.com"):
             raise AuthenticationError("Invalid Google token issuer")
