@@ -200,19 +200,15 @@ class AuthService:
         self.db.add(entry)
         await self.db.flush()
 
-    @staticmethod
-    def _google_audience(platform: str) -> str:
-        """Return the expected ID token audience (client ID) for a platform."""
-        return {
-            "web": settings.google_web_client_id,
-            "android": settings.google_android_client_id,
-            "ios": settings.google_ios_client_id,
-        }[platform]
-
     async def google_auth(self, payload: GoogleAuthRequest) -> AuthTokenResponse:
         from src.infrastructure.database.models import OAuthIdentityModel, UserModel
 
-        audience = self._google_audience(payload.platform)
+        # Every platform's ID token is minted for the web/server OAuth client:
+        # GIS (web) issues the credential for the web client directly, and
+        # google_sign_in (android/ios) is initialized with it as serverClientId,
+        # so the token's `aud` is the web client ID regardless of platform.
+        # payload.platform is retained for auditing but no longer selects the audience.
+        audience = settings.google_web_client_id
 
         # Offline cryptographic verification against Google's cached public certs.
         # verify_oauth2_token also enforces the audience and expiry; it is a blocking

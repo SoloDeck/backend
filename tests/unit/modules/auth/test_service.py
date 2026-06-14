@@ -170,20 +170,23 @@ class TestGoogleAuth:
         mock_verify.assert_called_once()
 
     @_patch(_VERIFY)
-    async def test_audience_selected_per_platform(self, mock_verify: MagicMock) -> None:
-        mock_verify.return_value = dict(_VALID_CLAIMS)
-        db = _mock_db([_identity(), _make_user(), None])
-        service = AuthService(db=db)
-        with _patch.object(
-            settings, "google_android_client_id", "android-aud.apps.googleusercontent.com"
-        ):
-            await service.google_auth(
-                GoogleAuthRequest(id_token="tok", platform="android")
-            )
-        # verify_oauth2_token(id_token, request, audience) — audience is positional[2]
-        assert (
-            mock_verify.call_args.args[2] == "android-aud.apps.googleusercontent.com"
-        )
+    async def test_all_platforms_verify_against_web_client_id(
+        self, mock_verify: MagicMock
+    ) -> None:
+        # google_sign_in (android/ios) is initialized with the web client as
+        # serverClientId and GIS (web) mints the credential for the web client,
+        # so the ID token's `aud` is the web client ID on every platform.
+        web_aud = "web-server-aud.apps.googleusercontent.com"
+        with _patch.object(settings, "google_web_client_id", web_aud):
+            for platform in ("web", "android", "ios"):
+                mock_verify.reset_mock()
+                mock_verify.return_value = dict(_VALID_CLAIMS)
+                db = _mock_db([_identity(), _make_user(), None])
+                await AuthService(db=db).google_auth(
+                    GoogleAuthRequest(id_token="tok", platform=platform)
+                )
+                # verify_oauth2_token(id_token, request, audience) — aud is positional[2]
+                assert mock_verify.call_args.args[2] == web_aud, platform
 
     @_patch(_VERIFY)
     async def test_invalid_token_raises(self, mock_verify: MagicMock) -> None:
