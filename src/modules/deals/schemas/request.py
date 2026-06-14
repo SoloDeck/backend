@@ -1,7 +1,7 @@
 import uuid
 from decimal import Decimal
 
-from pydantic import BaseModel
+from pydantic import AliasChoices, BaseModel, Field
 
 
 class DealRequest(BaseModel):
@@ -16,4 +16,8 @@ class DealRequest(BaseModel):
 
 
 class DealStageRequest(BaseModel):
-    stage: str
+    target_stage: str = Field(validation_alias=AliasChoices("target_stage", "stage"))
+
+    @property
+    def stage(self) -> str:
+        return self.target_stage

@@ -4,40 +4,27 @@ import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.modules.deals.domain.value_objects.deal_stage import DealStage, STAGE_TRANSITIONS, TERMINAL_STAGES
+from src.modules.deals.infrastructure.repository import DealsRepository
 from src.modules.deals.schemas.request import DealRequest, DealStageRequest
-from src.shared.exceptions.domain import InvalidStateTransitionError, NotFoundError
+from src.shared.exceptions.domain import BusinessRuleError, InvalidStateTransitionError, NotFoundError
 
 from src.ai.facade import AIFacade
-
-VALID_TRANSITIONS: dict[str, list[str]] = {
-    "new_lead": ["qualified", "lost"],
-    "qualified": ["proposal_sent", "lost"],
-    "proposal_sent": ["in_negotiation", "lost"],
-    "in_negotiation": ["active", "lost"],
-    "active": ["completed_and_billed", "lost"],
-    "completed_and_billed": [],
-    "lost": [],
-}
-
 
 @dataclass
 class DealsService:
     db: AsyncSession
     ai_facade: AIFacade | None = None
+    repo: DealsRepository | None = None
+
+    def __post_init__(self) -> None:
+        if self.repo is None:
+            self.repo = DealsRepository(self.db)
 
     async def _get_deal(self, user_id: uuid.UUID, deal_id: uuid.UUID):  # type: ignore[return]
-        from src.infrastructure.database.models import DealModel
-
-        deal = await self.db.scalar(
-            select(DealModel).where(
-                DealModel.id == deal_id,
-                DealModel.owner_user_id == user_id,
-                DealModel.deleted_at.is_(None),
-            )
-        )
+        deal = await self.repo.get_by_id(deal_id, user_id)
         if deal is None:
             raise NotFoundError(f"Deal {deal_id} not found")
         return deal
@@ -47,15 +34,7 @@ class DealsService:
             user_id: uuid.UUID,
             intake_id: uuid.UUID,
     ):
-        from src.infrastructure.database.models import DealIntakeModel
-
-        intake = await self.db.scalar(
-            select(DealIntakeModel).where(
-                DealIntakeModel.id == intake_id,
-                DealIntakeModel.owner_user_id == user_id,
-                DealIntakeModel.deleted_at.is_(None),  # remove if not present
-            )
-        )
+        intake = await self.repo.get_intake_by_id(intake_id, user_id)
 
         if intake is None:
             raise NotFoundError(f"Deal intake {intake_id} not found")
@@ -63,9 +42,10 @@ class DealsService:
         return intake
 
     async def create(self, user_id: uuid.UUID, payload: DealRequest):  # type: ignore[return]
-        from src.infrastructure.database.models import DealModel
-
-        deal = DealModel(
+        client = await self.repo.get_client_by_id(payload.client_id, user_id)
+        if client is None:
+            raise NotFoundError(f"Client {payload.client_id} not found")
+        return await self.repo.create(
             owner_user_id=user_id,
             client_id=payload.client_id,
             title=payload.title,
@@ -76,10 +56,6 @@ class DealsService:
             currency=payload.currency,
             notes=payload.notes,
         )
-        self.db.add(deal)
-        await self.db.flush()
-        await self.db.refresh(deal)
-        return deal
 
     async def list_all(
         self,
@@ -87,18 +63,7 @@ class DealsService:
         title: str | None = None,
         stage: str | None = None,
     ) -> list:
-        from src.infrastructure.database.models import DealModel
-
-        conditions = [
-            DealModel.owner_user_id == user_id,
-            DealModel.deleted_at.is_(None),
-        ]
-        if title is not None:
-            conditions.append(DealModel.title.ilike(f"%{title}%"))
-        if stage is not None:
-            conditions.append(DealModel.stage == stage)
-        result = await self.db.execute(select(DealModel).where(*conditions))
-        return list(result.scalars().all())
+        return await self.repo.list_all(user_id, title=title, stage=stage)
 
     async def get_one(self, user_id: uuid.UUID, deal_id: uuid.UUID):  # type: ignore[return]
         return await self._get_deal(user_id, deal_id)
@@ -109,28 +74,33 @@ class DealsService:
             value = getattr(payload, field, None)
             if value is not None:
                 setattr(deal, field, value)
-        await self.db.flush()
-        await self.db.refresh(deal)
-        return deal
+        return await self.repo.save(deal)
 
     async def delete(self, user_id: uuid.UUID, deal_id: uuid.UUID) -> None:
         deal = await self._get_deal(user_id, deal_id)
         deal.deleted_at = datetime.now(UTC)
-        await self.db.flush()
+        await self.repo.save(deal)
 
     async def transition_stage(
         self, user_id: uuid.UUID, deal_id: uuid.UUID, payload: DealStageRequest
     ):  # type: ignore[return]
         deal = await self._get_deal(user_id, deal_id)
-        allowed = VALID_TRANSITIONS.get(deal.stage, [])
-        if payload.stage not in allowed:
+        try:
+            current = DealStage(deal.stage)
+            target = DealStage(payload.stage)
+        except ValueError as exc:
+            raise BusinessRuleError("Invalid deal stage") from exc
+        if target not in STAGE_TRANSITIONS.get(current, frozenset()):
             raise InvalidStateTransitionError("deal", deal.stage, payload.stage)
+        if target == DealStage.ACTIVE and not await self.repo.has_accepted_proposal(deal_id, user_id):
+            raise BusinessRuleError("Transitioning to active requires an accepted proposal")
+        if target == DealStage.COMPLETED_AND_BILLED and not await self.repo.has_invoice(deal_id, user_id):
+            raise BusinessRuleError("Transitioning to completed_and_billed requires a linked invoice")
         deal.stage = payload.stage
-        if payload.stage in ("completed_and_billed", "lost") and hasattr(deal, "closed_at"):
+        if target in TERMINAL_STAGES and hasattr(deal, "closed_at"):
             deal.closed_at = datetime.now(UTC)
-        await self.db.flush()
-        await self.db.refresh(deal)
-        return deal
+            await self.repo.cancel_pending_reminders(deal_id, user_id)
+        return await self.repo.save(deal)
 
     async def qualify_deal_intake(
             self,
@@ -154,7 +124,4 @@ class DealsService:
             inquiry_text=intake.inquiry_text,
             user_can_use_ai=True,  # TODO: get from subscriptions
         )
-
-
-
 
