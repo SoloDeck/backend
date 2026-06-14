@@ -56,6 +56,10 @@ class BusinessRuleError(DomainError):
     """General business invariant violated."""
 
 
+class RateLimitError(DomainError):
+    """Too many requests from the same caller within a short window (HTTP 429)."""
+
+
 class InvalidStateTransitionError(BusinessRuleError):
     """Entity is in a state that does not permit the requested transition."""
 

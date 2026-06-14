@@ -20,3 +20,16 @@ class DealResponse(BaseModel):
     notes: str | None
     created_at: datetime
     updated_at: datetime
+
+
+class PublicIntakeResponse(BaseModel):
+    """Minimal confirmation returned to an unauthenticated intake submitter.
+
+    Deliberately excludes owner identity and pipeline internals.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    submitted_at: datetime
+    message: str = "Thank you — your inquiry has been received."

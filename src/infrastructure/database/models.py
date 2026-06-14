@@ -175,11 +175,19 @@ class UserModel(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     zalo_oa_access_token: Mapped[str | None] = mapped_column(Text, nullable=True)
     zalo_oa_refresh_token: Mapped[str | None] = mapped_column(Text, nullable=True)
 
+    # Public intake form — hard-to-guess token the client uses to self-submit a lead
+    # (POST /api/v1/intake/{share_token}). Generated at registration. Nullable so
+    # pre-existing rows stay valid; the UNIQUE constraint permits multiple NULLs in PG.
+    intake_share_token: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
     subscription: Mapped["SubscriptionModel | None"] = relationship(
         "SubscriptionModel", back_populates="user", foreign_keys="SubscriptionModel.user_id"
     )
 
-    __table_args__ = (Index("idx_users_status_deleted", "status", "deleted_at"),)
+    __table_args__ = (
+        Index("idx_users_status_deleted", "status", "deleted_at"),
+        UniqueConstraint("intake_share_token", name="uq_users_intake_share_token"),
+    )
 
 
 class OAuthIdentityModel(UUIDMixin, Base):
@@ -696,9 +704,12 @@ class InvoiceModel(UUIDMixin, TimestampMixin, Base):
     )
     sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     voided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    share_token: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
     __table_args__ = (
         UniqueConstraint("owner_user_id", "invoice_number", name="uq_invoices_number"),
+        UniqueConstraint("share_token", name="uq_invoices_share_token"),
+        Index("idx_invoices_share_token", "share_token"),
         CheckConstraint(
             "contract_id IS NOT NULL OR deal_id IS NOT NULL", name="chk_invoices_context"
         ),

@@ -14,6 +14,7 @@ class UserResponse(BaseModel):
     status: str
     phone: str | None
     avatar_url: str | None
+    intake_share_token: str | None
     created_at: datetime
 
 
