@@ -1,5 +1,7 @@
 import json
+
 import pytest
+
 from src.ai.lead_qualifier.chain import LeadQualifier
 from src.shared.exceptions.domain import AIOutputParseError
 
@@ -46,6 +48,31 @@ def _make_qualifier(data: dict) -> LeadQualifier:
     q = LeadQualifier()
     q.set_client_for_tests(FakeClient(MockResponse(json.dumps(data))))
     return q
+
+
+# --------------------------------------------------
+# _get_client
+# --------------------------------------------------
+
+
+class TestGetClient:
+    def test_missing_api_key_raises(self, monkeypatch):
+        from src.config.settings import settings
+        monkeypatch.setattr(settings, "gemini_api_key", "")
+        q = LeadQualifier()
+        # Clear existing cached client if any
+        q._client = None
+        with pytest.raises(RuntimeError, match="GEMINI_API_KEY is not set in settings"):
+            q._get_client()
+
+    def test_success_returns_client(self, monkeypatch):
+        from src.config.settings import settings
+        monkeypatch.setattr(settings, "gemini_api_key", "fake-key")
+        q = LeadQualifier()
+        # Clear existing cached client if any
+        q._client = None
+        client = q._get_client()
+        assert client is not None
 
 
 # --------------------------------------------------
