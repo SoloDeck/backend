@@ -2,52 +2,27 @@
 
 import uuid
 from dataclasses import dataclass
+from datetime import date
 from decimal import Decimal
 
-from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.modules.analytics.schemas.response import DashboardResponse
+from src.modules.analytics.infrastructure.repository import AnalyticsRepository
+from src.modules.analytics.schemas.response import AiUsageResponse, DashboardResponse, PipelineStageResponse, RevenueResponse, TopClientResponse, WinRateResponse
 
 
 @dataclass
 class AnalyticsService:
     db: AsyncSession
+    repo: AnalyticsRepository | None = None
+
+    def __post_init__(self) -> None:
+        if self.repo is None:
+            self.repo = AnalyticsRepository(self.db)
 
     async def get_dashboard(self, user_id: uuid.UUID) -> DashboardResponse:
-        from src.infrastructure.database.models import ClientModel, DealModel, InvoiceModel
-
-        total_clients = await self.db.scalar(
-            select(func.count()).select_from(ClientModel).where(
-                ClientModel.owner_user_id == user_id,
-                ClientModel.deleted_at.is_(None),
-            )
-        ) or 0
-
-        active_deals = await self.db.scalar(
-            select(func.count()).select_from(DealModel).where(
-                DealModel.owner_user_id == user_id,
-                DealModel.deleted_at.is_(None),
-                DealModel.stage.notin_(["completed_and_billed", "lost"]),
-            )
-        ) or 0
-
-        total_revenue_raw = await self.db.scalar(
-            select(func.sum(InvoiceModel.total)).where(
-                InvoiceModel.owner_user_id == user_id,
-                InvoiceModel.status == "paid",
-            )
-        )
-        total_revenue = (
-            Decimal(str(total_revenue_raw)) if total_revenue_raw is not None else Decimal("0")
-        )
-
-        pending_invoices = await self.db.scalar(
-            select(func.count()).select_from(InvoiceModel).where(
-                InvoiceModel.owner_user_id == user_id,
-                InvoiceModel.status.in_(["draft", "sent"]),
-            )
-        ) or 0
+        total_clients, active_deals, total_revenue_raw, pending_invoices = await self.repo.dashboard_counts(user_id)
+        total_revenue = Decimal(str(total_revenue_raw))
 
         return DashboardResponse(
             total_clients=total_clients,
@@ -55,3 +30,18 @@ class AnalyticsService:
             total_revenue=total_revenue,
             pending_invoices=pending_invoices,
         )
+
+    async def get_revenue(self, user_id: uuid.UUID, period_type: str | None = None, from_date: date | None = None, to_date: date | None = None) -> RevenueResponse:
+        return RevenueResponse(**await self.repo.revenue(user_id, from_date, to_date))
+
+    async def get_pipeline(self, user_id: uuid.UUID, snapshot_date: date | None = None) -> list[PipelineStageResponse]:
+        return [PipelineStageResponse(**x) for x in await self.repo.pipeline(user_id)]
+
+    async def get_win_rate(self, user_id: uuid.UUID, from_date: date | None = None, to_date: date | None = None) -> WinRateResponse:
+        return WinRateResponse(**await self.repo.win_rate(user_id, from_date, to_date))
+
+    async def get_top_clients(self, user_id: uuid.UUID, limit: int = 10, from_date: date | None = None, to_date: date | None = None, metric: str = "total_collected") -> list[TopClientResponse]:
+        return [TopClientResponse(**x) for x in await self.repo.top_clients(user_id, limit, from_date, to_date, metric)]
+
+    async def get_ai_usage(self, user_id: uuid.UUID, from_date: date | None = None, to_date: date | None = None) -> AiUsageResponse:
+        return AiUsageResponse(**await self.repo.ai_usage(user_id, from_date, to_date))
