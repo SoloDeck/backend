@@ -49,10 +49,12 @@ class Settings(BaseSettings):
     # -----------------------------------------------------------------------
     # Google Services
     # -----------------------------------------------------------------------
-    google_client_id: str = ""
-    google_client_secret: str = ""
-    google_redirect_uri: str = ""
     google_api_key: str = ""  # For Gemini API or other Google services
+    # Per-platform OAuth client IDs — the expected ID token audience is chosen
+    # by the originating client platform (web / android / ios).
+    google_web_client_id: str = ""
+    google_android_client_id: str = ""
+    google_ios_client_id: str = ""
 
     # -----------------------------------------------------------------------
     # OpenAI

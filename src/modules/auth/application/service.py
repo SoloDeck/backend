@@ -2,12 +2,14 @@
 
 import hashlib
 import secrets
-import urllib.parse
 import uuid
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
-import httpx
+from anyio import to_thread
+from google.auth.exceptions import GoogleAuthError
+from google.auth.transport import requests as google_auth_requests
+from google.oauth2 import id_token as google_id_token
 from jose import JWTError, jwt
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -24,6 +26,11 @@ from src.modules.auth.schemas.request import (
 from src.modules.auth.schemas.response import AuthTokenResponse
 from src.shared.exceptions.domain import AlreadyExistsError, AuthenticationError
 from src.shared.security.passwords import hash_password, verify_password
+
+# Reused across requests so the underlying HTTPS session (and Google's cached
+# signing certificates) are kept warm — ID tokens are verified offline against
+# these certs rather than via a per-login tokeninfo round-trip.
+_google_transport_request = google_auth_requests.Request()
 
 
 @dataclass
@@ -193,25 +200,39 @@ class AuthService:
         self.db.add(entry)
         await self.db.flush()
 
+    @staticmethod
+    def _google_audience(platform: str) -> str:
+        """Return the expected ID token audience (client ID) for a platform."""
+        return {
+            "web": settings.google_web_client_id,
+            "android": settings.google_android_client_id,
+            "ios": settings.google_ios_client_id,
+        }[platform]
+
     async def google_auth(self, payload: GoogleAuthRequest) -> AuthTokenResponse:
         from src.infrastructure.database.models import OAuthIdentityModel, UserModel
 
-        async with httpx.AsyncClient() as client:
-            resp = await client.get(
-                f"https://www.googleapis.com/oauth2/v3/tokeninfo?id_token={payload.id_token}"
+        audience = self._google_audience(payload.platform)
+
+        # Offline cryptographic verification against Google's cached public certs.
+        # verify_oauth2_token also enforces the audience and expiry; it is a blocking
+        # call, so run it in a worker thread to avoid stalling the event loop.
+        try:
+            claims = await to_thread.run_sync(
+                google_id_token.verify_oauth2_token,
+                payload.id_token,
+                _google_transport_request,
+                audience,
             )
+        except (ValueError, GoogleAuthError) as err:
+            raise AuthenticationError("Invalid Google token") from err
 
-        if resp.status_code != 200:
-            raise AuthenticationError("Invalid Google token")
+        if claims.get("iss") not in ("accounts.google.com", "https://accounts.google.com"):
+            raise AuthenticationError("Invalid Google token issuer")
 
-        token_info = resp.json()
-        aud = token_info.get("aud", "")
-        if aud != settings.google_client_id:
-            raise AuthenticationError("Google token audience mismatch")
-
-        google_sub = token_info.get("sub")
-        email = token_info.get("email", "")
-        name = token_info.get("name", email)
+        google_sub = claims.get("sub")
+        email = claims.get("email", "")
+        name = claims.get("name", email)
 
         if not google_sub or not email:
             raise AuthenticationError("Incomplete Google token payload")
@@ -298,7 +319,10 @@ class AuthService:
         )
 
     async def request_password_reset(self, payload: PasswordResetRequestBody) -> None:
-        from src.infrastructure.database.models import UserModel, PasswordResetTokenModel
+        from src.infrastructure.database.models import (
+            PasswordResetTokenModel,
+            UserModel,
+        )
         from src.shared.email.smtp import send_email
 
         user = await self.db.scalar(
@@ -327,7 +351,8 @@ class AuthService:
         <p>Xin chào <strong>{user.full_name}</strong>,</p>
         <p>Mã OTP đặt lại mật khẩu của bạn là:</p>
         <h2 style="letter-spacing:6px;">{otp}</h2>
-        <p>Mã có hiệu lực trong <strong>15 phút</strong>. Vui lòng không chia sẻ mã này với bất kỳ ai.</p>
+        <p>Mã có hiệu lực trong <strong>15 phút</strong>.
+        Vui lòng không chia sẻ mã này với bất kỳ ai.</p>
         <p>Nếu bạn không yêu cầu đặt lại mật khẩu, hãy bỏ qua email này.</p>
         """
         plain = (
@@ -368,71 +393,3 @@ class AuthService:
             user.hashed_password = hash_password(payload.new_password)
 
         await self.db.flush()
-
-    @staticmethod
-    def get_google_auth_url() -> str:
-        """Build the Google OAuth 2.0 authorization URL and return it.
-
-        A short-lived signed JWT is used as the ``state`` parameter to prevent
-        CSRF without requiring server-side session storage.
-        """
-        state = jwt.encode(
-            {
-                "type": "oauth_state",
-                "nonce": secrets.token_hex(16),
-                "exp": datetime.now(UTC) + timedelta(minutes=10),
-            },
-            settings.jwt_secret_key,
-            algorithm=settings.jwt_algorithm,
-        )
-        params = {
-            "client_id": settings.google_client_id,
-            "redirect_uri": settings.google_redirect_uri,
-            "response_type": "code",
-            "scope": "openid email profile",
-            "state": state,
-            "access_type": "offline",
-            "prompt": "select_account",
-        }
-        return "https://accounts.google.com/o/oauth2/v2/auth?" + urllib.parse.urlencode(params)
-
-    async def google_oauth_callback(self, code: str, state: str) -> AuthTokenResponse:
-        """Exchange the authorization *code* from Google for application tokens.
-
-        Verifies the ``state`` JWT to guard against CSRF, exchanges the code
-        for a Google ID token, then delegates to the existing ``google_auth``
-        upsert logic.
-        """
-        try:
-            claims = jwt.decode(
-                state,
-                settings.jwt_secret_key,
-                algorithms=[settings.jwt_algorithm],
-            )
-        except JWTError as err:
-            raise AuthenticationError("Invalid or expired OAuth state parameter") from err
-
-        if claims.get("type") != "oauth_state":
-            raise AuthenticationError("Malformed OAuth state parameter")
-
-        async with httpx.AsyncClient() as client:
-            resp = await client.post(
-                "https://oauth2.googleapis.com/token",
-                data={
-                    "client_id": settings.google_client_id,
-                    "client_secret": settings.google_client_secret,
-                    "code": code,
-                    "redirect_uri": settings.google_redirect_uri,
-                    "grant_type": "authorization_code",
-                },
-            )
-
-        if resp.status_code != 200:
-            raise AuthenticationError("Failed to exchange Google authorization code")
-
-        token_data = resp.json()
-        id_token = token_data.get("id_token")
-        if not id_token:
-            raise AuthenticationError("Google token exchange response missing id_token")
-
-        return await self.google_auth(GoogleAuthRequest(id_token=id_token))
