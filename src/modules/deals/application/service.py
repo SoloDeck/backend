@@ -8,10 +8,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.modules.deals.domain.value_objects.deal_stage import DealStage, STAGE_TRANSITIONS, TERMINAL_STAGES
 from src.modules.deals.infrastructure.repository import DealsRepository
-from src.modules.deals.schemas.request import DealRequest, DealStageRequest
+from src.modules.deals.schemas.request import DealRequest, DealStageRequest, PublicIntakeRequest
 from src.shared.exceptions.domain import BusinessRuleError, InvalidStateTransitionError, NotFoundError
+from src.shared.rate_limit import FixedWindowRateLimiter
 
 from src.ai.facade import AIFacade
+
+# Basic per-link guard for the public, unauthenticated intake form. Process-local;
+# a generous window so legitimate submissions are unaffected while a flood of
+# automated posts to a single share link is throttled (returns HTTP 429).
+_public_intake_limiter = FixedWindowRateLimiter(max_requests=20, window_seconds=60)
 
 @dataclass
 class DealsService:
@@ -55,6 +61,47 @@ class DealsService:
             actual_value=payload.actual_value,
             currency=payload.currency,
             notes=payload.notes,
+        )
+
+    async def create_public_intake(self, share_token: str, payload: PublicIntakeRequest):
+        """Capture a lead submitted through the owner's public intake link.
+
+        No authentication: the owner is resolved solely from the hard-to-guess
+        `share_token`. Creates a minimal prospect Client, a `new_lead` Deal (so it
+        surfaces in the owner's pipeline / GET /deals) and a DealIntake holding the
+        raw inquiry for later AI qualification (Package 3 — no scoring here).
+        """
+        # Throttle by the raw token first so both valid and invalid links are
+        # rate-limited (basic abuse guard) before any DB work.
+        _public_intake_limiter.check(share_token)
+
+        owner = await self.repo.get_owner_by_intake_token(share_token)
+        if owner is None:
+            raise NotFoundError("Intake form not found or link is invalid")
+
+        client = await self.repo.create_client(
+            owner_user_id=owner.id,
+            type="individual",
+            name=payload.name,
+            email=payload.email,
+            phone=payload.phone,
+            status="prospect",
+        )
+        await self.repo.create(
+            owner_user_id=owner.id,
+            client_id=client.id,
+            title=f"Intake — {payload.name}",
+            stage="new_lead",
+            source="inbound",
+            currency=owner.currency,
+        )
+        return await self.repo.create_intake(
+            owner_user_id=owner.id,
+            client_id=client.id,
+            inquiry_text=payload.inquiry_text,
+            estimated_budget=payload.estimated_budget,
+            desired_timeline=payload.desired_timeline,
+            source="inbound",
         )
 
     async def list_all(

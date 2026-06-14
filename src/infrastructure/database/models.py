@@ -175,11 +175,19 @@ class UserModel(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     zalo_oa_access_token: Mapped[str | None] = mapped_column(Text, nullable=True)
     zalo_oa_refresh_token: Mapped[str | None] = mapped_column(Text, nullable=True)
 
+    # Public intake form — hard-to-guess token the client uses to self-submit a lead
+    # (POST /api/v1/intake/{share_token}). Generated at registration. Nullable so
+    # pre-existing rows stay valid; the UNIQUE constraint permits multiple NULLs in PG.
+    intake_share_token: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
     subscription: Mapped["SubscriptionModel | None"] = relationship(
         "SubscriptionModel", back_populates="user", foreign_keys="SubscriptionModel.user_id"
     )
 
-    __table_args__ = (Index("idx_users_status_deleted", "status", "deleted_at"),)
+    __table_args__ = (
+        Index("idx_users_status_deleted", "status", "deleted_at"),
+        UniqueConstraint("intake_share_token", name="uq_users_intake_share_token"),
+    )
 
 
 class OAuthIdentityModel(UUIDMixin, Base):

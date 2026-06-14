@@ -117,6 +117,7 @@ class AuthService:
             timezone="Asia/Ho_Chi_Minh",
             notification_channel="email",
             theme="light",
+            intake_share_token=secrets.token_urlsafe(32),
         )
         self.db.add(user)
 
@@ -297,6 +298,7 @@ class AuthService:
             timezone="Asia/Ho_Chi_Minh",
             notification_channel="email",
             theme="light",
+            intake_share_token=secrets.token_urlsafe(32),
         )
         self.db.add(new_user)
         await self.db.flush()

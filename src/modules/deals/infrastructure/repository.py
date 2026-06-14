@@ -4,7 +4,7 @@ import uuid
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.infrastructure.database.models import ClientModel, DealIntakeModel, DealModel, InvoiceModel, ProposalModel, ReminderModel
+from src.infrastructure.database.models import ClientModel, DealIntakeModel, DealModel, InvoiceModel, ProposalModel, ReminderModel, UserModel
 
 
 @dataclass
@@ -13,6 +13,21 @@ class DealsRepository:
 
     async def get_by_id(self, deal_id: uuid.UUID, owner_user_id: uuid.UUID):
         return await self.db.scalar(select(DealModel).where(DealModel.id == deal_id, DealModel.owner_user_id == owner_user_id, DealModel.deleted_at.is_(None)))
+
+    async def get_owner_by_intake_token(self, share_token: str):
+        return await self.db.scalar(select(UserModel).where(UserModel.intake_share_token == share_token, UserModel.status == "active", UserModel.deleted_at.is_(None)))
+
+    async def create_client(self, **values):
+        client = ClientModel(**values)
+        self.db.add(client)
+        await self.db.flush(); await self.db.refresh(client)
+        return client
+
+    async def create_intake(self, **values):
+        intake = DealIntakeModel(**values)
+        self.db.add(intake)
+        await self.db.flush(); await self.db.refresh(intake)
+        return intake
 
     async def get_intake_by_id(self, intake_id: uuid.UUID, owner_user_id: uuid.UUID):
         return await self.db.scalar(select(DealIntakeModel).where(DealIntakeModel.id == intake_id, DealIntakeModel.owner_user_id == owner_user_id, DealIntakeModel.deleted_at.is_(None)))

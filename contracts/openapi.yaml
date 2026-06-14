@@ -9,15 +9,16 @@ info:
     name: SoloDesk Capstone Team – GSU26SE083
     email: solodeskai@gmail.com
   x-contract-verification:
-    verified_on: '2026-06-14'
-    task: 'Phase 6 / 6.1 — reconcile openapi.yaml with live routers'
+    verified_on: '2026-06-15'
+    task: 'Phase 6 — reconcile openapi.yaml with live routers (6.1) + Package 2 implementation (6.2–6.6)'
     lint_status: 'PASS'
     fixes_applied:
       - 'Renamed /deals/{deal_id}/qualify -> /deals/intakes/{intake_id}/qualify to match qualify_deal_intake endpoint.'
       - 'Added POST /users/me/change-password (implemented in router but missing from spec).'
+      - '6.5: /invoices/public/{share_token} implemented; InvoiceResponse exposes share_token.'
+      - '6.6: POST /intake/{share_token} implemented (201/404/422/429); UserResponse exposes intake_share_token; added PublicIntakeRequest/PublicIntakeResponse.'
     intentional_gaps:
-      - 'POST /intake/{share_token}: spec present with security: [] but public_intake router pending task 6.6.'
-      - '/invoices/public/{share_token}: spec present, router pending task 6.5.'
+      - 'None outstanding for Phase 6 Package 2 endpoints.'
 
 servers:
   - url: https://api.solodesk.space/api/v1
@@ -70,6 +71,13 @@ paths:
     post:
       tags: [Public]
       summary: Submit public deal intake
+      description: |
+        Unauthenticated lead capture. The owner is resolved from the hard-to-guess
+        `share_token` (each user has one, surfaced as `intake_share_token` on
+        `GET /users/me`). Creates a minimal prospect client, a `new_lead` deal that
+        appears in the owner's `GET /deals`, and a deal-intake record holding the raw
+        inquiry. No AI scoring at this stage (Package 3). Basic per-link rate limiting
+        applies (HTTP 429 when exceeded).
       security: []
       parameters:
         - name: share_token
@@ -82,23 +90,33 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              additionalProperties: true
+              $ref: '#/components/schemas/PublicIntakeRequest'
       responses:
         '201':
           description: Intake submitted
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ApiResponseBase'
-        '501':
-          description: Public intake creation is implemented in Phase 6.6
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/PublicIntakeResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          description: Request body failed validation (VALIDATION_FAILED)
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiError'
-        '404':
-          $ref: '#/components/responses/NotFound'
+        '429':
+          description: Too many submissions for this link (RATE_LIMITED)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
 
   # -------------------------------------------------------------------------
   # AUTH
@@ -3699,6 +3717,10 @@ components:
           type: string
         phone:
           type: string
+        intake_share_token:
+          type: string
+          nullable: true
+          description: Hard-to-guess token for the user's public intake link (POST /intake/{share_token}).
         professional_profile:
           $ref: '#/components/schemas/ProfessionalProfileDTO'
         preferences:
@@ -3709,6 +3731,48 @@ components:
         updated_at:
           type: string
           format: date-time
+
+    PublicIntakeRequest:
+      type: object
+      required: [name, inquiry_text]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 255
+        email:
+          type: string
+          maxLength: 255
+          nullable: true
+        phone:
+          type: string
+          maxLength: 50
+          nullable: true
+        inquiry_text:
+          type: string
+          minLength: 1
+          maxLength: 5000
+        estimated_budget:
+          type: string
+          maxLength: 255
+          nullable: true
+        desired_timeline:
+          type: string
+          maxLength: 255
+          nullable: true
+
+    PublicIntakeResponse:
+      type: object
+      required: [id, submitted_at, message]
+      properties:
+        id:
+          type: string
+          format: uuid
+        submitted_at:
+          type: string
+          format: date-time
+        message:
+          type: string
 
     UpdateUserRequest:
       type: object
