@@ -696,9 +696,12 @@ class InvoiceModel(UUIDMixin, TimestampMixin, Base):
     )
     sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     voided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    share_token: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
     __table_args__ = (
         UniqueConstraint("owner_user_id", "invoice_number", name="uq_invoices_number"),
+        UniqueConstraint("share_token", name="uq_invoices_share_token"),
+        Index("idx_invoices_share_token", "share_token"),
         CheckConstraint(
             "contract_id IS NOT NULL OR deal_id IS NOT NULL", name="chk_invoices_context"
         ),
