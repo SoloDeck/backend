@@ -21,9 +21,9 @@ class LeadQualifier(BaseAIChain):
         if self._client is not None:
             return self._client
 
-        api_key = settings.google_api_key
+        api_key = settings.gemini_api_key
         if not api_key:
-            raise RuntimeError("GOOGLE_API_KEY is not set in settings")
+            raise RuntimeError("GEMINI_API_KEY is not set in settings")
 
         self._client = genai.Client(api_key=api_key)
         return self._client
@@ -45,7 +45,7 @@ class LeadQualifier(BaseAIChain):
             if text.endswith("```"):
                 text = text.removesuffix("```")
             text = text.strip()
-            
+
             return json.loads(text)
         except json.JSONDecodeError as exc:
             log.error("ai.lead_qualifier.parse_failed", raw=raw, error=str(exc))
@@ -58,7 +58,7 @@ class LeadQualifier(BaseAIChain):
             raise ValueError("inquiry_text is required for LeadQualifier")
 
         client = self._get_client()
-        
+
         prompt_path = os.path.join(
             os.path.dirname(__file__),
             "prompts",
@@ -66,7 +66,7 @@ class LeadQualifier(BaseAIChain):
         )
 
         try:
-            with open(prompt_path, "r", encoding="utf-8") as f:
+            with open(prompt_path, encoding="utf-8") as f:
                 prompt_template = f.read()
         except FileNotFoundError:
             # Fallback if prompts.txt is missing during refactor
@@ -84,7 +84,7 @@ Client Inquiry:
                 model="gemma-4-31b-it",
                 contents=full_prompt,
             )
-            
+
             result = self._parse_output(response.text)
             return result
         except Exception as exc:
