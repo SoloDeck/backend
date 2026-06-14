@@ -3508,8 +3508,6 @@ components:
           type: integer
           description: Access token TTL in seconds
           examples: 900
-        user:
-          $ref: '#/components/schemas/UserResponse'
 
     PasswordResetRequestBody:
       type: object
