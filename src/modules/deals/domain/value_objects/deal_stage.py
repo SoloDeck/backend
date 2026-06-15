@@ -16,9 +16,7 @@ STAGE_TRANSITIONS: dict[DealStage, frozenset[DealStage]] = {
     DealStage.NEW_LEAD: frozenset({DealStage.QUALIFIED, DealStage.LOST}),
     DealStage.QUALIFIED: frozenset({DealStage.PROPOSAL_SENT, DealStage.LOST}),
     DealStage.PROPOSAL_SENT: frozenset({DealStage.IN_NEGOTIATION, DealStage.LOST}),
-    DealStage.IN_NEGOTIATION: frozenset(
-        {DealStage.PROPOSAL_SENT, DealStage.ACTIVE, DealStage.LOST}
-    ),
+    DealStage.IN_NEGOTIATION: frozenset({DealStage.ACTIVE, DealStage.LOST}),
     DealStage.ACTIVE: frozenset({DealStage.COMPLETED_AND_BILLED, DealStage.LOST}),
     DealStage.COMPLETED_AND_BILLED: frozenset(),
     DealStage.LOST: frozenset(),

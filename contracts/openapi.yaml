@@ -8,6 +8,17 @@ info:
   contact:
     name: SoloDesk Capstone Team – GSU26SE083
     email: solodeskai@gmail.com
+  x-contract-verification:
+    verified_on: '2026-06-15'
+    task: 'Phase 6 — reconcile openapi.yaml with live routers (6.1) + Package 2 implementation (6.2–6.6)'
+    lint_status: 'PASS'
+    fixes_applied:
+      - 'Renamed /deals/{deal_id}/qualify -> /deals/intakes/{intake_id}/qualify to match qualify_deal_intake endpoint.'
+      - 'Added POST /users/me/change-password (implemented in router but missing from spec).'
+      - '6.5: /invoices/public/{share_token} implemented; InvoiceResponse exposes share_token.'
+      - '6.6: POST /intake/{share_token} implemented (201/404/422/429); UserResponse exposes intake_share_token; added PublicIntakeRequest/PublicIntakeResponse.'
+    intentional_gaps:
+      - 'None outstanding for Phase 6 Package 2 endpoints.'
 
 servers:
   - url: https://api.solodesk.space/api/v1
@@ -54,6 +65,58 @@ tags:
 # PATHS
 # ===========================================================================
 paths:
+
+
+  /intake/{share_token}:
+    post:
+      tags: [Public]
+      summary: Submit public deal intake
+      description: |
+        Unauthenticated lead capture. The owner is resolved from the hard-to-guess
+        `share_token` (each user has one, surfaced as `intake_share_token` on
+        `GET /users/me`). Creates a minimal prospect client, a `new_lead` deal that
+        appears in the owner's `GET /deals`, and a deal-intake record holding the raw
+        inquiry. No AI scoring at this stage (Package 3). Basic per-link rate limiting
+        applies (HTTP 429 when exceeded).
+      security: []
+      parameters:
+        - name: share_token
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PublicIntakeRequest'
+      responses:
+        '201':
+          description: Intake submitted
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/PublicIntakeResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          description: Request body failed validation (VALIDATION_FAILED)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '429':
+          description: Too many submissions for this link (RATE_LIMITED)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
 
   # -------------------------------------------------------------------------
   # AUTH
@@ -392,6 +455,33 @@ paths:
                       data:
                         $ref: '#/components/schemas/UserResponse'
 
+  /users/me/change-password:
+    post:
+      tags: [Users]
+      summary: Change current user password
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChangePasswordRequest'
+      responses:
+        '200':
+          description: Password changed
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/MessageResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
   # -------------------------------------------------------------------------
   # SUBSCRIPTIONS
   # -------------------------------------------------------------------------
@@ -681,7 +771,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
-  /clients/{client_id}/communication-logs:
+  /clients/{client_id}/comm-logs:
     parameters:
       - $ref: '#/components/parameters/ClientId'
     get:
@@ -818,7 +908,7 @@ paths:
       summary: Create a deal
       description: |
         `client_id` is immutable after creation. The deal starts in `stage=new_lead`.
-        Use `/deals/{id}/stage-transition` to advance the pipeline stage.
+        Use `/deals/{id}/stage` to advance the pipeline stage.
       requestBody:
         required: true
         content:
@@ -898,7 +988,7 @@ paths:
         '204':
           description: Deal deleted
 
-  /deals/{deal_id}/stage-transition:
+  /deals/{deal_id}/stage:
     parameters:
       - $ref: '#/components/parameters/DealId'
     post:
@@ -937,19 +1027,24 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
 
-  /deals/{deal_id}/qualify:
+  /deals/intakes/{intake_id}/qualify:
     parameters:
-      - $ref: '#/components/parameters/DealId'
+      - name: intake_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
     post:
       tags: [Deals]
-      summary: Trigger AI lead qualification for a deal
+      summary: Trigger AI lead qualification for a deal intake
       description: |
-        Requires an active AI-enabled subscription (returns 402 otherwise). Stores the
-        qualification `score` and `recommendation` on the deal record. The result is
-        informational — it does not trigger an automatic stage change.
+        Runs AI lead qualification against a submitted deal intake identified by
+        intake_id. Requires an active AI-enabled subscription (returns 402 otherwise).
+        The result is informational — it does not trigger an automatic stage change.
       responses:
         '200':
-          description: Qualification result applied to deal
+          description: Qualification result for the intake
           content:
             application/json:
               schema:
@@ -2272,7 +2367,7 @@ paths:
                   - type: object
                     properties:
                       data:
-                        $ref: '#/components/schemas/DashboardSummaryResponse'
+                        $ref: '#/components/schemas/DashboardResponse'
 
   /analytics/revenue:
     get:
@@ -2282,18 +2377,18 @@ paths:
       parameters:
         - name: period_type
           in: query
-          required: true
+          required: false
           schema:
             $ref: '#/components/schemas/PeriodType'
         - name: from_date
           in: query
-          required: true
+          required: false
           schema:
             type: string
             format: date
         - name: to_date
           in: query
-          required: true
+          required: false
           schema:
             type: string
             format: date
@@ -2308,7 +2403,7 @@ paths:
                   - type: object
                     properties:
                       data:
-                        $ref: '#/components/schemas/RevenueMetricsResponse'
+                        $ref: '#/components/schemas/RevenueResponse'
 
   /analytics/pipeline:
     get:
@@ -2332,7 +2427,9 @@ paths:
                   - type: object
                     properties:
                       data:
-                        $ref: '#/components/schemas/PipelineMetricsResponse'
+                        type: array
+                        items:
+                            $ref: '#/components/schemas/PipelineStageResponse'
 
   /analytics/win-rate:
     get:
@@ -2402,7 +2499,9 @@ paths:
                   - type: object
                     properties:
                       data:
-                        $ref: '#/components/schemas/TopClientsResponse'
+                        type: array
+                        items:
+                            $ref: '#/components/schemas/TopClientResponse'
 
   /analytics/ai-usage:
     get:
@@ -2431,7 +2530,7 @@ paths:
                   - type: object
                     properties:
                       data:
-                        $ref: '#/components/schemas/AIUsageMetricsResponse'
+                        $ref: '#/components/schemas/AiUsageResponse'
 
   # -------------------------------------------------------------------------
   # AI
@@ -3618,6 +3717,10 @@ components:
           type: string
         phone:
           type: string
+        intake_share_token:
+          type: string
+          nullable: true
+          description: Hard-to-guess token for the user's public intake link (POST /intake/{share_token}).
         professional_profile:
           $ref: '#/components/schemas/ProfessionalProfileDTO'
         preferences:
@@ -3628,6 +3731,48 @@ components:
         updated_at:
           type: string
           format: date-time
+
+    PublicIntakeRequest:
+      type: object
+      required: [name, inquiry_text]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 255
+        email:
+          type: string
+          maxLength: 255
+          nullable: true
+        phone:
+          type: string
+          maxLength: 50
+          nullable: true
+        inquiry_text:
+          type: string
+          minLength: 1
+          maxLength: 5000
+        estimated_budget:
+          type: string
+          maxLength: 255
+          nullable: true
+        desired_timeline:
+          type: string
+          maxLength: 255
+          nullable: true
+
+    PublicIntakeResponse:
+      type: object
+      required: [id, submitted_at, message]
+      properties:
+        id:
+          type: string
+          format: uuid
+        submitted_at:
+          type: string
+          format: date-time
+        message:
+          type: string
 
     UpdateUserRequest:
       type: object
@@ -3650,6 +3795,22 @@ components:
 
     UpdatePreferencesRequest:
       $ref: '#/components/schemas/PreferencesDTO'
+
+    ChangePasswordRequest:
+      type: object
+      required: [current_password, new_password]
+      properties:
+        current_password:
+          type: string
+        new_password:
+          type: string
+
+    MessageResponse:
+      type: object
+      required: [detail]
+      properties:
+        detail:
+          type: string
 
     # --- Subscriptions ---
     SubscriptionPlanResponse:
@@ -4580,7 +4741,7 @@ components:
 
     CreateInvoiceRequest:
       type: object
-      required: [client_id, issue_date, due_date, line_items]
+      required: [client_id, due_date]
       properties:
         client_id:
           type: string
@@ -4600,6 +4761,10 @@ components:
         currency:
           type: string
           default: VND
+        subtotal:
+          type: number
+          format: decimal
+          description: Required when line_items is omitted; otherwise computed from line_items.
         tax_rate:
           type: number
           format: decimal
@@ -4609,6 +4774,7 @@ components:
         line_items:
           type: array
           minItems: 1
+          description: Optional when subtotal is supplied; used to compute subtotal when present.
           items:
             type: object
             required: [description, quantity, unit_price]
@@ -4627,6 +4793,9 @@ components:
     UpdateInvoiceRequest:
       type: object
       properties:
+        subtotal:
+          type: number
+          format: decimal
         due_date:
           type: string
           format: date
@@ -4638,6 +4807,7 @@ components:
         line_items:
           type: array
           minItems: 1
+          description: Optional when subtotal is supplied; used to compute subtotal when present.
           items:
             type: object
             properties:
@@ -4985,6 +5155,70 @@ components:
           $ref: '#/components/schemas/NotificationChannel'
 
     # --- Analytics ---
+
+    RevenueResponse:
+      type: object
+      required: [total_invoiced, total_collected, total_outstanding]
+      properties:
+        total_invoiced:
+          type: number
+          format: decimal
+        total_collected:
+          type: number
+          format: decimal
+        total_outstanding:
+          type: number
+          format: decimal
+
+    PipelineStageResponse:
+      type: object
+      required: [stage, deal_count, total_value]
+      properties:
+        stage:
+          $ref: '#/components/schemas/DealStage'
+        deal_count:
+          type: integer
+        total_value:
+          type: number
+          format: decimal
+
+    TopClientResponse:
+      type: object
+      required: [client_id, name, revenue]
+      properties:
+        client_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        revenue:
+          type: number
+          format: decimal
+
+    AiUsageResponse:
+      type: object
+      required: [generations_used, estimated_cost_usd]
+      properties:
+        generations_used:
+          type: integer
+        estimated_cost_usd:
+          type: number
+          format: decimal
+
+    DashboardResponse:
+      type: object
+      required: [total_clients, active_deals, total_revenue, pending_invoices]
+      properties:
+        total_clients:
+          type: integer
+        active_deals:
+          type: integer
+        total_revenue:
+          type: number
+          format: decimal
+        pending_invoices:
+          type: integer
+
     DashboardSummaryResponse:
       type: object
       required: [active_deal_count, total_pipeline_value, monthly_revenue_collected, overdue_invoice_count, win_rate, currency]
@@ -5064,18 +5298,16 @@ components:
 
     WinRateResponse:
       type: object
-      required: [win_rate, deals_won, deals_lost, total_closed]
+      required: [won, lost, win_rate]
       properties:
+        won:
+          type: integer
+        lost:
+          type: integer
         win_rate:
           type: number
           format: decimal
           description: Ratio 0.0–1.0
-        deals_won:
-          type: integer
-        deals_lost:
-          type: integer
-        total_closed:
-          type: integer
         funnel_conversion:
           type: array
           items:
