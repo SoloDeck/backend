@@ -40,7 +40,7 @@ dependencies = [
     "tenacity>=9.0",
     # Env
     "python-dotenv>=1.0",
-    "google-auth[requests]>=2.53.0",
+    "google-auth[requests]>=2.54.0",
 ]
 
 [project.optional-dependencies]
