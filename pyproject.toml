@@ -9,7 +9,7 @@ description = "AI-powered CRM and deal management platform for Vietnamese freela
 requires-python = ">=3.13"
 dependencies = [
     # Web framework
-    "fastapi[standard]>=0.115",
+    "fastapi[standard]>=0.137.1",
     "uvicorn[standard]>=0.34",
     # Database
     "sqlalchemy[asyncio]>=2.0.50",
