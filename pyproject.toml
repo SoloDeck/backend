@@ -21,7 +21,7 @@ dependencies = [
     "pydantic-extra-types>=2.10",
     # Auth
     "python-jose[cryptography]>=3.3",
-    "pwdlib[argon2]>=0.2",
+    "pwdlib[argon2]>=0.3.0",
     "python-multipart>=0.0.20",
     # Cache / Queue
     "redis[hiredis]>=5.2",
