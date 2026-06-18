@@ -22,11 +22,12 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     func,
+    select,
     text,
 )
 from sqlalchemy.dialects.postgresql import ARRAY, INET, JSONB, UUID
 from sqlalchemy.dialects.postgresql import ENUM as PgEnum  # noqa: N811
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, column_property, mapped_column, relationship
 
 from src.infrastructure.database.base import Base, SoftDeleteMixin, TimestampMixin, UUIDMixin
 
@@ -174,11 +175,19 @@ class UserModel(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     zalo_oa_access_token: Mapped[str | None] = mapped_column(Text, nullable=True)
     zalo_oa_refresh_token: Mapped[str | None] = mapped_column(Text, nullable=True)
 
+    # Public intake form — hard-to-guess token the client uses to self-submit a lead
+    # (POST /api/v1/intake/{share_token}). Generated at registration. Nullable so
+    # pre-existing rows stay valid; the UNIQUE constraint permits multiple NULLs in PG.
+    intake_share_token: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
     subscription: Mapped["SubscriptionModel | None"] = relationship(
         "SubscriptionModel", back_populates="user", foreign_keys="SubscriptionModel.user_id"
     )
 
-    __table_args__ = (Index("idx_users_status_deleted", "status", "deleted_at"),)
+    __table_args__ = (
+        Index("idx_users_status_deleted", "status", "deleted_at"),
+        UniqueConstraint("intake_share_token", name="uq_users_intake_share_token"),
+    )
 
 
 class OAuthIdentityModel(UUIDMixin, Base):
@@ -458,6 +467,64 @@ class DealModel(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     )
 
 
+# Computed column — must be defined after DealModel so both sides of the FK exist.
+ClientModel.deal_count = column_property(
+    select(func.count(DealModel.id))
+    .where(DealModel.client_id == ClientModel.id)
+    .where(DealModel.deleted_at.is_(None))
+    .correlate_except(DealModel)
+    .scalar_subquery()
+)
+
+
+class DealIntakeModel(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
+    __tablename__ = "deal_intakes"
+
+    owner_user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id"),
+        nullable=False,
+    )
+
+    client_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("clients.id"),
+        nullable=False,
+    )
+
+    inquiry_text: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+    )
+
+    estimated_budget: Mapped[str | None] = mapped_column(
+        String(255),
+        nullable=True,
+    )
+
+    desired_timeline: Mapped[str | None] = mapped_column(
+        String(255),
+        nullable=True,
+    )
+
+    source: Mapped[str | None] = mapped_column(
+        _deal_source,
+        nullable=True,
+    )
+
+    submitted_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        Index("idx_deal_intakes_owner", "owner_user_id"),
+        Index("idx_deal_intakes_client", "client_id"),
+        Index("idx_deal_intakes_submitted", "submitted_at"),
+        Index("idx_deal_intakes_owner_deleted", "owner_user_id", "deleted_at"),
+    )
+
 class DealActivityEntryModel(UUIDMixin, Base):
     __tablename__ = "deal_activity_entries"
 
@@ -637,9 +704,12 @@ class InvoiceModel(UUIDMixin, TimestampMixin, Base):
     )
     sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     voided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    share_token: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
     __table_args__ = (
         UniqueConstraint("owner_user_id", "invoice_number", name="uq_invoices_number"),
+        UniqueConstraint("share_token", name="uq_invoices_share_token"),
+        Index("idx_invoices_share_token", "share_token"),
         CheckConstraint(
             "contract_id IS NOT NULL OR deal_id IS NOT NULL", name="chk_invoices_context"
         ),

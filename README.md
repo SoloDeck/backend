@@ -134,6 +134,7 @@ Client  ──→  Deal  ──→  Proposal  ──→  Contract  ──→  In
 - Python 3.13
 - Docker & Docker Compose v2
 - `make` (standard on macOS/Linux)
+- Optional but recommended for local Python workflows: [`uv`](https://docs.astral.sh/uv/)
 
 ### 1. Clone and enter the project
 
@@ -163,11 +164,53 @@ All other variables have sensible defaults for local development.
 
 ### 3. Install Python dependencies (optional — Docker handles this too)
 
+You can use either the standard `pip3 + venv` workflow or the faster `uv` workflow.
+The backend already includes `pyproject.toml` and `uv.lock`, so both options install
+the same project dependencies.
+
+If you choose `uv`, install it once, then open a new terminal and verify it with
+`uv --version`.
+
+| Platform | Install `uv` |
+|---|---|
+| macOS with Homebrew | `brew install uv` |
+| macOS/Linux install script | `curl -LsSf https://astral.sh/uv/install.sh \| sh` | 
+| Windows PowerShell | `powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 \| iex"` |
+| Windows with WinGet | `winget install --id=astral-sh.uv -e` | 
+
+Version check `uv --version` 
+
+| Step | `pip3 + venv` | `uv` | Requires / Notes |
+|---|---|---|---|
+| Tool model | Built-in `venv` + `pip`. | Astral `uv` package manager. | `uv` is faster and lockfile-aware; `pip3 + venv` is the standard Python baseline. |
+| Create/install environment | <pre><code>python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -U pip
+python -m pip install -e ".[dev]"</code></pre> | <pre><code>uv sync --extra dev</code></pre> | Run from `backend/`. `uv` install command depends on OS; see platform table above. |
+| New terminal session | <pre><code>source .venv/bin/activate</code></pre> | <pre><code>uv run ...</code></pre> | With `pip3 + venv`, activate every new shell. With `uv`, activation is optional when using `uv run`. |
+| Verify environment | <pre><code>python -c "import sqlalchemy; print(sqlalchemy.__version__)"</code></pre> | <pre><code>uv run python -c "import sqlalchemy; print(sqlalchemy.__version__)"</code></pre> | Confirms dependencies are installed in the active project environment. |
+
+If your system Python is older than 3.13, `uv` can install and pin Python 3.13 for
+this project:
+
 ```bash
-python -m venv .venv
-source .venv/bin/activate   # Windows: .venv\Scripts\activate
-make install
+uv python install 3.13
+uv sync --extra dev
 ```
+
+#### Common local commands
+
+| Step | `pip3 + venv` | `uv` | Requires / Notes |
+|---|---|---|---|
+| Install dependencies | `python -m pip install -e ".[dev]"` | `uv sync --extra dev` | Run after cloning or when `pyproject.toml` / `uv.lock` changes. |
+| Run API locally | `python -m uvicorn src.main:app --reload` | `uv run uvicorn src.main:app --reload` | Requires `.env` and local infrastructure if not using Docker app service. |
+| Run unit tests | `python -m pytest tests/unit -v` | `uv run pytest tests/unit -v` | Unit tests should not require PostgreSQL. If `conftest.py` initializes DB, use `SKIP_DB_INIT=1`. |
+| Run one test file | `python -m pytest tests/unit/modules/deals/test_service.py -v` | `uv run pytest tests/unit/modules/deals/test_service.py -v` | Useful for focused debugging. |
+| Run migrations locally | `alembic upgrade head` | `uv run alembic upgrade head` | Requires `DATABASE_URL` and a reachable PostgreSQL database. |
+| Seed locally | `python scripts/seed.py` | `uv run python scripts/seed.py` | Requires migrated database. |
+| Lint | `ruff check src tests` | `uv run ruff check src tests` | No database required. |
+| Format | `black src tests && ruff check --fix src tests` | `uv run black src tests && uv run ruff check --fix src tests` | Mutates files. Review diff before commit. |
+| Type-check | `mypy src` | `uv run mypy src` | No database required. |
 
 ---
 
@@ -233,22 +276,29 @@ connected to the running `db` service.
 
 ### Running without Docker
 
-```bash
-# Start only infrastructure
-docker compose up -d db redis
+| Step | `pip3 + venv` / Makefile | `uv` | Requires / Notes |
+|---|---|---|---|
+| Start only infrastructure | `docker compose up -d db redis` | `docker compose up -d db redis` | Docker is still used for PostgreSQL and Redis. |
+| Apply migrations locally | `make migrate` | `uv run alembic upgrade head` | Requires `DATABASE_URL` in `.env` or environment. |
+| Seed default data | `make seed` | `uv run python scripts/seed.py` | Run after migrations. |
+| Run API locally with hot-reload | `make dev` | `uv run uvicorn src.main:app --reload --host 0.0.0.0 --port 8000` | Requires dependencies installed and `.env` configured. |
+| Run Celery worker locally | `make worker-dev` | `uv run celery -A src.infrastructure.celery.app.celery_app worker --loglevel=debug` | Requires Redis and app settings. |
 
-# Apply migrations locally (requires DATABASE_URL in .env or environment)
-make migrate
+### Docker and CI/CD dependency workflow
 
-# Seed default data
-make seed
+Docker and CI/CD now use `uv` as the active dependency installer. Runtime containers
+still execute normal Python entrypoints (`uvicorn`, `celery`); `uv` is only required
+during build/test installation.
 
-# Run API locally with hot-reload
-make dev
-
-# Run Celery worker locally
-make worker-dev
-```
+| Step | Previous `pip` workflow | Active `uv` workflow | Requires / Notes |
+|---|---|---|---|
+| Production Docker dependency install | `pip install --no-cache-dir --prefix=/install --ignore-installed .` | `uv sync --frozen --no-dev` in the Dockerfile builder stage. | Uses committed `uv.lock`; fails if lockfile is stale. |
+| Runtime image packages | Copy `/install` from the pip builder stage. | Copy `/opt/venv` from the uv builder stage and set `PATH=/opt/venv/bin:$PATH`. | Runtime commands remain `uvicorn` / `celery`; no dev dependencies. |
+| Test Docker dependency install | `pip install --no-cache-dir ".[dev]"` | `uv sync --frozen --extra dev` in the Dockerfile `test` stage. | Includes pytest, ruff, mypy, httpx, etc. |
+| Local Docker stack | `make up`, `make test`, `make test-unit`, `make test-integration`. | Same commands. Docker builds now install dependencies through `uv`. | User-facing Makefile commands do not change. |
+| GitHub Actions / CI setup | `pip install ".[dev]"`, then `pytest`. | `ghcr.io/astral-sh/uv:0.11.21-python3.13-bookworm-slim`, `uv sync --frozen --extra dev`, then `uv run pytest ...`. | CI unit and integration jobs use the uv container image. |
+| Dependabot | `package-ecosystem: pip` | `package-ecosystem: uv` | Dependency updates target `uv.lock`. |
+| Deploy/runtime command | `uvicorn src.main:app --host 0.0.0.0 --port ${PORT}` | Same. | Deploy flow pulls built images; uv does not change runtime command syntax. |
 
 ---
 
@@ -368,6 +418,24 @@ pytest tests/unit/modules/deals/test_service.py -v
 
 # Run a specific test by name
 pytest -k "test_stage_transition" -v
+```
+
+For local non-Docker test runs, use the command style that matches your environment:
+
+| Step | `pip3 + venv` | `uv` | Requires / Notes |
+|---|---|---|---|
+| Run all tests | `python -m pytest tests/ -v` | `uv run pytest tests/ -v` | Requires dependencies; integration tests require PostgreSQL. |
+| Run unit tests only | `python -m pytest tests/unit/ -v` | `uv run pytest tests/unit/ -v` | Use `SKIP_DB_INIT=1` if you want to avoid DB setup during import. |
+| Run integration tests only | `python -m pytest tests/integration/ -v` | `uv run pytest tests/integration/ -v` | Requires PostgreSQL and migrations. |
+| Stop on first failure | `python -m pytest tests/ -x -q` | `uv run pytest tests/ -x -q` | Fast feedback while debugging. |
+| Run one test file | `python -m pytest tests/unit/modules/deals/test_service.py -v` | `uv run pytest tests/unit/modules/deals/test_service.py -v` | Replace path with the file you are working on. |
+
+Integration tests require PostgreSQL. Start the database first and make sure
+`TEST_DATABASE_URL` points at the test database if you are not using the default:
+
+```bash
+docker compose up -d db
+export TEST_DATABASE_URL="postgresql+asyncpg://solodesk:solodesk@localhost:5432/solodesk_test"
 ```
 
 Test coverage must stay above **80%**. The CI gate enforces this via `--cov-fail-under=80`.

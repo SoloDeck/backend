@@ -9,8 +9,13 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from src.config.settings import settings
 from src.modules.auth.application.service import AuthService
-from src.modules.auth.schemas.request import LoginRequest, RegisterRequest
+from src.modules.auth.schemas.request import (
+    GoogleAuthRequest,
+    LoginRequest,
+    RegisterRequest,
+)
 from src.shared.exceptions.domain import AlreadyExistsError, AuthenticationError
 from src.shared.security.passwords import hash_password
 
@@ -128,6 +133,135 @@ class TestLogin:
         with pytest.raises(AuthenticationError) as exc_info:
             await service.login(LoginRequest(email=user.email, password="Test@1234!"))
         assert "suspended" in exc_info.value.message.lower()
+
+
+# ---------------------------------------------------------------------------
+# TestGoogleAuth
+# ---------------------------------------------------------------------------
+
+from unittest.mock import patch as _patch  # noqa: E402
+
+_VERIFY = "src.modules.auth.application.service.google_id_token.verify_oauth2_token"
+_WEB_AUD = "web-test-id.apps.googleusercontent.com"
+_ANDROID_AUD = "android-test-id.apps.googleusercontent.com"
+_IOS_AUD = "ios-test-id.apps.googleusercontent.com"
+_VALID_CLAIMS = {
+    "iss": "accounts.google.com",
+    "aud": _WEB_AUD,
+    "sub": "google-sub-123",
+    "email": "g@example.com",
+    "name": "G User",
+}
+
+
+def _identity() -> SimpleNamespace:
+    return SimpleNamespace(
+        user_id=uuid.uuid4(), provider="google", provider_sub="google-sub-123"
+    )
+
+
+class TestGoogleAuth:
+    @pytest.fixture(autouse=True)
+    def _configure_audiences(self):
+        with (
+            _patch.object(settings, "google_web_client_id", _WEB_AUD),
+            _patch.object(settings, "google_android_client_id", _ANDROID_AUD),
+            _patch.object(settings, "google_ios_client_id", _IOS_AUD),
+        ):
+            yield
+
+    @_patch(_VERIFY)
+    async def test_offline_verification_is_used(self, mock_verify: MagicMock) -> None:
+        """Happy path runs through offline cert verification — no tokeninfo HTTP call."""
+        mock_verify.return_value = dict(_VALID_CLAIMS)
+        db = _mock_db([_identity(), _make_user(), None])
+        service = AuthService(db=db)
+        result = await service.google_auth(
+            GoogleAuthRequest(id_token="tok", platform="web")
+        )
+        assert result.access_token
+        mock_verify.assert_called_once()
+
+    @_patch(_VERIFY)
+    async def test_audience_accepts_web_or_native_client_id(
+        self, mock_verify: MagicMock
+    ) -> None:
+        # Each platform accepts the web/server client id; mobile additionally
+        # accepts its native client id (in case serverClientId is not set).
+        accepted = [
+            ("web", _WEB_AUD),
+            ("android", _WEB_AUD),
+            ("android", _ANDROID_AUD),
+            ("ios", _WEB_AUD),
+            ("ios", _IOS_AUD),
+        ]
+        for platform, aud in accepted:
+            mock_verify.reset_mock()
+            mock_verify.return_value = {**_VALID_CLAIMS, "aud": aud}
+            db = _mock_db([_identity(), _make_user(), None])
+            result = await AuthService(db=db).google_auth(
+                GoogleAuthRequest(id_token="tok", platform=platform)
+            )
+            assert result.access_token, (platform, aud)
+
+    @_patch(_VERIFY)
+    async def test_audience_rejects_foreign_client_id(
+        self, mock_verify: MagicMock
+    ) -> None:
+        mock_verify.return_value = {**_VALID_CLAIMS, "aud": "attacker.apps.googleusercontent.com"}
+        with pytest.raises(AuthenticationError):
+            await AuthService(db=_mock_db([])).google_auth(
+                GoogleAuthRequest(id_token="tok", platform="android")
+            )
+
+    @_patch(_VERIFY)
+    async def test_android_native_aud_rejected_on_ios_platform(
+        self, mock_verify: MagicMock
+    ) -> None:
+        # An android-minted token presented as ios must not pass (cross-platform).
+        mock_verify.return_value = {**_VALID_CLAIMS, "aud": _ANDROID_AUD}
+        with pytest.raises(AuthenticationError):
+            await AuthService(db=_mock_db([])).google_auth(
+                GoogleAuthRequest(id_token="tok", platform="ios")
+            )
+
+    @_patch(_VERIFY)
+    async def test_invalid_token_raises(self, mock_verify: MagicMock) -> None:
+        mock_verify.side_effect = ValueError("bad signature")
+        service = AuthService(db=_mock_db([]))
+        with pytest.raises(AuthenticationError):
+            await service.google_auth(GoogleAuthRequest(id_token="bad", platform="web"))
+
+    @_patch(_VERIFY)
+    async def test_wrong_issuer_raises(self, mock_verify: MagicMock) -> None:
+        mock_verify.return_value = {**_VALID_CLAIMS, "iss": "evil.example.com"}
+        service = AuthService(db=_mock_db([]))
+        with pytest.raises(AuthenticationError):
+            await service.google_auth(GoogleAuthRequest(id_token="tok", platform="web"))
+
+    @_patch(_VERIFY)
+    async def test_new_user_created_with_free_plan(self, mock_verify: MagicMock) -> None:
+        mock_verify.return_value = dict(_VALID_CLAIMS)
+        # identity None, email None, free plan, issue_tokens sub
+        db = _mock_db([None, None, _make_plan(), None])
+        service = AuthService(db=db)
+        result = await service.google_auth(
+            GoogleAuthRequest(id_token="tok", platform="ios")
+        )
+        assert result.access_token
+        assert db.add.call_count == 3  # user + identity + subscription
+
+    @_patch(_VERIFY)
+    async def test_existing_email_links_identity(self, mock_verify: MagicMock) -> None:
+        mock_verify.return_value = dict(_VALID_CLAIMS)
+        # identity None, existing email user, issue_tokens sub
+        db = _mock_db([None, _make_user(), None])
+        service = AuthService(db=db)
+        result = await service.google_auth(
+            GoogleAuthRequest(id_token="tok", platform="web")
+        )
+        assert result.access_token
+        assert db.add.call_count == 1  # only the linked identity
 
 
 # ---------------------------------------------------------------------------

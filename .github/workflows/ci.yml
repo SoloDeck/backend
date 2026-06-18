@@ -19,7 +19,7 @@ jobs:
     name: Test / Unit
     runs-on: ubuntu-latest
     container:
-      image: python:3.13-slim
+      image: ghcr.io/astral-sh/uv:0.11.21-python3.13-trixie-slim
     timeout-minutes: 10
     if: >
       (github.event_name == 'pull_request' && github.base_ref == 'main') ||
@@ -32,16 +32,14 @@ jobs:
           ref: ${{ github.head_ref || github.ref }}
 
       - name: Install dependencies
-        run: |
-          pip install hatch
-          pip install ".[dev]"
+        run: uv sync --frozen --extra dev
 
       - name: Run unit tests
         env:
           SKIP_DB_INIT: 1
           SECRET_KEY: ci-test-secret-key-32-chars-min!!
           JWT_SECRET_KEY: ci-test-jwt-key-32-chars-minimum!
-        run: pytest tests/unit -v
+        run: uv run pytest tests/unit -v
 
   # -------------------------------------------------------------------------
   # Phase 2: Integration Tests (With Database & Redis)
@@ -50,7 +48,7 @@ jobs:
     name: Test / Integration
     runs-on: ubuntu-latest
     container:
-      image: python:3.13-slim
+      image: ghcr.io/astral-sh/uv:0.11.21-python3.13-trixie-slim
     services:
       db:
         image: postgres:16-alpine
@@ -72,9 +70,7 @@ jobs:
           ref: ${{ github.head_ref || github.ref }}
 
       - name: Install dependencies
-        run: |
-          pip install hatch
-          pip install ".[dev]"
+        run: uv sync --frozen --extra dev
 
       - name: Run integration tests
         env:
@@ -83,7 +79,7 @@ jobs:
           REDIS_URL: redis://redis:6379/0
           SECRET_KEY: ci-test-secret-key-32-chars-min!!
           JWT_SECRET_KEY: ci-test-jwt-key-32-chars-minimum!
-        run: pytest tests/integration -v
+        run: uv run pytest tests/integration -v
 
   # -------------------------------------------------------------------------
   # Phase 3: Build Image (Only if all tests pass)
@@ -159,14 +155,15 @@ jobs:
           JWT_SECRET_KEY=${{ secrets.JWT_SECRET_KEY }}
           OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}
           SENDGRID_API_KEY=${{ secrets.SENDGRID_API_KEY }}
-          GOOGLE_CLIENT_ID=${{ secrets.GOOGLE_CLIENT_ID }}
-          GOOGLE_CLIENT_SECRET=${{ secrets.GOOGLE_CLIENT_SECRET }}
+          GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}
+          GOOGLE_WEB_CLIENT_ID=${{ vars.GOOGLE_WEB_CLIENT_ID }}
+          GOOGLE_ANDROID_CLIENT_ID=${{ vars.GOOGLE_ANDROID_CLIENT_ID }}
+          GOOGLE_IOS_CLIENT_ID=${{ vars.GOOGLE_IOS_CLIENT_ID }}
           ZALO_OA_ACCESS_TOKEN=${{ secrets.ZALO_OA_ACCESS_TOKEN }}
           STRIPE_SECRET_KEY=${{ secrets.STRIPE_SECRET_KEY }}
           STRIPE_WEBHOOK_SECRET=${{ secrets.STRIPE_WEBHOOK_SECRET }}
           CORS_ORIGINS=${{ vars.CORS_ORIGINS }}
           API_PORT=${{ vars.API_PORT }}
-          GOOGLE_REDIRECT_URI=${{ vars.GOOGLE_REDIRECT_URI }}
           "@ | Out-File -FilePath .env -Encoding utf8
 
       - name: Pull & deploy
@@ -217,14 +214,15 @@ jobs:
           JWT_SECRET_KEY=${{ secrets.JWT_SECRET_KEY }}
           OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}
           SENDGRID_API_KEY=${{ secrets.SENDGRID_API_KEY }}
-          GOOGLE_CLIENT_ID=${{ secrets.GOOGLE_CLIENT_ID }}
-          GOOGLE_CLIENT_SECRET=${{ secrets.GOOGLE_CLIENT_SECRET }}
+          GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}
+          GOOGLE_WEB_CLIENT_ID=${{ vars.GOOGLE_WEB_CLIENT_ID }}
+          GOOGLE_ANDROID_CLIENT_ID=${{ vars.GOOGLE_ANDROID_CLIENT_ID }}
+          GOOGLE_IOS_CLIENT_ID=${{ vars.GOOGLE_IOS_CLIENT_ID }}
           ZALO_OA_ACCESS_TOKEN=${{ secrets.ZALO_OA_ACCESS_TOKEN }}
           STRIPE_SECRET_KEY=${{ secrets.STRIPE_SECRET_KEY }}
           STRIPE_WEBHOOK_SECRET=${{ secrets.STRIPE_WEBHOOK_SECRET }}
           CORS_ORIGINS=${{ vars.CORS_ORIGINS }}
           API_PORT=${{ vars.API_PORT }}
-          GOOGLE_REDIRECT_URI=${{ vars.GOOGLE_REDIRECT_URI }}
           "@ | Out-File -FilePath .env -Encoding utf8
 
       - name: Pull & deploy

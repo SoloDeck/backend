@@ -9,7 +9,7 @@ services:
   # -------------------------------------------------------------------------
   db:
     image: postgres:16-alpine
-    restart: unless-stopped
+    restart: always
     environment:
       POSTGRES_USER: solodesk
       POSTGRES_PASSWORD: solodesk
@@ -23,13 +23,15 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+    networks:
+      - solodesk-network
 
   # -------------------------------------------------------------------------
   # Redis
   # -------------------------------------------------------------------------
   redis:
     image: redis:7-alpine
-    restart: unless-stopped
+    restart: always
     ports:
       - "6379:6379"
     healthcheck:
@@ -37,6 +39,8 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+    networks:
+      - solodesk-network
 
   # -------------------------------------------------------------------------
   # Migrate + seed (one-shot).
@@ -60,18 +64,18 @@ services:
       - ./alembic:/app/alembic
       - ./scripts:/app/scripts
     command: python scripts/bootstrap.py
+    networks:
+      - solodesk-network
 
   # -------------------------------------------------------------------------
   # FastAPI app
   # -------------------------------------------------------------------------
   api:
-    image: ${IMAGE_NAME:-solodesk-backend:local}
+    image: ${REGISTRY:-ghcr.io/solodeck/backend}/solodesk-backend:latest
     build:
       context: .
       target: runtime
-      args:
-        API_PORT: ${API_PORT:-8000}
-    restart: unless-stopped
+    restart: always
     env_file:
       - path: .env
         required: false
@@ -80,8 +84,9 @@ services:
       REDIS_URL: redis://redis:6379/0
       CELERY_BROKER_URL: redis://redis:6379/1
       CELERY_RESULT_BACKEND: redis://redis:6379/2
+      PORT: 8000
     ports:
-      - "${API_PORT:-8000}:8000"
+      - "${API_PORT:-8001}:8000"
     depends_on:
       db:
         condition: service_healthy
@@ -99,16 +104,18 @@ services:
         --host 0.0.0.0
         --port 8000
         --reload
+    networks:
+      - solodesk-network
 
   # -------------------------------------------------------------------------
   # Celery worker
   # -------------------------------------------------------------------------
   worker:
-    image: ${IMAGE_NAME:-solodesk-backend:local}-worker
+    image: ${REGISTRY:-ghcr.io/solodeck/backend}/solodesk-backend-worker:latest
     build:
       context: .
       target: worker
-    restart: unless-stopped
+    restart: always
     env_file:
       - path: .env
         required: false
@@ -127,16 +134,18 @@ services:
     volumes:
       - ./src:/app/src
       - ./contracts:/app/contracts:ro
+    networks:
+      - solodesk-network
 
   # -------------------------------------------------------------------------
   # Celery beat (scheduler)
   # -------------------------------------------------------------------------
   beat:
-    image: ${IMAGE_NAME:-solodesk-backend:local}-beat
+    image: ${REGISTRY:-ghcr.io/solodeck/backend}/solodesk-backend-beat:latest
     build:
       context: .
       target: beat
-    restart: unless-stopped
+    restart: always
     env_file:
       - path: .env
         required: false
@@ -149,16 +158,20 @@ services:
     volumes:
       - ./src:/app/src
       - ./contracts:/app/contracts:ro
+    networks:
+      - solodesk-network
 
   # -------------------------------------------------------------------------
   # Mailpit — local SMTP / email UI
   # -------------------------------------------------------------------------
   mailpit:
     image: axllent/mailpit:latest
-    restart: unless-stopped
+    restart: always
     ports:
       - "1025:1025"   # SMTP
       - "8025:8025"   # Web UI
+    networks:
+      - solodesk-network
 
   # -------------------------------------------------------------------------
   # Test runner — uses dev image (includes pytest, httpx, etc.)
@@ -186,6 +199,8 @@ services:
       - ./contracts:/app/contracts:ro
       - ./pyproject.toml:/app/pyproject.toml:ro
     command: python -m pytest tests/ -v
+    networks:
+      - solodesk-network
 
   # -------------------------------------------------------------------------
   # pgAdmin — local PostgreSQL web UI
@@ -194,7 +209,7 @@ services:
   # -------------------------------------------------------------------------
   pgadmin:
     image: dpage/pgadmin4:latest
-    restart: unless-stopped
+    restart: always
     environment:
       PGADMIN_DEFAULT_EMAIL: admin@solodesk.dev
       PGADMIN_DEFAULT_PASSWORD: admin
@@ -203,7 +218,15 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    networks:
+      - solodesk-network
 
 
 volumes:
   postgres_data:
+
+
+networks:
+  solodesk-network:
+    name: solodesk-network
+    driver: bridge

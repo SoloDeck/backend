@@ -20,6 +20,7 @@ class ClientResponse(BaseModel):
     address_country: str | None
     notes: str | None
     description: str | None
+    deal_count: int = 0
     created_at: datetime
     updated_at: datetime
 

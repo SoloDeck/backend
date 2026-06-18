@@ -14,6 +14,7 @@ from src.shared.exceptions.domain import (
     EntitlementError,
     ForbiddenError,
     NotFoundError,
+    RateLimitError,
 )
 from src.shared.responses.error import ErrorCode, ValidationErrorDetail
 from src.shared.responses.response import ErrorResponse
@@ -91,6 +92,10 @@ def setup_exception_handlers(app: FastAPI) -> None:
     @app.exception_handler(BusinessRuleError)
     async def business_rule(_: Request, exc: BusinessRuleError) -> JSONResponse:
         return _err(409, ErrorCode.BUSINESS_RULE_VIOLATION, exc.message)
+
+    @app.exception_handler(RateLimitError)
+    async def rate_limited(_: Request, exc: RateLimitError) -> JSONResponse:
+        return _err(429, ErrorCode.RATE_LIMITED, exc.message)
 
     @app.exception_handler(AIGenerationError)
     async def ai_error(_: Request, exc: AIGenerationError) -> JSONResponse:

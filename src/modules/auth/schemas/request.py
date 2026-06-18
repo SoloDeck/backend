@@ -1,3 +1,5 @@
+from typing import Literal
+
 from pydantic import BaseModel, EmailStr, field_validator
 
 
@@ -41,3 +43,4 @@ class PasswordResetConfirmRequest(BaseModel):
 
 class GoogleAuthRequest(BaseModel):
     id_token: str
+    platform: Literal["web", "android", "ios"]

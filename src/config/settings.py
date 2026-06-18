@@ -47,11 +47,14 @@ class Settings(BaseSettings):
     jwt_refresh_token_expire_days: int = 30
 
     # -----------------------------------------------------------------------
-    # Google OAuth
+    # Google Services
     # -----------------------------------------------------------------------
-    google_client_id: str = ""
-    google_client_secret: str = ""
-    google_redirect_uri: str = ""
+    gemini_api_key: str = ""  # For Gemini API or other Google services
+    # Per-platform OAuth client IDs — the expected ID token audience is chosen
+    # by the originating client platform (web / android / ios).
+    google_web_client_id: str = ""
+    google_android_client_id: str = ""
+    google_ios_client_id: str = ""
 
     # -----------------------------------------------------------------------
     # OpenAI
@@ -85,7 +88,8 @@ class Settings(BaseSettings):
     smtp_password: str = ""
     smtp_from_email: str = "noreply@solodesk.space"
     smtp_from_name: str = "SoloDesk"
-    smtp_tls: bool = False
+    smtp_tls: bool = False      # True → SMTP_SSL (port 465)
+    smtp_starttls: bool = False  # True → STARTTLS after connect (port 587)
 
     # -----------------------------------------------------------------------
     # CORS

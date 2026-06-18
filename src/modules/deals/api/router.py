@@ -11,6 +11,7 @@ from src.infrastructure.database.session import get_db_session
 from src.modules.deals.application.service import DealsService
 from src.modules.deals.schemas.request import DealRequest, DealStageRequest
 from src.modules.deals.schemas.response import DealResponse
+from src.shared.dependencies.ai import AIFacadeDep
 from src.shared.dependencies.auth import CurrentUserId
 from src.shared.responses.response import ApiResponse
 
@@ -84,3 +85,20 @@ async def transition_stage(
 ) -> ApiResponse[DealResponse]:
     deal = await DealsService(db=db).transition_stage(user_id, deal_id, payload)
     return ApiResponse.ok(DealResponse.model_validate(deal))
+
+@router.post("/intakes/{intake_id}/qualify")
+async def qualify_deal_intake(
+    intake_id: uuid.UUID,
+    user_id: CurrentUserId,
+    db: DBSession,
+    ai: AIFacadeDep,
+):
+    result = await DealsService(
+        db=db,
+        ai_facade=ai,
+    ).qualify_deal_intake(
+        user_id,
+        intake_id,
+    )
+
+    return ApiResponse.ok(result)

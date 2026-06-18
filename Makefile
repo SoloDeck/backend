@@ -11,7 +11,7 @@ help:
 # Setup
 # ---------------------------------------------------------------------------
 install: ## Install all dependencies (including dev)
-	pip install -e ".[dev]"
+	pip3 install -e ".[dev]"
 
 # ---------------------------------------------------------------------------
 # Docker

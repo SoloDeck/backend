@@ -9,10 +9,15 @@ FROM python:3.13-slim AS builder
 
 WORKDIR /build
 
-RUN pip install --no-cache-dir hatch
+COPY --from=ghcr.io/astral-sh/uv:0.11.21 /uv /uvx /usr/local/bin/
 
-COPY pyproject.toml .
-RUN pip install --no-cache-dir --prefix=/install --ignore-installed .
+ENV UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy \
+    UV_PROJECT_ENVIRONMENT=/opt/venv
+
+COPY pyproject.toml uv.lock ./
+COPY src ./src
+RUN uv sync --frozen --no-dev
 
 
 # ---------------------------------------------------------------------------
@@ -22,7 +27,8 @@ FROM python:3.13-slim AS runtime
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PYTHONPATH=/app
+    PYTHONPATH=/app \
+    PATH="/opt/venv/bin:${PATH}"
 
 WORKDIR /app
 
@@ -30,7 +36,7 @@ WORKDIR /app
 RUN addgroup --system appgroup && adduser --system --ingroup appgroup appuser
 
 # Copy installed packages
-COPY --from=builder /install /usr/local
+COPY --from=builder /opt/venv /opt/venv
 
 # Copy source
 COPY src ./src
@@ -72,18 +78,23 @@ CMD ["celery", "-A", "src.infrastructure.celery.app.celery_app", "beat", \
 # Stage 5: dev / test — installs [dev] extras (pytest, httpx, mypy, ruff…)
 # Tests directory is mounted via docker-compose volume, not baked in.
 # ---------------------------------------------------------------------------
-FROM python:3.13-slim AS dev
+FROM python:3.13-slim AS test
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PYTHONPATH=/app
+    PYTHONPATH=/app \
+    UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy \
+    UV_PROJECT_ENVIRONMENT=/opt/venv \
+    PATH="/opt/venv/bin:${PATH}"
 
 WORKDIR /app
 
-RUN pip install --no-cache-dir hatch
+COPY --from=ghcr.io/astral-sh/uv:0.11.21 /uv /uvx /usr/local/bin/
 
-COPY pyproject.toml .
-RUN pip install --no-cache-dir ".[dev]"
+COPY pyproject.toml uv.lock ./
+COPY src ./src
+RUN uv sync --frozen --extra dev
 
 COPY src ./src
 COPY contracts ./contracts

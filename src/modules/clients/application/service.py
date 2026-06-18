@@ -4,35 +4,30 @@ import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.shared.exceptions.domain import NotFoundError
+from src.modules.clients.infrastructure.repository import ClientsRepository
 from src.modules.clients.schemas.request import ClientRequest, CommLogRequest
 
 
 @dataclass
 class ClientsService:
     db: AsyncSession
+    repo: ClientsRepository | None = None
+
+    def __post_init__(self) -> None:
+        if self.repo is None:
+            self.repo = ClientsRepository(self.db)
 
     async def _get_client(self, user_id: uuid.UUID, client_id: uuid.UUID):  # type: ignore[return]
-        from src.infrastructure.database.models import ClientModel
-
-        client = await self.db.scalar(
-            select(ClientModel).where(
-                ClientModel.id == client_id,
-                ClientModel.owner_user_id == user_id,
-                ClientModel.deleted_at.is_(None),
-            )
-        )
+        client = await self.repo.get_by_id(client_id, user_id)
         if client is None:
             raise NotFoundError(f"Client {client_id} not found")
         return client
 
     async def create(self, user_id: uuid.UUID, payload: ClientRequest):  # type: ignore[return]
-        from src.infrastructure.database.models import ClientModel
-
-        client = ClientModel(
+        return await self.repo.create(
             owner_user_id=user_id,
             type=payload.type,
             name=payload.name,
@@ -46,10 +41,6 @@ class ClientsService:
             notes=payload.notes,
             description=payload.description,
         )
-        self.db.add(client)
-        await self.db.flush()
-        await self.db.refresh(client)
-        return client
 
     async def list_all(
         self,
@@ -95,41 +86,24 @@ class ClientsService:
             value = getattr(payload, field, None)
             if value is not None:
                 setattr(client, field, value)
-        await self.db.flush()
-        await self.db.refresh(client)
-        return client
+        return await self.repo.save(client)
 
     async def delete(self, user_id: uuid.UUID, client_id: uuid.UUID) -> None:
         client = await self._get_client(user_id, client_id)
         client.deleted_at = datetime.now(UTC)
-        await self.db.flush()
+        await self.repo.save(client)
 
     async def add_comm_log(self, user_id: uuid.UUID, client_id: uuid.UUID, payload: CommLogRequest):  # type: ignore[return]
-        from src.infrastructure.database.models import ClientCommunicationLogModel
-
         await self._get_client(user_id, client_id)
-        log = ClientCommunicationLogModel(
+        return await self.repo.add_comm_log(
             client_id=client_id,
             owner_user_id=user_id,
             channel=payload.channel,
             summary=payload.summary,
             communicated_at=payload.communicated_at,
         )
-        self.db.add(log)
-        await self.db.flush()
-        await self.db.refresh(log)
-        return log
 
     async def list_comm_logs(self, user_id: uuid.UUID, client_id: uuid.UUID) -> list:
-        from src.infrastructure.database.models import ClientCommunicationLogModel
-
         await self._get_client(user_id, client_id)
-        result = await self.db.execute(
-            select(ClientCommunicationLogModel).where(
-                ClientCommunicationLogModel.client_id == client_id,
-                ClientCommunicationLogModel.owner_user_id == user_id,
-            )
-        )
-        return list(result.scalars().all())
-
+        return await self.repo.list_comm_logs(user_id, client_id)
 

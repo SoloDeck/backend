@@ -10,3 +10,9 @@ class AuthTokenResponse(BaseModel):
 
 class MessageResponse(BaseModel):
     detail: str
+
+
+class ClientConfigResponse(BaseModel):
+    app_env: str
+    google_web_client_id: str
+
