@@ -48,8 +48,33 @@ class ClientsService:
         status: str | None = None,
         name: str | None = None,
         email: str | None = None,
-    ) -> list:
-        return await self.repo.list_all(user_id, status=status, name=name, email=email)
+        page: int = 1,
+        page_size: int = 20,
+    ) -> tuple[list, int]:
+        from sqlalchemy import func, select
+        from src.infrastructure.database.models import ClientModel
+
+        conditions = [
+            ClientModel.owner_user_id == user_id,
+            ClientModel.deleted_at.is_(None),
+        ]
+        if status is not None:
+            conditions.append(ClientModel.status == status)
+        if name is not None:
+            conditions.append(ClientModel.name.ilike(f"%{name}%"))
+        if email is not None:
+            conditions.append(ClientModel.email.ilike(f"%{email}%"))
+
+        total_result = await self.db.execute(
+            select(func.count()).select_from(ClientModel).where(*conditions)
+        )
+        total = total_result.scalar_one()
+
+        offset = (page - 1) * page_size
+        result = await self.db.execute(
+            select(ClientModel).where(*conditions).offset(offset).limit(page_size)
+        )
+        return list(result.scalars().all()), total
 
     async def get_one(self, user_id: uuid.UUID, client_id: uuid.UUID):  # type: ignore[return]
         return await self._get_client(user_id, client_id)
