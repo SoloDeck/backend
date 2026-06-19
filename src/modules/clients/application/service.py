@@ -51,7 +51,7 @@ class ClientsService:
         page: int = 1,
         page_size: int = 20,
     ) -> tuple[list, int]:
-        from sqlalchemy import func
+        from sqlalchemy import func, select
         from src.infrastructure.database.models import ClientModel
 
         conditions = [
