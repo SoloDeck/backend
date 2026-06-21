@@ -14,7 +14,7 @@ info:
     lint_status: 'PASS'
     fixes_applied:
       - 'Renamed /deals/{deal_id}/qualify -> /deals/intakes/{intake_id}/qualify to match qualify_deal_intake endpoint.'
-      - 'Added POST /users/me/change-password (implemented in router but missing from spec).'
+      - 'Added POST /users/me/change-password (implemented in api but missing from spec).'
       - '6.5: /invoices/public/{share_token} implemented; InvoiceResponse exposes share_token.'
       - '6.6: POST /intake/{share_token} implemented (201/404/422/429); UserResponse exposes intake_share_token; added PublicIntakeRequest/PublicIntakeResponse.'
     intentional_gaps:
@@ -3057,8 +3057,8 @@ paths:
                           $ref: '#/components/schemas/SystemTemplateResponse'
     post:
       tags: [Admin]
-      summary: Create a system template
-      description: Creates a new template starting at `version_number=1`. Set `plan_tier_required` to restrict availability to paid plans.
+      summary: Create a system templates
+      description: Creates a new templates starting at `version_number=1`. Set `plan_tier_required` to restrict availability to paid plans.
       requestBody:
         required: true
         content:
@@ -3088,8 +3088,8 @@ paths:
           format: uuid
     patch:
       tags: [Admin]
-      summary: Activate, deactivate, or update a template
-      description: Setting `is_active=false` hides the template from AI generation without deleting it. Content changes increment `version_number`.
+      summary: Activate, deactivate, or update a templates
+      description: Setting `is_active=false` hides the templates from AI generation without deleting it. Content changes increment `version_number`.
       requestBody:
         required: true
         content:
@@ -3098,7 +3098,7 @@ paths:
               $ref: '#/components/schemas/UpdateSystemTemplateRequest'
       responses:
         '200':
-          description: Updated template
+          description: Updated templates
           content:
             application/json:
               schema:
@@ -5452,7 +5452,7 @@ components:
         template_id:
           type: string
           format: uuid
-          description: Optional system template to use as base
+          description: Optional system templates to use as base
         language:
           type: string
           enum: [vi, en]

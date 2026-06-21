@@ -1,4 +1,4 @@
-"""Auth API router."""
+"""Auth API api."""
 
 import uuid
 from datetime import UTC, datetime, timedelta

@@ -26,7 +26,7 @@ VALID_CHAIN_RESULT = {
 def _patch_chain(result: dict | None = None, side_effect=None):
     """Patch LeadQualifier.run so tests never hit the real Gemini API."""
     mock = AsyncMock(return_value=result or VALID_CHAIN_RESULT, side_effect=side_effect)
-    return patch("src.ai.lead_qualifier.api.router.LeadQualifier.run", mock)
+    return patch("src.ai.lead_qualifier.api.api.LeadQualifier.run", mock)
 
 
 # ---------------------------------------------------------------------------
