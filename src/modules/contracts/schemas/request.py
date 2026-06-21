@@ -20,3 +20,7 @@ class ContractStatusRequest(BaseModel):
             "active→completed|terminated"
         ),
     )
+
+
+class ContractTerminateRequest(BaseModel):
+    reason: str | None = Field(default=None, description="Optional termination reason")

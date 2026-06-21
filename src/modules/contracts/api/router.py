@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.infrastructure.database.session import get_db_session
 from src.modules.contracts.application.service import ContractsService
-from src.modules.contracts.schemas.request import ContractRequest, ContractStatusRequest
+from src.modules.contracts.schemas.request import ContractRequest, ContractStatusRequest, ContractTerminateRequest
 from src.modules.contracts.schemas.response import ContractExportResponse, ContractResponse
 from src.shared.dependencies.auth import CurrentUserId
 from src.shared.responses.response import ApiResponse, PaginatedResponse
@@ -74,6 +74,37 @@ async def update_contract(
     db: DBSession,
 ) -> ApiResponse[ContractResponse]:
     contract = await ContractsService(db=db).update(user_id, contract_id, payload)
+    return ApiResponse.ok(ContractResponse.model_validate(contract))
+
+
+@router.post("/{contract_id}/send", response_model=ApiResponse[ContractResponse])
+async def send_contract(
+    contract_id: uuid.UUID,
+    user_id: CurrentUserId,
+    db: DBSession,
+) -> ApiResponse[ContractResponse]:
+    contract = await ContractsService(db=db).send(user_id, contract_id)
+    return ApiResponse.ok(ContractResponse.model_validate(contract))
+
+
+@router.post("/{contract_id}/sign", response_model=ApiResponse[ContractResponse])
+async def sign_contract(
+    contract_id: uuid.UUID,
+    user_id: CurrentUserId,
+    db: DBSession,
+) -> ApiResponse[ContractResponse]:
+    contract = await ContractsService(db=db).sign(user_id, contract_id)
+    return ApiResponse.ok(ContractResponse.model_validate(contract))
+
+
+@router.post("/{contract_id}/terminate", response_model=ApiResponse[ContractResponse])
+async def terminate_contract(
+    contract_id: uuid.UUID,
+    payload: ContractTerminateRequest,
+    user_id: CurrentUserId,
+    db: DBSession,
+) -> ApiResponse[ContractResponse]:
+    contract = await ContractsService(db=db).terminate(user_id, contract_id)
     return ApiResponse.ok(ContractResponse.model_validate(contract))
 
 

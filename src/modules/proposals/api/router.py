@@ -100,6 +100,16 @@ async def update_proposal(
     return ApiResponse.ok(ProposalResponse.model_validate(proposal))
 
 
+@router.post("/{proposal_id}/send", response_model=ApiResponse[ProposalResponse])
+async def send_proposal(
+    proposal_id: uuid.UUID,
+    user_id: CurrentUserId,
+    db: DBSession,
+) -> ApiResponse[ProposalResponse]:
+    proposal = await ProposalsService(db=db).transition_status(user_id, proposal_id, "sent")
+    return ApiResponse.ok(ProposalResponse.model_validate(proposal))
+
+
 @router.patch("/{proposal_id}/status", response_model=ApiResponse[ProposalResponse])
 async def transition_proposal_status(
     proposal_id: uuid.UUID,

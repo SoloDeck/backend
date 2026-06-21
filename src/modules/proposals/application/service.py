@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.modules.proposals.schemas.request import ProposalRequest
 from src.shared.events.bus import event_bus
-from src.shared.exceptions.domain import InvalidStateTransitionError, NotFoundError
+from src.shared.exceptions.domain import BusinessRuleError, InvalidStateTransitionError, NotFoundError
 
 _VALID_TRANSITIONS: dict[str, frozenset[str]] = {
     "draft": frozenset({"sent"}),
@@ -75,10 +75,13 @@ class ProposalsService:
 
     async def update(self, user_id: uuid.UUID, proposal_id: uuid.UUID, payload: ProposalRequest):  # type: ignore[return]
         proposal = await self._get_proposal(user_id, proposal_id)
+        if proposal.status != "draft":
+            raise BusinessRuleError(
+                f"Proposal content can only be edited in draft status "
+                f"(current status: '{proposal.status}')"
+            )
         if payload.content:
             proposal.content = payload.content
-        if payload.status:
-            proposal.status = payload.status
         await self.db.flush()
         await self.db.refresh(proposal)
         return proposal

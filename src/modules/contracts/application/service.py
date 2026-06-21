@@ -159,6 +159,27 @@ class ContractsService:
         await self.db.refresh(contract)
         return contract
 
+    async def send(self, user_id: uuid.UUID, contract_id: uuid.UUID):  # type: ignore[return]
+        return await self.transition_status(user_id, contract_id, "pending_signatures")
+
+    async def sign(self, user_id: uuid.UUID, contract_id: uuid.UUID):  # type: ignore[return]
+        contract = await self._get_contract(user_id, contract_id)
+        if contract.status != ContractStatus.PENDING_SIGNATURES:
+            raise BusinessRuleError(
+                f"Contract must be in pending_signatures status to sign "
+                f"(current status: '{contract.status}')"
+            )
+        now = datetime.now(UTC)
+        contract.signed_by_freelancer_at = now
+        if contract.signed_by_client_at is not None:
+            contract.status = ContractStatus.ACTIVE
+        await self.db.flush()
+        await self.db.refresh(contract)
+        return contract
+
+    async def terminate(self, user_id: uuid.UUID, contract_id: uuid.UUID):  # type: ignore[return]
+        return await self.transition_status(user_id, contract_id, "terminated")
+
     async def export_pdf(self, user_id: uuid.UUID, contract_id: uuid.UUID) -> dict:
         from src.infrastructure.database.models import PlanModel, SubscriptionModel
         from src.workers.pdf_jobs.tasks import render_contract_pdf
