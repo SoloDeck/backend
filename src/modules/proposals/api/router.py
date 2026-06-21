@@ -1,5 +1,6 @@
 """Proposals API api."""
 
+import asyncio
 import uuid
 from typing import Annotated
 
@@ -9,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.infrastructure.database.session import get_db_session
 from src.modules.proposals.application.service import ProposalsService
-from src.modules.proposals.schemas.request import ProposalRequest, ProposalStatusRequest
+from src.modules.proposals.schemas.request import AiProposalRequest, ProposalRequest, ProposalStatusRequest
 from src.modules.proposals.schemas.response import ProposalResponse
 from src.shared.dependencies.auth import CurrentUserId
 from src.shared.responses.response import ApiResponse
@@ -21,6 +22,41 @@ DBSession = Annotated[AsyncSession, Depends(get_db_session)]
 
 class MsgResp(BaseModel):
     detail: str
+
+
+@router.post("/ai-generate", response_model=ApiResponse[ProposalResponse], status_code=201)
+async def ai_generate_proposal(
+    payload: AiProposalRequest,
+    user_id: CurrentUserId,
+    db: DBSession,
+) -> ApiResponse[ProposalResponse]:
+    from google import genai
+    from src.ai.proposal_generator.application.service import ProposalGenerationService
+    from src.ai.proposal_generator.schemas.ProposalGenerationInput import ProposalGenerationInput
+    from src.config.settings import settings
+
+    gen_input = ProposalGenerationInput(
+        client_name=payload.client_name,
+        company_name=payload.company_name,
+        project_type=payload.project_type,
+        project_description=payload.project_description,
+        estimated_scope=payload.estimated_scope,
+        budget=payload.budget,
+        urgency=payload.urgency,
+        service_category=payload.service_category,
+        pricing_tier=payload.pricing_tier,
+        freelancer_name=payload.freelancer_name,
+    )
+    client = genai.Client(api_key=settings.gemini_api_key)
+    svc = ProposalGenerationService(client=client)
+    content = await asyncio.to_thread(svc.generate, gen_input)
+
+    proposal = await ProposalsService(db=db).create(
+        user_id,
+        ProposalRequest(deal_id=payload.deal_id, content=content.model_dump()),
+        ai_generated=True,
+    )
+    return ApiResponse.created(ProposalResponse.model_validate(proposal))
 
 
 @router.post("", response_model=ApiResponse[ProposalResponse], status_code=201)

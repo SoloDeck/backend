@@ -38,7 +38,7 @@ class ProposalsService:
             raise NotFoundError(f"Proposal {proposal_id} not found")
         return proposal
 
-    async def create(self, user_id: uuid.UUID, payload: ProposalRequest):  # type: ignore[return]
+    async def create(self, user_id: uuid.UUID, payload: ProposalRequest, *, ai_generated: bool = False):  # type: ignore[return]
         from src.infrastructure.database.models import ProposalModel
 
         count_result = await self.db.scalar(
@@ -54,7 +54,7 @@ class ProposalsService:
             version_number=version_number,
             status=payload.status,
             content=payload.content,
-            ai_generated=False,
+            ai_generated=ai_generated,
         )
         self.db.add(proposal)
         await self.db.flush()
