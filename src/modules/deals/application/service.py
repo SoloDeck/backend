@@ -61,6 +61,9 @@ class DealsService:
             actual_value=payload.actual_value,
             currency=payload.currency,
             notes=payload.notes,
+            project_type=payload.project_type,
+            service_category=payload.service_category,
+            pricing_tier=payload.pricing_tier,
         )
 
     async def create_public_intake(self, share_token: str, payload: PublicIntakeRequest):
@@ -119,7 +122,8 @@ class DealsService:
 
     async def update(self, user_id: uuid.UUID, deal_id: uuid.UUID, payload: DealRequest):  # type: ignore[return]
         deal = await self._get_deal(user_id, deal_id)
-        for field in ("title", "source", "estimated_value", "actual_value", "currency", "notes"):
+        for field in ("title", "source", "estimated_value", "actual_value", "currency", "notes",
+                      "project_type", "service_category", "pricing_tier"):
             value = getattr(payload, field, None)
             if value is not None:
                 setattr(deal, field, value)

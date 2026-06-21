@@ -449,6 +449,9 @@ class DealModel(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     actual_value: Mapped[Decimal | None] = mapped_column(Numeric(15, 2), nullable=True)
     currency: Mapped[str] = mapped_column(String(3), nullable=False, server_default="VND")
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    project_type: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    service_category: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    pricing_tier: Mapped[str | None] = mapped_column(String(100), nullable=True)
     ai_qualification_score: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
     ai_qualification_recommendation: Mapped[str | None] = mapped_column(
         _ai_recommendation, nullable=True

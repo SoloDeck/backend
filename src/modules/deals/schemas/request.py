@@ -13,6 +13,9 @@ class DealRequest(BaseModel):
     actual_value: Decimal | None = None
     currency: str = "VND"
     notes: str | None = None
+    project_type: str | None = None
+    service_category: str | None = None
+    pricing_tier: str | None = None
 
 
 class DealStageRequest(BaseModel):

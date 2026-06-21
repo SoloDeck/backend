@@ -128,9 +128,29 @@ class ProposalsService:
         client = await self.db.scalar(select(ClientModel).where(ClientModel.id == deal.client_id)) if deal else None
         user = await self.db.scalar(select(UserModel).where(UserModel.id == user_id))
 
+        budget = None
+        if deal and deal.estimated_value is not None:
+            budget = f"{deal.estimated_value} {deal.currency or 'VND'}"
+
+        company_name = None
+        if client and getattr(client, "type", None) == "company":
+            company_name = client.name
+
         content = await ai_facade.generate_proposal(
-            deal_data={"title": deal.title if deal else "", "stage": deal.stage if deal else "", "notes": deal.notes if deal else ""},
-            client_data={"name": client.name if client else "", "email": client.email if client else ""},
+            deal_data={
+                "title": deal.title if deal else "",
+                "stage": deal.stage if deal else "",
+                "notes": deal.notes if deal else "",
+                "project_type": deal.project_type if deal else None,
+                "service_category": deal.service_category if deal else None,
+                "pricing_tier": deal.pricing_tier if deal else None,
+                "budget": budget,
+            },
+            client_data={
+                "name": client.name if client else "",
+                "company_name": company_name,
+                "email": client.email if client else "",
+            },
             user_profile={"name": user.full_name if user else "", "email": user.email if user else ""},
             template=None,
             user_can_use_ai=user_can_use_ai,
