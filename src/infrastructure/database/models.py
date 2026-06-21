@@ -92,6 +92,7 @@ _contract_status = PgEnum(
     "completed",
     "terminated",
     "expired",
+    "archived",
     name="contract_status",
     create_type=False,
 )

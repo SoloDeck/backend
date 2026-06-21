@@ -159,6 +159,70 @@ class ContractsService:
         await self.db.refresh(contract)
         return contract
 
+    async def amend(self, user_id: uuid.UUID, contract_id: uuid.UUID, payload: ContractRequest):  # type: ignore[return]
+        from src.infrastructure.database.models import ContractModel
+
+        contract = await self._get_contract(user_id, contract_id)
+        if contract.status != ContractStatus.ACTIVE:
+            raise BusinessRuleError(
+                f"Only active contracts can be amended (current status: '{contract.status}')"
+            )
+
+        count_result = await self.db.scalar(
+            select(func.count()).select_from(ContractModel).where(
+                ContractModel.deal_id == contract.deal_id
+            )
+        )
+        new_version = (count_result or 0) + 1
+
+        new_contract = ContractModel(
+            deal_id=contract.deal_id,
+            proposal_id=contract.proposal_id,
+            client_id=contract.client_id,
+            owner_user_id=user_id,
+            version_number=new_version,
+            status=ContractStatus.DRAFT,
+            content=payload.content if payload.content else contract.content,
+            client_snapshot=contract.client_snapshot,
+            parent_contract_id=contract.id,
+        )
+        contract.status = ContractStatus.ARCHIVED
+        self.db.add(new_contract)
+        await self.db.flush()
+        await self.db.refresh(new_contract)
+        return new_contract
+
+    async def generate_content(self, user_id: uuid.UUID, contract_id: uuid.UUID, ai_facade) -> None:  # type: ignore[return]
+        from src.infrastructure.database.models import ClientModel, DealModel, PlanModel, ProposalModel, SubscriptionModel, UserModel
+
+        contract = await self._get_contract(user_id, contract_id)
+        if contract.status != ContractStatus.DRAFT:
+            raise BusinessRuleError(
+                f"AI generation is only available for draft contracts (current status: '{contract.status}')"
+            )
+
+        sub = await self.db.scalar(select(SubscriptionModel).where(SubscriptionModel.user_id == user_id))
+        plan = await self.db.scalar(select(PlanModel).where(PlanModel.id == sub.plan_id)) if sub else None
+        user_can_use_ai = bool(plan and plan.can_use_ai)
+
+        deal = await self.db.scalar(select(DealModel).where(DealModel.id == contract.deal_id))
+        proposal = await self.db.scalar(select(ProposalModel).where(ProposalModel.id == contract.proposal_id))
+        client = await self.db.scalar(select(ClientModel).where(ClientModel.id == contract.client_id))
+        user = await self.db.scalar(select(UserModel).where(UserModel.id == user_id))
+
+        content = await ai_facade.generate_contract(
+            deal_data={"title": deal.title if deal else "", "stage": deal.stage if deal else ""},
+            proposal_content=proposal.content if proposal else {},
+            client_data={"name": client.name if client else "", "email": client.email if client else ""},
+            user_profile={"name": user.full_name if user else "", "email": user.email if user else ""},
+            user_can_use_ai=user_can_use_ai,
+        )
+        contract.content = content
+        contract.ai_generated = True
+        await self.db.flush()
+        await self.db.refresh(contract)
+        return contract
+
     async def send(self, user_id: uuid.UUID, contract_id: uuid.UUID):  # type: ignore[return]
         return await self.transition_status(user_id, contract_id, "pending_signatures")
 

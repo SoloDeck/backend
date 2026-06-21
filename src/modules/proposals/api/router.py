@@ -12,6 +12,7 @@ from src.infrastructure.database.session import get_db_session
 from src.modules.proposals.application.service import ProposalsService
 from src.modules.proposals.schemas.request import AiProposalRequest, ProposalRequest, ProposalStatusRequest
 from src.modules.proposals.schemas.response import ProposalResponse
+from src.shared.dependencies.ai import AIFacadeDep
 from src.shared.dependencies.auth import CurrentUserId
 from src.shared.responses.response import ApiResponse
 
@@ -97,6 +98,17 @@ async def update_proposal(
     db: DBSession,
 ) -> ApiResponse[ProposalResponse]:
     proposal = await ProposalsService(db=db).update(user_id, proposal_id, payload)
+    return ApiResponse.ok(ProposalResponse.model_validate(proposal))
+
+
+@router.post("/{proposal_id}/generate", response_model=ApiResponse[ProposalResponse])
+async def ai_generate_proposal_content(
+    proposal_id: uuid.UUID,
+    user_id: CurrentUserId,
+    db: DBSession,
+    ai: AIFacadeDep,
+) -> ApiResponse[ProposalResponse]:
+    proposal = await ProposalsService(db=db).generate_content(user_id, proposal_id, ai)
     return ApiResponse.ok(ProposalResponse.model_validate(proposal))
 
 

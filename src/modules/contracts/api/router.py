@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.infrastructure.database.session import get_db_session
 from src.modules.contracts.application.service import ContractsService
 from src.modules.contracts.schemas.request import ContractRequest, ContractStatusRequest, ContractTerminateRequest
+from src.shared.dependencies.ai import AIFacadeDep
 from src.modules.contracts.schemas.response import ContractExportResponse, ContractResponse
 from src.shared.dependencies.auth import CurrentUserId
 from src.shared.responses.response import ApiResponse, PaginatedResponse
@@ -75,6 +76,28 @@ async def update_contract(
 ) -> ApiResponse[ContractResponse]:
     contract = await ContractsService(db=db).update(user_id, contract_id, payload)
     return ApiResponse.ok(ContractResponse.model_validate(contract))
+
+
+@router.post("/{contract_id}/generate", response_model=ApiResponse[ContractResponse])
+async def ai_generate_contract_content(
+    contract_id: uuid.UUID,
+    user_id: CurrentUserId,
+    db: DBSession,
+    ai: AIFacadeDep,
+) -> ApiResponse[ContractResponse]:
+    contract = await ContractsService(db=db).generate_content(user_id, contract_id, ai)
+    return ApiResponse.ok(ContractResponse.model_validate(contract))
+
+
+@router.post("/{contract_id}/amend", response_model=ApiResponse[ContractResponse], status_code=201)
+async def amend_contract(
+    contract_id: uuid.UUID,
+    payload: ContractRequest,
+    user_id: CurrentUserId,
+    db: DBSession,
+) -> ApiResponse[ContractResponse]:
+    contract = await ContractsService(db=db).amend(user_id, contract_id, payload)
+    return ApiResponse.created(ContractResponse.model_validate(contract))
 
 
 @router.post("/{contract_id}/send", response_model=ApiResponse[ContractResponse])

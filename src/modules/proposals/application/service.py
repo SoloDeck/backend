@@ -91,6 +91,36 @@ class ProposalsService:
         await self.db.delete(proposal)
         await self.db.flush()
 
+    async def generate_content(self, user_id: uuid.UUID, proposal_id: uuid.UUID, ai_facade):  # type: ignore[return]
+        from src.infrastructure.database.models import ClientModel, DealModel, PlanModel, SubscriptionModel, UserModel
+
+        proposal = await self._get_proposal(user_id, proposal_id)
+        if proposal.status != "draft":
+            raise BusinessRuleError(
+                f"AI generation is only available for draft proposals (current status: '{proposal.status}')"
+            )
+
+        sub = await self.db.scalar(select(SubscriptionModel).where(SubscriptionModel.user_id == user_id))
+        plan = await self.db.scalar(select(PlanModel).where(PlanModel.id == sub.plan_id)) if sub else None
+        user_can_use_ai = bool(plan and plan.can_use_ai)
+
+        deal = await self.db.scalar(select(DealModel).where(DealModel.id == proposal.deal_id))
+        client = await self.db.scalar(select(ClientModel).where(ClientModel.id == deal.client_id)) if deal else None
+        user = await self.db.scalar(select(UserModel).where(UserModel.id == user_id))
+
+        content = await ai_facade.generate_proposal(
+            deal_data={"title": deal.title if deal else "", "stage": deal.stage if deal else "", "notes": deal.notes if deal else ""},
+            client_data={"name": client.name if client else "", "email": client.email if client else ""},
+            user_profile={"name": user.full_name if user else "", "email": user.email if user else ""},
+            template=None,
+            user_can_use_ai=user_can_use_ai,
+        )
+        proposal.content = content
+        proposal.ai_generated = True
+        await self.db.flush()
+        await self.db.refresh(proposal)
+        return proposal
+
     async def transition_status(
         self, user_id: uuid.UUID, proposal_id: uuid.UUID, target_status: str
     ):  # type: ignore[return]
