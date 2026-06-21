@@ -14,5 +14,7 @@ class ProposalResponse(BaseModel):
     status: str
     content: dict
     share_token: str | None
+    sent_at: datetime | None
+    responded_at: datetime | None
     created_at: datetime
     updated_at: datetime

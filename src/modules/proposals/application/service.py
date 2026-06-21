@@ -2,12 +2,23 @@
 
 import uuid
 from dataclasses import dataclass
+from datetime import UTC, datetime
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.modules.proposals.schemas.request import ProposalRequest
-from src.shared.exceptions.domain import NotFoundError
+from src.shared.events.bus import event_bus
+from src.shared.exceptions.domain import InvalidStateTransitionError, NotFoundError
+
+_VALID_TRANSITIONS: dict[str, frozenset[str]] = {
+    "draft": frozenset({"sent"}),
+    "sent": frozenset({"accepted", "rejected", "expired"}),
+    "accepted": frozenset(),
+    "rejected": frozenset(),
+    "expired": frozenset(),
+    "superseded": frozenset(),
+}
 
 
 @dataclass
@@ -76,3 +87,51 @@ class ProposalsService:
         proposal = await self._get_proposal(user_id, proposal_id)
         await self.db.delete(proposal)
         await self.db.flush()
+
+    async def transition_status(
+        self, user_id: uuid.UUID, proposal_id: uuid.UUID, target_status: str
+    ):  # type: ignore[return]
+        from src.infrastructure.database.models import ProposalModel
+
+        proposal = await self._get_proposal(user_id, proposal_id)
+        current = proposal.status
+        allowed = _VALID_TRANSITIONS.get(current, frozenset())
+        if target_status not in allowed:
+            raise InvalidStateTransitionError("proposal", current, target_status)
+
+        now = datetime.now(UTC)
+
+        if target_status == "sent":
+            # Supersede any existing sent proposal on the same deal
+            existing = await self.db.scalar(
+                select(ProposalModel).where(
+                    ProposalModel.deal_id == proposal.deal_id,
+                    ProposalModel.status == "sent",
+                    ProposalModel.id != proposal_id,
+                )
+            )
+            if existing is not None:
+                existing.status = "superseded"
+            proposal.sent_at = now
+
+        if target_status in ("accepted", "rejected", "expired"):
+            proposal.responded_at = now
+
+        proposal.status = target_status
+        await self.db.flush()
+        await self.db.refresh(proposal)
+
+        if target_status == "accepted":
+            await event_bus.publish(
+                "proposals.proposal_accepted",
+                {"proposal_id": str(proposal_id), "deal_id": str(proposal.deal_id),
+                 "owner_user_id": str(user_id)},
+            )
+        elif target_status == "sent":
+            await event_bus.publish(
+                "proposals.proposal_sent",
+                {"proposal_id": str(proposal_id), "deal_id": str(proposal.deal_id),
+                 "owner_user_id": str(user_id)},
+            )
+
+        return proposal
