@@ -1,4 +1,4 @@
-"""Users API router."""
+"""Users API api."""
 
 from typing import Annotated
 

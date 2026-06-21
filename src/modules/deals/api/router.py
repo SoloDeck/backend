@@ -1,4 +1,4 @@
-"""Deals API router."""
+"""Deals API api."""
 
 import uuid
 from typing import Annotated

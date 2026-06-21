@@ -8,7 +8,7 @@ class ProposalGenerator(BaseAIChain):
     module_name = "proposal_generator"
 
     def _build_chain(self) -> Any:
-        # TODO: build LangChain chain using prompt template + LLM + output parser
+        # TODO: build LangChain chain using prompt templates + LLM + output parser
         raise NotImplementedError
 
     def _parse_output(self, raw: str) -> dict[str, Any]:
