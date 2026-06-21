@@ -288,7 +288,7 @@ class TestExportContractPdf:
         mock_task = MagicMock(id="test-task-id")
         with (
             patch(
-                "src.modules.contracts.application.service.render_contract_pdf"
+                "src.workers.pdf_jobs.tasks.render_contract_pdf"
             ) as mock_fn,
             patch(
                 "src.modules.contracts.application.service.ContractsService.export_pdf",

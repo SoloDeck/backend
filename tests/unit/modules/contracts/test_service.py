@@ -75,6 +75,7 @@ class TestCreate:
         proposal = _make_proposal(status="accepted")
         client = MagicMock(id=uuid.uuid4(), name="Acme", email="a@b.com", phone=None)
         db = AsyncMock()
+        db.add = MagicMock()  # session.add() is synchronous
         db.scalar.side_effect = [proposal, 0, client]
 
         await ContractsService(db=db).create(uuid.uuid4(), _make_payload())
@@ -162,7 +163,7 @@ class TestExportPdf:
         db.scalar.side_effect = [contract, sub, plan]
 
         mock_task = MagicMock(id="celery-task-id-123")
-        with patch("src.modules.contracts.application.service.render_contract_pdf") as mock_fn:
+        with patch("src.workers.pdf_jobs.tasks.render_contract_pdf") as mock_fn:
             mock_fn.delay.return_value = mock_task
             result = await ContractsService(db=db).export_pdf(contract.owner_user_id, contract.id)
 
