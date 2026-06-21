@@ -61,14 +61,34 @@ class ProposalsService:
         await self.db.refresh(proposal)
         return proposal
 
-    async def list_all(self, user_id: uuid.UUID, status: str | None = None) -> list:
+    async def list_all(
+        self,
+        user_id: uuid.UUID,
+        status: str | None = None,
+        deal_id: uuid.UUID | None = None,
+        page: int = 1,
+        page_size: int = 20,
+    ) -> tuple[list, int]:
         from src.infrastructure.database.models import ProposalModel
 
         conditions = [ProposalModel.owner_user_id == user_id]
         if status is not None:
             conditions.append(ProposalModel.status == status)
-        result = await self.db.execute(select(ProposalModel).where(*conditions))
-        return list(result.scalars().all())
+        if deal_id is not None:
+            conditions.append(ProposalModel.deal_id == deal_id)
+
+        total = await self.db.scalar(
+            select(func.count()).select_from(ProposalModel).where(*conditions)
+        ) or 0
+        offset = (page - 1) * page_size
+        result = await self.db.execute(
+            select(ProposalModel)
+            .where(*conditions)
+            .order_by(ProposalModel.created_at.desc())
+            .offset(offset)
+            .limit(page_size)
+        )
+        return list(result.scalars().all()), total
 
     async def get_one(self, user_id: uuid.UUID, proposal_id: uuid.UUID):  # type: ignore[return]
         return await self._get_proposal(user_id, proposal_id)

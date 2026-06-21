@@ -14,7 +14,7 @@ from src.modules.proposals.schemas.request import AiProposalRequest, ProposalReq
 from src.modules.proposals.schemas.response import ProposalResponse
 from src.shared.dependencies.ai import AIFacadeDep
 from src.shared.dependencies.auth import CurrentUserId
-from src.shared.responses.response import ApiResponse
+from src.shared.responses.response import ApiResponse, PaginatedResponse
 
 router = APIRouter()
 
@@ -70,14 +70,22 @@ async def create_proposal(
     return ApiResponse.created(ProposalResponse.model_validate(proposal))
 
 
-@router.get("", response_model=ApiResponse[list[ProposalResponse]])
+@router.get("", response_model=PaginatedResponse[ProposalResponse])
 async def list_proposals(
     user_id: CurrentUserId,
     db: DBSession,
     status: str | None = Query(default=None, description="Filter by status: draft, sent, accepted, rejected, expired"),
-) -> ApiResponse[list[ProposalResponse]]:
-    proposals = await ProposalsService(db=db).list_all(user_id, status=status)
-    return ApiResponse.ok([ProposalResponse.model_validate(p) for p in proposals])
+    deal_id: uuid.UUID | None = Query(default=None, description="Filter by deal"),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
+) -> PaginatedResponse[ProposalResponse]:
+    proposals, total = await ProposalsService(db=db).list_all(
+        user_id, status=status, deal_id=deal_id, page=page, page_size=page_size
+    )
+    return PaginatedResponse.ok(
+        [ProposalResponse.model_validate(p) for p in proposals],
+        total=total, page=page, page_size=page_size,
+    )
 
 
 @router.get("/{proposal_id}", response_model=ApiResponse[ProposalResponse])
