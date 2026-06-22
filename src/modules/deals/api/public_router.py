@@ -13,6 +13,7 @@ from src.infrastructure.database.session import get_db_session
 from src.modules.deals.application.service import DealsService
 from src.modules.deals.schemas.request import PublicIntakeRequest
 from src.modules.deals.schemas.response import PublicIntakeResponse
+from src.modules.intake_form.application.service import IntakeFormService
 from src.shared.responses.response import ApiResponse
 
 router = APIRouter()
@@ -26,5 +27,6 @@ async def submit_public_intake(
     payload: PublicIntakeRequest,
     db: DBSession,
 ) -> ApiResponse[PublicIntakeResponse]:
+    await IntakeFormService(db=db).validate_submission(share_token, payload)
     intake = await DealsService(db=db).create_public_intake(share_token, payload)
     return ApiResponse.created(PublicIntakeResponse.model_validate(intake))

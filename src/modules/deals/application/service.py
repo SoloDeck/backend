@@ -96,7 +96,7 @@ class DealsService:
         await self.repo.create(
             owner_user_id=owner.id,
             client_id=client.id,
-            title=f"Intake — {payload.name}",
+            title=payload.project_name or f"Intake — {payload.name}",
             stage="new_lead",
             source="inbound",
             currency=owner.currency,
@@ -104,7 +104,7 @@ class DealsService:
         return await self.repo.create_intake(
             owner_user_id=owner.id,
             client_id=client.id,
-            inquiry_text=payload.inquiry_text,
+            inquiry_text=payload.inquiry_text or "",
             estimated_budget=payload.estimated_budget,
             desired_timeline=payload.desired_timeline,
             source="inbound",

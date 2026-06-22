@@ -28,6 +28,8 @@ from src.modules.reminders.api.router import router as reminders_router
 from src.modules.subscriptions.api.router import router as subscriptions_router
 from src.modules.users.api.router import router as users_router
 from src.modules.freelancers.api.router import router as freelancers_router
+from src.modules.intake_form.api.router import router as intake_form_router
+from src.modules.intake_form.api.public_router import router as public_intake_form_router
 from src.modules.projects.api.router import router as projects_router
 from src.shared.exceptions.http import setup_exception_handlers
 from src.shared.logging.config import configure_logging
@@ -114,7 +116,9 @@ app.include_router(public_invoices_router, prefix=f"{API_V1}/invoices/public", t
 app.include_router(invoices_router,      prefix=f"{API_V1}/invoices",      tags=["Invoices"])
 app.include_router(reminders_router,     prefix=f"{API_V1}/reminders",     tags=["Reminders"])
 app.include_router(analytics_router,     prefix=f"{API_V1}/analytics",     tags=["Analytics"])
-app.include_router(public_intake_router, prefix=f"{API_V1}/intake",              tags=["Public"])
+app.include_router(public_intake_form_router, prefix=f"{API_V1}/intake",        tags=["Public"])
+app.include_router(public_intake_router,      prefix=f"{API_V1}/intake",         tags=["Public"])
+app.include_router(intake_form_router,        prefix=f"{API_V1}/intake-form",    tags=["Intake Form"])
 app.include_router(freelancers_router,   prefix=f"{API_V1}/public/freelancers",  tags=["Public"])
 app.include_router(projects_router,      prefix=f"{API_V1}/projects",             tags=["Projects"])
 app.include_router(admin_router,         prefix=f"{API_V1}/admin",               tags=["Admin"])

@@ -558,6 +558,42 @@ class DealActivityEntryModel(UUIDMixin, Base):
     )
 
 
+class IntakeFormConfigModel(UUIDMixin, TimestampMixin, Base):
+    __tablename__ = "intake_form_configs"
+
+    owner_user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=False
+    )
+    title: Mapped[str] = mapped_column(String(500), nullable=False, server_default="Gửi yêu cầu dự án")
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
+
+    __table_args__ = (
+        UniqueConstraint("owner_user_id", name="uq_intake_form_configs_owner"),
+        Index("idx_intake_form_configs_owner", "owner_user_id"),
+    )
+
+
+class IntakeFormFieldModel(UUIDMixin, Base):
+    __tablename__ = "intake_form_fields"
+
+    form_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("intake_form_configs.id", ondelete="CASCADE"), nullable=False
+    )
+    field_key: Mapped[str] = mapped_column(String(100), nullable=False)
+    label: Mapped[str] = mapped_column(String(200), nullable=False)
+    placeholder: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    field_type: Mapped[str] = mapped_column(String(50), nullable=False, server_default="text")
+    is_required: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+    is_visible: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+
+    __table_args__ = (
+        UniqueConstraint("form_id", "field_key", name="uq_intake_form_fields_form_key"),
+        Index("idx_intake_form_fields_form", "form_id", "sort_order"),
+    )
+
+
 class LeadScoreModel(Base):
     __tablename__ = "lead_scores"
 
