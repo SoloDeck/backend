@@ -382,3 +382,52 @@ class TestTasks:
     async def test_unauthenticated_returns_401(self, client: AsyncClient) -> None:
         resp = await client.get(f"/api/v1/projects/{uuid.uuid4()}/tasks")
         assert resp.status_code == 401
+
+    async def test_empty_task_title_returns_422(self, client: AsyncClient) -> None:
+        headers = await _auth(client)
+        deal_id = await _create_deal(client, headers)
+        project = await _create_project(client, headers, deal_id)
+        resp = await client.post(
+            f"/api/v1/projects/{project['id']}/tasks",
+            json={"title": ""},
+            headers=headers,
+        )
+        assert resp.status_code == 422
+
+    async def test_create_task_tenant_isolation(self, client: AsyncClient) -> None:
+        headers_a = await _auth(client)
+        headers_b = await _auth(client)
+        deal_id = await _create_deal(client, headers_a)
+        project = await _create_project(client, headers_a, deal_id)
+        resp = await client.post(
+            f"/api/v1/projects/{project['id']}/tasks",
+            json={"title": "Intruder task"},
+            headers=headers_b,
+        )
+        assert resp.status_code == 404
+
+    async def test_delete_task_tenant_isolation(self, client: AsyncClient) -> None:
+        headers_a = await _auth(client)
+        headers_b = await _auth(client)
+        deal_id = await _create_deal(client, headers_a)
+        project = await _create_project(client, headers_a, deal_id)
+        task = await _create_task(client, headers_a, project["id"])
+        resp = await client.delete(
+            f"/api/v1/projects/{project['id']}/tasks/{task['id']}",
+            headers=headers_b,
+        )
+        assert resp.status_code == 404
+
+
+class TestUpdateProjectTenantIsolation:
+    async def test_patch_project_tenant_isolation(self, client: AsyncClient) -> None:
+        headers_a = await _auth(client)
+        headers_b = await _auth(client)
+        deal_id = await _create_deal(client, headers_a)
+        project = await _create_project(client, headers_a, deal_id)
+        resp = await client.patch(
+            f"/api/v1/projects/{project['id']}",
+            json={"title": "Hijacked"},
+            headers=headers_b,
+        )
+        assert resp.status_code == 404
