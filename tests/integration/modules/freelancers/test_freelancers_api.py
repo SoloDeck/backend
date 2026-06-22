@@ -166,6 +166,57 @@ class TestSearchFreelancers:
         ids = [f["id"] for f in resp.json()["data"]]
         assert user["id"] in ids
 
+    async def test_filter_by_multiple_categories(self, client: AsyncClient) -> None:
+        user_design = await _register(client)
+        await _set_profile(
+            client, user_design["headers"],
+            service_categories=["design"],
+            is_listed=True,
+        )
+        user_content = await _register(client)
+        await _set_profile(
+            client, user_content["headers"],
+            service_categories=["content"],
+            is_listed=True,
+        )
+        user_mkt = await _register(client)
+        await _set_profile(
+            client, user_mkt["headers"],
+            service_categories=["marketing"],
+            is_listed=True,
+        )
+        resp = await client.get(
+            "/api/v1/public/freelancers",
+            params=[("categories", "design"), ("categories", "content")],
+        )
+        assert resp.status_code == 200
+        ids = [f["id"] for f in resp.json()["data"]]
+        assert user_design["id"] in ids
+        assert user_content["id"] in ids
+        assert user_mkt["id"] not in ids
+
+    async def test_filter_combined_q_and_category(self, client: AsyncClient) -> None:
+        user_match = await _register(client, full_name="CombinedFilterTestUser")
+        await _set_profile(
+            client, user_match["headers"],
+            service_categories=["consulting"],
+            is_listed=True,
+        )
+        user_wrong_cat = await _register(client, full_name="CombinedFilterTestUser")
+        await _set_profile(
+            client, user_wrong_cat["headers"],
+            service_categories=["design"],
+            is_listed=True,
+        )
+        resp = await client.get(
+            "/api/v1/public/freelancers",
+            params={"q": "CombinedFilterTestUser", "categories": "consulting"},
+        )
+        assert resp.status_code == 200
+        ids = [f["id"] for f in resp.json()["data"]]
+        assert user_match["id"] in ids
+        assert user_wrong_cat["id"] not in ids
+
     async def test_search_no_match_returns_empty(self, client: AsyncClient) -> None:
         resp = await client.get(
             "/api/v1/public/freelancers", params={"q": "XXXXXXXNOTEXISTXXXXXXX"}
