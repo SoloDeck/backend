@@ -3,9 +3,9 @@
 import uuid
 from dataclasses import dataclass
 
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.modules.admin.infrastructure.repository import AdminRepository
 from src.modules.admin.schemas.request import AdminPlanRequest, AdminUpdateUserRequest
 from src.shared.exceptions.domain import NotFoundError
 
@@ -13,24 +13,17 @@ from src.shared.exceptions.domain import NotFoundError
 @dataclass
 class AdminService:
     db: AsyncSession
+    repo: AdminRepository | None = None
+
+    def __post_init__(self) -> None:
+        if self.repo is None:
+            self.repo = AdminRepository(self.db)
 
     async def list_users(self) -> list:
-        from src.infrastructure.database.models import UserModel
-
-        result = await self.db.execute(
-            select(UserModel).where(UserModel.deleted_at.is_(None))
-        )
-        return list(result.scalars().all())
+        return await self.repo.list_users()
 
     async def get_user(self, user_id: uuid.UUID):  # type: ignore[return]
-        from src.infrastructure.database.models import UserModel
-
-        user = await self.db.scalar(
-            select(UserModel).where(
-                UserModel.id == user_id,
-                UserModel.deleted_at.is_(None),
-            )
-        )
+        user = await self.repo.get_user(user_id)
         if user is None:
             raise NotFoundError(f"User {user_id} not found")
         return user
@@ -43,20 +36,13 @@ class AdminService:
             user.status = payload.status
         if payload.full_name is not None:
             user.full_name = payload.full_name
-        await self.db.flush()
-        await self.db.refresh(user)
-        return user
+        return await self.repo.save(user)
 
     async def list_plans(self) -> list:
-        from src.infrastructure.database.models import PlanModel
-
-        result = await self.db.execute(select(PlanModel))
-        return list(result.scalars().all())
+        return await self.repo.list_plans()
 
     async def create_plan(self, payload: AdminPlanRequest):  # type: ignore[return]
-        from src.infrastructure.database.models import PlanModel
-
-        plan = PlanModel(
+        return await self.repo.create_plan(
             name=payload.name,
             slug=payload.slug,
             price_monthly=payload.price_monthly,
@@ -68,15 +54,9 @@ class AdminService:
             max_ai_generations_per_month=payload.max_ai_generations_per_month,
             is_active=payload.is_active,
         )
-        self.db.add(plan)
-        await self.db.flush()
-        await self.db.refresh(plan)
-        return plan
 
     async def update_plan(self, plan_id: uuid.UUID, payload: AdminPlanRequest):  # type: ignore[return]
-        from src.infrastructure.database.models import PlanModel
-
-        plan = await self.db.scalar(select(PlanModel).where(PlanModel.id == plan_id))
+        plan = await self.repo.get_plan(plan_id)
         if plan is None:
             raise NotFoundError(f"Plan {plan_id} not found")
         plan.name = payload.name
@@ -89,6 +69,4 @@ class AdminService:
         plan.max_deals = payload.max_deals
         plan.max_ai_generations_per_month = payload.max_ai_generations_per_month
         plan.is_active = payload.is_active
-        await self.db.flush()
-        await self.db.refresh(plan)
-        return plan
+        return await self.repo.save(plan)

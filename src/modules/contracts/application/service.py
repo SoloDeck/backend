@@ -4,9 +4,9 @@ import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.modules.contracts.infrastructure.repository import ContractsRepository
 from src.modules.contracts.schemas.request import ContractRequest
 from src.modules.contracts.domain.value_objects.contract_status import (
     CONTRACT_TRANSITIONS,
@@ -24,26 +24,20 @@ from src.shared.exceptions.domain import (
 @dataclass
 class ContractsService:
     db: AsyncSession
+    repo: ContractsRepository | None = None
+
+    def __post_init__(self) -> None:
+        if self.repo is None:
+            self.repo = ContractsRepository(self.db)
 
     async def _get_contract(self, user_id: uuid.UUID, contract_id: uuid.UUID):  # type: ignore[return]
-        from src.infrastructure.database.models import ContractModel
-
-        contract = await self.db.scalar(
-            select(ContractModel).where(
-                ContractModel.id == contract_id,
-                ContractModel.owner_user_id == user_id,
-            )
-        )
+        contract = await self.repo.get_by_id(contract_id, user_id)
         if contract is None:
             raise NotFoundError(f"Contract {contract_id} not found")
         return contract
 
     async def create(self, user_id: uuid.UUID, payload: ContractRequest):  # type: ignore[return]
-        from src.infrastructure.database.models import ClientModel, ContractModel, ProposalModel
-
-        proposal = await self.db.scalar(
-            select(ProposalModel).where(ProposalModel.id == payload.proposal_id)
-        )
+        proposal = await self.repo.get_proposal(payload.proposal_id)
         if proposal is None:
             raise NotFoundError(f"Proposal {payload.proposal_id} not found")
         if proposal.status != "accepted":
@@ -52,16 +46,9 @@ class ContractsService:
                 f"(current status: '{proposal.status}')"
             )
 
-        count_result = await self.db.scalar(
-            select(func.count()).select_from(ContractModel).where(
-                ContractModel.deal_id == payload.deal_id
-            )
-        )
-        version_number = (count_result or 0) + 1
+        version_number = await self.repo.count_by_deal(payload.deal_id) + 1
 
-        client = await self.db.scalar(
-            select(ClientModel).where(ClientModel.id == payload.client_id)
-        )
+        client = await self.repo.get_client(payload.client_id)
         client_snapshot: dict = {}
         if client is not None:
             client_snapshot = {
@@ -71,7 +58,7 @@ class ContractsService:
                 "phone": client.phone,
             }
 
-        contract = ContractModel(
+        return await self.repo.create(
             deal_id=payload.deal_id,
             proposal_id=payload.proposal_id,
             client_id=payload.client_id,
@@ -81,10 +68,6 @@ class ContractsService:
             content=payload.content,
             client_snapshot=client_snapshot,
         )
-        self.db.add(contract)
-        await self.db.flush()
-        await self.db.refresh(contract)
-        return contract
 
     async def list_all(
         self,
@@ -94,26 +77,7 @@ class ContractsService:
         page: int = 1,
         page_size: int = 20,
     ) -> tuple[list, int]:
-        from src.infrastructure.database.models import ContractModel
-
-        conditions = [ContractModel.owner_user_id == user_id]
-        if status is not None:
-            conditions.append(ContractModel.status == status)
-        if deal_id is not None:
-            conditions.append(ContractModel.deal_id == deal_id)
-
-        total = await self.db.scalar(
-            select(func.count()).select_from(ContractModel).where(*conditions)
-        ) or 0
-        offset = (page - 1) * page_size
-        result = await self.db.execute(
-            select(ContractModel)
-            .where(*conditions)
-            .order_by(ContractModel.created_at.desc())
-            .offset(offset)
-            .limit(page_size)
-        )
-        return list(result.scalars().all()), total
+        return await self.repo.list_all(user_id, status=status, deal_id=deal_id, page=page, page_size=page_size)
 
     async def get_one(self, user_id: uuid.UUID, contract_id: uuid.UUID):  # type: ignore[return]
         return await self._get_contract(user_id, contract_id)
@@ -127,9 +91,7 @@ class ContractsService:
             )
         if payload.content:
             contract.content = payload.content
-        await self.db.flush()
-        await self.db.refresh(contract)
-        return contract
+        return await self.repo.save(contract)
 
     async def transition_status(
         self, user_id: uuid.UUID, contract_id: uuid.UUID, target_status: str
@@ -151,31 +113,22 @@ class ContractsService:
         if target == ContractStatus.ACTIVE:
             contract.signed_by_freelancer_at = now
         elif target == ContractStatus.PENDING_SIGNATURES:
-            pass  # no extra timestamp
+            pass
         elif target in TERMINAL_CONTRACT_STATUSES:
-            pass  # no extra timestamp beyond what's set above
+            pass
 
-        await self.db.flush()
-        await self.db.refresh(contract)
-        return contract
+        return await self.repo.save(contract)
 
     async def amend(self, user_id: uuid.UUID, contract_id: uuid.UUID, payload: ContractRequest):  # type: ignore[return]
-        from src.infrastructure.database.models import ContractModel
-
         contract = await self._get_contract(user_id, contract_id)
         if contract.status != ContractStatus.ACTIVE:
             raise BusinessRuleError(
                 f"Only active contracts can be amended (current status: '{contract.status}')"
             )
 
-        count_result = await self.db.scalar(
-            select(func.count()).select_from(ContractModel).where(
-                ContractModel.deal_id == contract.deal_id
-            )
-        )
-        new_version = (count_result or 0) + 1
+        new_version = await self.repo.count_by_deal(contract.deal_id) + 1
 
-        new_contract = ContractModel(
+        new_contract = await self.repo.create(
             deal_id=contract.deal_id,
             proposal_id=contract.proposal_id,
             client_id=contract.client_id,
@@ -187,28 +140,24 @@ class ContractsService:
             parent_contract_id=contract.id,
         )
         contract.status = ContractStatus.ARCHIVED
-        self.db.add(new_contract)
-        await self.db.flush()
-        await self.db.refresh(new_contract)
+        await self.repo.save(contract)
         return new_contract
 
-    async def generate_content(self, user_id: uuid.UUID, contract_id: uuid.UUID, ai_facade) -> None:  # type: ignore[return]
-        from src.infrastructure.database.models import ClientModel, DealModel, PlanModel, ProposalModel, SubscriptionModel, UserModel
-
+    async def generate_content(self, user_id: uuid.UUID, contract_id: uuid.UUID, ai_facade):  # type: ignore[return]
         contract = await self._get_contract(user_id, contract_id)
         if contract.status != ContractStatus.DRAFT:
             raise BusinessRuleError(
                 f"AI generation is only available for draft contracts (current status: '{contract.status}')"
             )
 
-        sub = await self.db.scalar(select(SubscriptionModel).where(SubscriptionModel.user_id == user_id))
-        plan = await self.db.scalar(select(PlanModel).where(PlanModel.id == sub.plan_id)) if sub else None
+        sub = await self.repo.get_subscription(user_id)
+        plan = await self.repo.get_plan(sub.plan_id) if sub else None
         user_can_use_ai = bool(plan and plan.can_use_ai)
 
-        deal = await self.db.scalar(select(DealModel).where(DealModel.id == contract.deal_id))
-        proposal = await self.db.scalar(select(ProposalModel).where(ProposalModel.id == contract.proposal_id))
-        client = await self.db.scalar(select(ClientModel).where(ClientModel.id == contract.client_id))
-        user = await self.db.scalar(select(UserModel).where(UserModel.id == user_id))
+        deal = await self.repo.get_deal(contract.deal_id)
+        proposal = await self.repo.get_proposal(contract.proposal_id)
+        client = await self.repo.get_client(contract.client_id)
+        user = await self.repo.get_user(user_id)
 
         content = await ai_facade.generate_contract(
             deal_data={"title": deal.title if deal else "", "stage": deal.stage if deal else ""},
@@ -219,9 +168,7 @@ class ContractsService:
         )
         contract.content = content
         contract.ai_generated = True
-        await self.db.flush()
-        await self.db.refresh(contract)
-        return contract
+        return await self.repo.save(contract)
 
     async def send(self, user_id: uuid.UUID, contract_id: uuid.UUID):  # type: ignore[return]
         return await self.transition_status(user_id, contract_id, "pending_signatures")
@@ -237,25 +184,20 @@ class ContractsService:
         contract.signed_by_freelancer_at = now
         if contract.signed_by_client_at is not None:
             contract.status = ContractStatus.ACTIVE
-        await self.db.flush()
-        await self.db.refresh(contract)
-        return contract
+        return await self.repo.save(contract)
 
     async def terminate(self, user_id: uuid.UUID, contract_id: uuid.UUID):  # type: ignore[return]
         return await self.transition_status(user_id, contract_id, "terminated")
 
     async def export_pdf(self, user_id: uuid.UUID, contract_id: uuid.UUID) -> dict:
-        from src.infrastructure.database.models import PlanModel, SubscriptionModel
         from src.workers.pdf_jobs.tasks import render_contract_pdf
 
         contract = await self._get_contract(user_id, contract_id)
 
-        sub = await self.db.scalar(
-            select(SubscriptionModel).where(SubscriptionModel.user_id == user_id)
-        )
+        sub = await self.repo.get_subscription(user_id)
         if sub is None:
             raise EntitlementError("No active subscription found", "can_export_pdf")
-        plan = await self.db.scalar(select(PlanModel).where(PlanModel.id == sub.plan_id))
+        plan = await self.repo.get_plan(sub.plan_id)
         if plan is None or not plan.can_export_pdf:
             raise EntitlementError(
                 "Your subscription plan does not include PDF export", "can_export_pdf"
@@ -271,5 +213,4 @@ class ContractsService:
                 f"Only draft or expired contracts can be deleted "
                 f"(current status: '{contract.status}')"
             )
-        await self.db.delete(contract)
-        await self.db.flush()
+        await self.repo.delete(contract)
