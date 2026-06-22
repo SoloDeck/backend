@@ -4,7 +4,7 @@ import uuid
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.infrastructure.database.models import ClientModel, DealIntakeModel, DealModel, InvoiceModel, ProposalModel, ReminderModel, UserModel
+from src.infrastructure.database.models import ClientModel, DealIntakeModel, DealModel, InvoiceModel, LeadScoreModel, ProposalModel, ReminderModel, UserModel
 
 
 @dataclass
@@ -67,6 +67,30 @@ class DealsRepository:
         offset = (page - 1) * page_size
         result = await self.db.execute(select(DealModel).where(*conditions).order_by(DealModel.created_at.desc()).offset(offset).limit(page_size))
         return list(result.scalars().all()), total
+
+    async def create_lead_score(
+        self,
+        *,
+        id: uuid.UUID,
+        deal_id: uuid.UUID,
+        score: int,
+        confidence: float,
+        reasoning: str,
+        model_version: str,
+        generated_at,
+    ):
+        model = LeadScoreModel(
+            id=id,
+            deal_id=deal_id,
+            score=score,
+            confidence=confidence,
+            reasoning=reasoning,
+            model_version=model_version,
+            generated_at=generated_at,
+        )
+        self.db.add(model)
+        await self.db.flush()
+        return model
 
     async def save(self, obj):
         await self.db.flush(); await self.db.refresh(obj)

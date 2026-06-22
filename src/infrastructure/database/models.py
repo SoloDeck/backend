@@ -557,6 +557,26 @@ class DealActivityEntryModel(UUIDMixin, Base):
     )
 
 
+class LeadScoreModel(Base):
+    __tablename__ = "lead_scores"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    deal_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("deals.id"), nullable=False
+    )
+    score: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+    confidence: Mapped[float] = mapped_column(nullable=False)
+    reasoning: Mapped[str] = mapped_column(Text, nullable=False)
+    model_version: Mapped[str] = mapped_column(String(100), nullable=False)
+    generated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        Index("idx_lead_scores_deal", "deal_id"),
+        CheckConstraint("score BETWEEN 0 AND 100", name="ck_lead_scores_score_range"),
+        CheckConstraint("confidence BETWEEN 0.0 AND 1.0", name="ck_lead_scores_confidence_range"),
+    )
+
+
 class ProjectModel(UUIDMixin, TimestampMixin, Base):
     __tablename__ = "projects"
 

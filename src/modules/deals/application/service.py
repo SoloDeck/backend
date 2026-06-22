@@ -6,6 +6,9 @@ from datetime import UTC, datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.modules.deals.domain.aggregates.deal_aggregate import DealAggregate
+from src.modules.deals.domain.entities.deal import Deal
+from src.modules.deals.domain.value_objects.ai_confidence import AIConfidence
 from src.modules.deals.domain.value_objects.deal_stage import DealStage, STAGE_TRANSITIONS, TERMINAL_STAGES
 from src.modules.deals.infrastructure.repository import DealsRepository
 from src.modules.deals.schemas.request import DealRequest, DealStageRequest, PublicIntakeRequest
@@ -173,17 +176,55 @@ class DealsService:
             user_can_use_ai=True,  # TODO: get from subscriptions
         )
 
-        # Map HOT/WARM/COLD → numeric score and recommendation, then persist to the linked deal
         _score_map = {"HOT": 80, "WARM": 50, "COLD": 20}
-        raw_score = str(result.get("suggested_lead_score", "")).upper()
-        score = _score_map.get(raw_score, 50)
-        recommendation = "qualify" if score >= 50 else "pass"
+        _confidence_map = {"HOT": AIConfidence.high(), "WARM": AIConfidence.medium(), "COLD": AIConfidence.low()}
+        raw = str(result.get("suggested_lead_score", "")).upper()
+        score = _score_map.get(raw, 50)
+        confidence = _confidence_map.get(raw, AIConfidence.medium())
+        reasoning = str(result.get("reasoning", ""))
+        model_version = "gemma-4-31b-it"
 
-        deal = await self.repo.get_deal_by_client_id(intake.client_id, user_id)
-        if deal is not None:
-            deal.ai_qualification_score = score
-            deal.ai_qualification_recommendation = recommendation
-            await self.repo.save(deal)
+        deal_model = await self.repo.get_deal_by_client_id(intake.client_id, user_id)
+        if deal_model is not None:
+            # Build a minimal domain Deal so the aggregate can run its logic
+            deal_domain = Deal(
+                id=deal_model.id,
+                owner_user_id=deal_model.owner_user_id,
+                client_id=deal_model.client_id,
+                title=deal_model.title,
+                stage=DealStage(deal_model.stage),
+                value=None,
+                source=deal_model.source,
+                expected_close_date=None,
+                ai_score=deal_model.ai_qualification_score,
+                ai_confidence=None,
+                ai_recommendation=deal_model.ai_qualification_recommendation,
+                closed_at=deal_model.closed_at,
+                created_at=deal_model.created_at,
+                updated_at=deal_model.updated_at,
+                deleted_at=deal_model.deleted_at,
+            )
+            aggregate = DealAggregate(deal=deal_domain)
+            lead_score = aggregate.score_lead(
+                score=score,
+                confidence=confidence.value,
+                reasoning=reasoning,
+                model_version=model_version,
+            )
 
-        return {**result, "ai_qualification_score": score, "ai_qualification_recommendation": recommendation}
+            await self.repo.create_lead_score(
+                id=lead_score.id,
+                deal_id=lead_score.deal_id,
+                score=lead_score.score,
+                confidence=lead_score.confidence.value,
+                reasoning=lead_score.reasoning,
+                model_version=lead_score.model_version,
+                generated_at=lead_score.generated_at,
+            )
+
+            deal_model.ai_qualification_score = lead_score.score
+            deal_model.ai_qualification_recommendation = aggregate.deal.ai_recommendation
+            await self.repo.save(deal_model)
+
+        return {**result, "ai_qualification_score": score, "ai_qualification_recommendation": aggregate.deal.ai_recommendation if deal_model else None}
 
