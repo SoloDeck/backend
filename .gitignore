@@ -53,6 +53,9 @@ Thumbs.db
 # Docker volumes
 postgres_data/
 
+# Temporary image storage
+temp_img/
+
 # Alembic — migrations are intentionally tracked in version control
 
 # claude-code-harness (lifecycle) runtime state — keep out of git
