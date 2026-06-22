@@ -1,4 +1,4 @@
-"""Contracts API router."""
+"""Contracts API api."""
 
 import uuid
 from typing import Annotated
@@ -9,10 +9,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.infrastructure.database.session import get_db_session
 from src.modules.contracts.application.service import ContractsService
-from src.modules.contracts.schemas.request import ContractRequest
-from src.modules.contracts.schemas.response import ContractResponse
+from src.modules.contracts.schemas.request import ContractRequest, ContractStatusRequest, ContractTerminateRequest
+from src.shared.dependencies.ai import AIFacadeDep
+from src.modules.contracts.schemas.response import ContractExportResponse, ContractResponse
 from src.shared.dependencies.auth import CurrentUserId
-from src.shared.responses.response import ApiResponse
+from src.shared.responses.response import ApiResponse, PaginatedResponse
 
 router = APIRouter()
 
@@ -23,6 +24,29 @@ class MsgResp(BaseModel):
     detail: str
 
 
+@router.get("", response_model=PaginatedResponse[ContractResponse])
+async def list_contracts(
+    user_id: CurrentUserId,
+    db: DBSession,
+    status: str | None = Query(
+        default=None,
+        description="Filter by status: draft, pending_signatures, active, completed, terminated, expired",
+    ),
+    deal_id: uuid.UUID | None = Query(default=None, description="Filter by deal"),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
+) -> PaginatedResponse[ContractResponse]:
+    contracts, total = await ContractsService(db=db).list_all(
+        user_id, status=status, deal_id=deal_id, page=page, page_size=page_size
+    )
+    return PaginatedResponse.ok(
+        [ContractResponse.model_validate(c) for c in contracts],
+        total=total,
+        page=page,
+        page_size=page_size,
+    )
+
+
 @router.post("", response_model=ApiResponse[ContractResponse], status_code=201)
 async def create_contract(
     payload: ContractRequest,
@@ -31,16 +55,6 @@ async def create_contract(
 ) -> ApiResponse[ContractResponse]:
     contract = await ContractsService(db=db).create(user_id, payload)
     return ApiResponse.created(ContractResponse.model_validate(contract))
-
-
-@router.get("", response_model=ApiResponse[list[ContractResponse]])
-async def list_contracts(
-    user_id: CurrentUserId,
-    db: DBSession,
-    status: str | None = Query(default=None, description="Filter by status: draft, pending_signatures, active, completed, terminated"),
-) -> ApiResponse[list[ContractResponse]]:
-    contracts = await ContractsService(db=db).list_all(user_id, status=status)
-    return ApiResponse.ok([ContractResponse.model_validate(c) for c in contracts])
 
 
 @router.get("/{contract_id}", response_model=ApiResponse[ContractResponse])
@@ -62,6 +76,80 @@ async def update_contract(
 ) -> ApiResponse[ContractResponse]:
     contract = await ContractsService(db=db).update(user_id, contract_id, payload)
     return ApiResponse.ok(ContractResponse.model_validate(contract))
+
+
+@router.post("/{contract_id}/generate", response_model=ApiResponse[ContractResponse])
+async def ai_generate_contract_content(
+    contract_id: uuid.UUID,
+    user_id: CurrentUserId,
+    db: DBSession,
+    ai: AIFacadeDep,
+) -> ApiResponse[ContractResponse]:
+    contract = await ContractsService(db=db).generate_content(user_id, contract_id, ai)
+    return ApiResponse.ok(ContractResponse.model_validate(contract))
+
+
+@router.post("/{contract_id}/amend", response_model=ApiResponse[ContractResponse], status_code=201)
+async def amend_contract(
+    contract_id: uuid.UUID,
+    payload: ContractRequest,
+    user_id: CurrentUserId,
+    db: DBSession,
+) -> ApiResponse[ContractResponse]:
+    contract = await ContractsService(db=db).amend(user_id, contract_id, payload)
+    return ApiResponse.created(ContractResponse.model_validate(contract))
+
+
+@router.post("/{contract_id}/send", response_model=ApiResponse[ContractResponse])
+async def send_contract(
+    contract_id: uuid.UUID,
+    user_id: CurrentUserId,
+    db: DBSession,
+) -> ApiResponse[ContractResponse]:
+    contract = await ContractsService(db=db).send(user_id, contract_id)
+    return ApiResponse.ok(ContractResponse.model_validate(contract))
+
+
+@router.post("/{contract_id}/sign", response_model=ApiResponse[ContractResponse])
+async def sign_contract(
+    contract_id: uuid.UUID,
+    user_id: CurrentUserId,
+    db: DBSession,
+) -> ApiResponse[ContractResponse]:
+    contract = await ContractsService(db=db).sign(user_id, contract_id)
+    return ApiResponse.ok(ContractResponse.model_validate(contract))
+
+
+@router.post("/{contract_id}/terminate", response_model=ApiResponse[ContractResponse])
+async def terminate_contract(
+    contract_id: uuid.UUID,
+    payload: ContractTerminateRequest,
+    user_id: CurrentUserId,
+    db: DBSession,
+) -> ApiResponse[ContractResponse]:
+    contract = await ContractsService(db=db).terminate(user_id, contract_id)
+    return ApiResponse.ok(ContractResponse.model_validate(contract))
+
+
+@router.patch("/{contract_id}/status", response_model=ApiResponse[ContractResponse])
+async def transition_contract_status(
+    contract_id: uuid.UUID,
+    payload: ContractStatusRequest,
+    user_id: CurrentUserId,
+    db: DBSession,
+) -> ApiResponse[ContractResponse]:
+    contract = await ContractsService(db=db).transition_status(user_id, contract_id, payload.status)
+    return ApiResponse.ok(ContractResponse.model_validate(contract))
+
+
+@router.get("/{contract_id}/export", response_model=ApiResponse[ContractExportResponse])
+async def export_contract_pdf(
+    contract_id: uuid.UUID,
+    user_id: CurrentUserId,
+    db: DBSession,
+) -> ApiResponse[ContractExportResponse]:
+    result = await ContractsService(db=db).export_pdf(user_id, contract_id)
+    return ApiResponse.ok(ContractExportResponse(**result))
 
 
 @router.delete("/{contract_id}", response_model=ApiResponse[MsgResp])

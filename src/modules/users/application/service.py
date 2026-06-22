@@ -7,7 +7,7 @@ from datetime import UTC
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.modules.users.schemas.request import ChangePasswordRequest, UpdateUserRequest
+from src.modules.users.schemas.request import ChangePasswordRequest, FreelancerProfileUpdateRequest, UpdateUserRequest
 from src.shared.exceptions.domain import AuthenticationError, NotFoundError
 from src.shared.security.passwords import hash_password, verify_password
 
@@ -46,6 +46,16 @@ class UsersService:
         user.deleted_at = datetime.now(UTC)
         user.status = "deleted"
         await self.db.flush()
+
+    async def update_freelancer_profile(
+        self, user_id: uuid.UUID, payload: FreelancerProfileUpdateRequest
+    ):  # type: ignore[return]
+        user = await self.get_me(user_id)
+        for field in payload.model_fields_set:
+            setattr(user, field, getattr(payload, field))
+        await self.db.flush()
+        await self.db.refresh(user)
+        return user
 
     async def change_password(self, user_id: uuid.UUID, payload: ChangePasswordRequest) -> None:
         user = await self.get_me(user_id)

@@ -61,6 +61,9 @@ class DealsService:
             actual_value=payload.actual_value,
             currency=payload.currency,
             notes=payload.notes,
+            project_type=payload.project_type,
+            service_category=payload.service_category,
+            pricing_tier=payload.pricing_tier,
         )
 
     async def create_public_intake(self, share_token: str, payload: PublicIntakeRequest):
@@ -109,15 +112,18 @@ class DealsService:
         user_id: uuid.UUID,
         title: str | None = None,
         stage: str | None = None,
-    ) -> list:
-        return await self.repo.list_all(user_id, title=title, stage=stage)
+        page: int = 1,
+        page_size: int = 20,
+    ) -> tuple[list, int]:
+        return await self.repo.list_all(user_id, title=title, stage=stage, page=page, page_size=page_size)
 
     async def get_one(self, user_id: uuid.UUID, deal_id: uuid.UUID):  # type: ignore[return]
         return await self._get_deal(user_id, deal_id)
 
     async def update(self, user_id: uuid.UUID, deal_id: uuid.UUID, payload: DealRequest):  # type: ignore[return]
         deal = await self._get_deal(user_id, deal_id)
-        for field in ("title", "source", "estimated_value", "actual_value", "currency", "notes"):
+        for field in ("title", "source", "estimated_value", "actual_value", "currency", "notes",
+                      "project_type", "service_category", "pricing_tier"):
             value = getattr(payload, field, None)
             if value is not None:
                 setattr(deal, field, value)
@@ -154,21 +160,30 @@ class DealsService:
             user_id: uuid.UUID,
             intake_id: uuid.UUID,
     ):
-        intake = await self._get_intake(
-            user_id,
-            intake_id,
-        )
+        intake = await self._get_intake(user_id, intake_id)
 
         if not intake.inquiry_text:
-            raise ValueError(
-                "Deal intake has no inquiry text"
-            )
+            raise ValueError("Deal intake has no inquiry text")
 
         if not self.ai_facade:
             raise RuntimeError("AIFacade not initialized")
 
-        return await self.ai_facade.qualify_lead(
+        result = await self.ai_facade.qualify_lead(
             inquiry_text=intake.inquiry_text,
             user_can_use_ai=True,  # TODO: get from subscriptions
         )
+
+        # Map HOT/WARM/COLD → numeric score and recommendation, then persist to the linked deal
+        _score_map = {"HOT": 80, "WARM": 50, "COLD": 20}
+        raw_score = str(result.get("suggested_lead_score", "")).upper()
+        score = _score_map.get(raw_score, 50)
+        recommendation = "qualify" if score >= 50 else "pass"
+
+        deal = await self.repo.get_deal_by_client_id(intake.client_id, user_id)
+        if deal is not None:
+            deal.ai_qualification_score = score
+            deal.ai_qualification_recommendation = recommendation
+            await self.repo.save(deal)
+
+        return {**result, "ai_qualification_score": score, "ai_qualification_recommendation": recommendation}
 

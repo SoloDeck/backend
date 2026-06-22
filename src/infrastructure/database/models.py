@@ -92,6 +92,7 @@ _contract_status = PgEnum(
     "completed",
     "terminated",
     "expired",
+    "archived",
     name="contract_status",
     create_type=False,
 )
@@ -155,6 +156,11 @@ class UserModel(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     currency: Mapped[str] = mapped_column(String(3), nullable=False, server_default="VND")
     portfolio_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     business_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+    # Public freelancer directory
+    professional_title: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    service_categories: Mapped[list[str] | None] = mapped_column(ARRAY(Text), nullable=True)
+    is_listed: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
 
     # Payment info
     momo_phone_number: Mapped[str | None] = mapped_column(String(20), nullable=True)
@@ -448,6 +454,9 @@ class DealModel(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     actual_value: Mapped[Decimal | None] = mapped_column(Numeric(15, 2), nullable=True)
     currency: Mapped[str] = mapped_column(String(3), nullable=False, server_default="VND")
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    project_type: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    service_category: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    pricing_tier: Mapped[str | None] = mapped_column(String(100), nullable=True)
     ai_qualification_score: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
     ai_qualification_recommendation: Mapped[str | None] = mapped_column(
         _ai_recommendation, nullable=True
@@ -545,6 +554,25 @@ class DealActivityEntryModel(UUIDMixin, Base):
     __table_args__ = (
         Index("idx_deal_activity_entries_deal", "deal_id", "created_at"),
         Index("idx_deal_activity_entries_user", "owner_user_id"),
+    )
+
+
+class DealTaskModel(UUIDMixin, TimestampMixin, Base):
+    __tablename__ = "deal_tasks"
+
+    deal_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("deals.id"), nullable=False
+    )
+    owner_user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=False
+    )
+    title: Mapped[str] = mapped_column(String(500), nullable=False)
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_done: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+
+    __table_args__ = (
+        Index("idx_deal_tasks_deal", "deal_id"),
+        Index("idx_deal_tasks_owner_deal", "owner_user_id", "deal_id"),
     )
 
 

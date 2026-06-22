@@ -1,4 +1,4 @@
-"""Deals API router."""
+"""Deals API api."""
 
 import uuid
 from typing import Annotated
@@ -13,9 +13,12 @@ from src.modules.deals.schemas.request import DealRequest, DealStageRequest
 from src.modules.deals.schemas.response import DealResponse
 from src.shared.dependencies.ai import AIFacadeDep
 from src.shared.dependencies.auth import CurrentUserId
-from src.shared.responses.response import ApiResponse
+from src.shared.responses.response import ApiResponse, PaginatedResponse
+
+from src.modules.deals.api.task_router import router as _task_router
 
 router = APIRouter()
+router.include_router(_task_router)
 
 DBSession = Annotated[AsyncSession, Depends(get_db_session)]
 
@@ -34,15 +37,17 @@ async def create_deal(
     return ApiResponse.created(DealResponse.model_validate(deal))
 
 
-@router.get("", response_model=ApiResponse[list[DealResponse]])
+@router.get("", response_model=PaginatedResponse[DealResponse])
 async def list_deals(
     user_id: CurrentUserId,
     db: DBSession,
     title: str | None = Query(default=None, description="Search by title (case-insensitive, partial match)"),
     stage: str | None = Query(default=None, description="Filter by stage: new_lead, qualified, proposal_sent, in_negotiation, active, completed_and_billed, lost"),
-) -> ApiResponse[list[DealResponse]]:
-    deals = await DealsService(db=db).list_all(user_id, title=title, stage=stage)
-    return ApiResponse.ok([DealResponse.model_validate(d) for d in deals])
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
+) -> PaginatedResponse[DealResponse]:
+    deals, total = await DealsService(db=db).list_all(user_id, title=title, stage=stage, page=page, page_size=page_size)
+    return PaginatedResponse.ok([DealResponse.model_validate(d) for d in deals], total=total, page=page, page_size=page_size)
 
 
 @router.get("/{deal_id}", response_model=ApiResponse[DealResponse])

@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+
+<html lang="vi">
+
+<head>
+    <meta charset="UTF-8">
+    <title>Đề Xuất Dịch Vụ</title>
+<style>
+    @page {
+        size: A4;
+        margin: 2cm;
+    }
+
+    body {
+        font-family: Arial, sans-serif;
+        font-size: 12pt;
+        line-height: 1.6;
+        color: #222;
+    }
+
+    h1 {
+        text-align: center;
+        margin-bottom: 5px;
+    }
+
+    h2 {
+        margin-top: 25px;
+        padding-bottom: 4px;
+        border-bottom: 1px solid #ccc;
+    }
+
+    .subtitle {
+        text-align: center;
+        color: #666;
+        margin-bottom: 30px;
+    }
+
+    .info-table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-bottom: 20px;
+    }
+
+    .info-table td {
+        padding: 6px 0;
+        vertical-align: top;
+    }
+
+    .label {
+        width: 180px;
+        font-weight: bold;
+    }
+
+    ul {
+        padding-left: 20px;
+    }
+
+    .pricing-box {
+        border: 1px solid #ccc;
+        padding: 12px;
+        margin-top: 10px;
+    }
+
+    .signature {
+        width: 100%;
+        margin-top: 60px;
+    }
+
+    .signature td {
+        width: 50%;
+        text-align: center;
+        vertical-align: top;
+    }
+
+    .footer-note {
+        margin-top: 40px;
+        font-size: 10pt;
+        color: #777;
+        text-align: center;
+    }
+</style>
+
+</head>
+
+<body>
+
+<h1>ĐỀ XUẤT DỊCH VỤ</h1>
+
+<div class="subtitle">
+    Được chuẩn bị bởi {{ freelancer_name }}
+</div>
+
+<table class="info-table">
+    <tr>
+        <td class="label">Khách hàng:</td>
+        <td>{{ client_name }}</td>
+    </tr>
+
+    <tr>
+        <td class="label">Loại dự án:</td>
+        <td>{{ project_type }}</td>
+    </tr>
+
+    <tr>
+        <td class="label">Ngày đề xuất:</td>
+        <td>{{ proposal_date }}</td>
+    </tr>
+</table>
+
+<h2>1. Tổng Quan Dự Án</h2>
+
+<p>
+    {{ project_overview }}
+</p>
+
+<h2>2. Phạm Vi Công Việc</h2>
+
+<ul>
+    {% for item in scope_of_work %}
+    <li>{{ item }}</li>
+    {% endfor %}
+</ul>
+
+<h2>3. Sản Phẩm Bàn Giao</h2>
+
+<ul>
+    {% for item in deliverables %}
+    <li>{{ item }}</li>
+    {% endfor %}
+</ul>
+
+<h2>4. Thời Gian Thực Hiện</h2>
+
+<p>
+    {{ timeline }}
+</p>
+
+<h2>5. Chi Phí Dự Kiến</h2>
+
+<div class="pricing-box">
+    <strong>Tổng chi phí dự án:</strong>
+    {{ pricing }}
+</div>
+
+<h2>6. Điều Khoản Thanh Toán</h2>
+
+<p>
+    {{ payment_terms }}
+</p>
+
+<h2>7. Ghi Chú Và Giả Định</h2>
+
+<p>
+    {{ assumptions }}
+</p>
+
+<table class="signature">
+    <tr>
+        <td>
+            <strong>{{ client_name }}</strong>
+            <br>
+            Khách hàng
+            <br><br><br><br>
+            ____________________
+        </td>
+
+        <td>
+            <strong>{{ freelancer_name }}</strong>
+            <br>
+            Nhà cung cấp dịch vụ
+            <br><br><br><br>
+            ____________________
+        </td>
+    </tr>
+</table>
+
+<div class="footer-note">
+    Tài liệu được tạo bởi SoloDesk.
+</div>
+
+</body>
+
+</html>

@@ -1,4 +1,4 @@
-"""Admin API router."""
+"""Admin API api."""
 
 import uuid
 from typing import Annotated

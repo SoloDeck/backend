@@ -292,7 +292,7 @@ async def transition_stage(
     deal = await service.transition_stage(deal_id, body.target_stage, user_id)
     return ApiResponse.ok(DealResponse.model_validate(deal))
 
-# WRONG — raw return and business logic in router
+# WRONG — raw return and business logic in api
 @router.post("/{deal_id}/stage-transition")
 async def transition_stage(...):
     if deal.stage == "lost":

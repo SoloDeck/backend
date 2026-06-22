@@ -52,12 +52,21 @@ class DealsRepository:
         await self.db.flush(); await self.db.refresh(deal)
         return deal
 
-    async def list_all(self, owner_user_id: uuid.UUID, title: str | None = None, stage: str | None = None) -> list:
+    async def get_deal_by_client_id(self, client_id: uuid.UUID, owner_user_id: uuid.UUID):
+        return await self.db.scalar(
+            select(DealModel)
+            .where(DealModel.client_id == client_id, DealModel.owner_user_id == owner_user_id, DealModel.deleted_at.is_(None))
+            .order_by(DealModel.created_at.desc())
+        )
+
+    async def list_all(self, owner_user_id: uuid.UUID, title: str | None = None, stage: str | None = None, page: int = 1, page_size: int = 20) -> tuple[list, int]:
         conditions = [DealModel.owner_user_id == owner_user_id, DealModel.deleted_at.is_(None)]
         if title is not None: conditions.append(DealModel.title.ilike(f"%{title}%"))
         if stage is not None: conditions.append(DealModel.stage == stage)
-        result = await self.db.execute(select(DealModel).where(*conditions))
-        return list(result.scalars().all())
+        total = await self.db.scalar(select(func.count()).select_from(DealModel).where(*conditions)) or 0
+        offset = (page - 1) * page_size
+        result = await self.db.execute(select(DealModel).where(*conditions).order_by(DealModel.created_at.desc()).offset(offset).limit(page_size))
+        return list(result.scalars().all()), total
 
     async def save(self, obj):
         await self.db.flush(); await self.db.refresh(obj)
