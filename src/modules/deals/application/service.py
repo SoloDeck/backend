@@ -220,9 +220,15 @@ class DealsService:
                 reasoning=lead_score.reasoning,
                 model_version=lead_score.model_version,
                 generated_at=lead_score.generated_at,
+                project_type=result.get("project_type"),
+                budget_signal=result.get("budget_signal"),
+                timeline_signal=result.get("timeline_signal"),
+                urgency_signal=result.get("urgency_signal"),
+                red_flags=result.get("red_flags"),
             )
 
             deal_model.ai_qualification_score = lead_score.score
+            deal_model.ai_qualification_confidence = lead_score.confidence.value
             deal_model.ai_qualification_recommendation = aggregate.deal.ai_recommendation
             await self.repo.save(deal_model)
 

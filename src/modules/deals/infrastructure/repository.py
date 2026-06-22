@@ -78,6 +78,11 @@ class DealsRepository:
         reasoning: str,
         model_version: str,
         generated_at,
+        project_type: str | None = None,
+        budget_signal: str | None = None,
+        timeline_signal: str | None = None,
+        urgency_signal: str | None = None,
+        red_flags: list | None = None,
     ):
         model = LeadScoreModel(
             id=id,
@@ -87,6 +92,11 @@ class DealsRepository:
             reasoning=reasoning,
             model_version=model_version,
             generated_at=generated_at,
+            project_type=project_type,
+            budget_signal=budget_signal,
+            timeline_signal=timeline_signal,
+            urgency_signal=urgency_signal,
+            red_flags=red_flags,
         )
         self.db.add(model)
         await self.db.flush()

@@ -458,6 +458,7 @@ class DealModel(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     service_category: Mapped[str | None] = mapped_column(String(200), nullable=True)
     pricing_tier: Mapped[str | None] = mapped_column(String(100), nullable=True)
     ai_qualification_score: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
+    ai_qualification_confidence: Mapped[float | None] = mapped_column(nullable=True)
     ai_qualification_recommendation: Mapped[str | None] = mapped_column(
         _ai_recommendation, nullable=True
     )
@@ -569,6 +570,11 @@ class LeadScoreModel(Base):
     reasoning: Mapped[str] = mapped_column(Text, nullable=False)
     model_version: Mapped[str] = mapped_column(String(100), nullable=False)
     generated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    project_type: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    budget_signal: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    timeline_signal: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    urgency_signal: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    red_flags: Mapped[list | None] = mapped_column(JSONB, nullable=True)
 
     __table_args__ = (
         Index("idx_lead_scores_deal", "deal_id"),
