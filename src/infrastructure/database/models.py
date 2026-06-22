@@ -552,6 +552,25 @@ class DealActivityEntryModel(UUIDMixin, Base):
     )
 
 
+class DealTaskModel(UUIDMixin, TimestampMixin, Base):
+    __tablename__ = "deal_tasks"
+
+    deal_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("deals.id"), nullable=False
+    )
+    owner_user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=False
+    )
+    title: Mapped[str] = mapped_column(String(500), nullable=False)
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_done: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+
+    __table_args__ = (
+        Index("idx_deal_tasks_deal", "deal_id"),
+        Index("idx_deal_tasks_owner_deal", "owner_user_id", "deal_id"),
+    )
+
+
 # =============================================================================
 # DOMAIN: Proposals
 # =============================================================================
