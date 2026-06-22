@@ -27,6 +27,7 @@ from src.modules.proposals.api.router import router as proposals_router
 from src.modules.reminders.api.router import router as reminders_router
 from src.modules.subscriptions.api.router import router as subscriptions_router
 from src.modules.users.api.router import router as users_router
+from src.modules.freelancers.api.router import router as freelancers_router
 from src.shared.exceptions.http import setup_exception_handlers
 from src.shared.logging.config import configure_logging
 from src.ai.lead_qualifier.api.router import router as lead_qualifier_router
@@ -112,8 +113,9 @@ app.include_router(public_invoices_router, prefix=f"{API_V1}/invoices/public", t
 app.include_router(invoices_router,      prefix=f"{API_V1}/invoices",      tags=["Invoices"])
 app.include_router(reminders_router,     prefix=f"{API_V1}/reminders",     tags=["Reminders"])
 app.include_router(analytics_router,     prefix=f"{API_V1}/analytics",     tags=["Analytics"])
-app.include_router(public_intake_router, prefix=f"{API_V1}/intake",        tags=["Public"])
-app.include_router(admin_router,         prefix=f"{API_V1}/admin",         tags=["Admin"])
+app.include_router(public_intake_router, prefix=f"{API_V1}/intake",              tags=["Public"])
+app.include_router(freelancers_router,   prefix=f"{API_V1}/public/freelancers",  tags=["Public"])
+app.include_router(admin_router,         prefix=f"{API_V1}/admin",               tags=["Admin"])
 app.include_router(
     lead_qualifier_router,
 prefix=f"{API_V1}/ai"

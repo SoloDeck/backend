@@ -157,6 +157,11 @@ class UserModel(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     portfolio_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     business_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
+    # Public freelancer directory
+    professional_title: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    service_categories: Mapped[list[str] | None] = mapped_column(ARRAY(Text), nullable=True)
+    is_listed: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+
     # Payment info
     momo_phone_number: Mapped[str | None] = mapped_column(String(20), nullable=True)
     bank_account_info: Mapped[str | None] = mapped_column(Text, nullable=True)

@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.infrastructure.database.session import get_db_session
 from src.modules.users.application.service import UsersService
-from src.modules.users.schemas.request import ChangePasswordRequest, UpdateUserRequest
+from src.modules.users.schemas.request import ChangePasswordRequest, FreelancerProfileUpdateRequest, UpdateUserRequest
 from src.modules.users.schemas.response import MessageResponse, UserResponse
 from src.shared.dependencies.auth import CurrentUserId
 from src.shared.responses.response import ApiResponse
@@ -51,6 +51,20 @@ async def delete_me(
 ) -> ApiResponse[MessageResponse]:
     await UsersService(db=db).delete_me(user_id)
     return ApiResponse.ok(MessageResponse(detail="Account deleted"))
+
+
+@router.patch(
+    "/me/freelancer-profile",
+    response_model=ApiResponse[UserResponse],
+    summary="Update public freelancer directory profile",
+)
+async def update_freelancer_profile(
+    payload: FreelancerProfileUpdateRequest,
+    user_id: CurrentUserId,
+    db: DBSession,
+) -> ApiResponse[UserResponse]:
+    user = await UsersService(db=db).update_freelancer_profile(user_id, payload)
+    return ApiResponse.ok(UserResponse.model_validate(user))
 
 
 @router.post(
