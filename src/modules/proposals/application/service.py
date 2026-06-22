@@ -37,6 +37,9 @@ class ProposalsService:
         return proposal
 
     async def create(self, user_id: uuid.UUID, payload: ProposalRequest, *, ai_generated: bool = False):  # type: ignore[return]
+        deal = await self.repo.get_deal(payload.deal_id)
+        if deal is None or deal.owner_user_id != user_id:
+            raise NotFoundError(f"Deal {payload.deal_id} not found")
         version_number = await self.repo.count_by_deal(payload.deal_id) + 1
         return await self.repo.create(
             deal_id=payload.deal_id,
