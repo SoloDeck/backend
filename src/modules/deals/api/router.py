@@ -15,10 +15,7 @@ from src.shared.dependencies.ai import AIFacadeDep
 from src.shared.dependencies.auth import CurrentUserId
 from src.shared.responses.response import ApiResponse, PaginatedResponse
 
-from src.modules.deals.api.task_router import router as _task_router
-
 router = APIRouter()
-router.include_router(_task_router)
 
 DBSession = Annotated[AsyncSession, Depends(get_db_session)]
 

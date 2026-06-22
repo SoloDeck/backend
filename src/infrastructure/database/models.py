@@ -557,11 +557,30 @@ class DealActivityEntryModel(UUIDMixin, Base):
     )
 
 
-class DealTaskModel(UUIDMixin, TimestampMixin, Base):
-    __tablename__ = "deal_tasks"
+class ProjectModel(UUIDMixin, TimestampMixin, Base):
+    __tablename__ = "projects"
 
     deal_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("deals.id"), nullable=False
+    )
+    owner_user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=False
+    )
+    title: Mapped[str] = mapped_column(String(500), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    __table_args__ = (
+        Index("idx_projects_deal", "deal_id"),
+        Index("idx_projects_owner", "owner_user_id"),
+        Index("idx_projects_owner_deal", "owner_user_id", "deal_id"),
+    )
+
+
+class TaskModel(UUIDMixin, TimestampMixin, Base):
+    __tablename__ = "tasks"
+
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("projects.id"), nullable=False
     )
     owner_user_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id"), nullable=False
@@ -571,8 +590,8 @@ class DealTaskModel(UUIDMixin, TimestampMixin, Base):
     is_done: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
 
     __table_args__ = (
-        Index("idx_deal_tasks_deal", "deal_id"),
-        Index("idx_deal_tasks_owner_deal", "owner_user_id", "deal_id"),
+        Index("idx_tasks_project", "project_id"),
+        Index("idx_tasks_owner_project", "owner_user_id", "project_id"),
     )
 
 
