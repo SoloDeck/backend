@@ -19,6 +19,7 @@ info:
       - '6.6: POST /intake/{share_token} implemented (201/404/422/429); UserResponse exposes intake_share_token; added PublicIntakeRequest/PublicIntakeResponse.'
     intentional_gaps:
       - 'None outstanding for Phase 6 Package 2 endpoints.'
+      - 'Phase 6 Package 3: GET /intake/{share_token}/config, GET /intake-form, PUT /intake-form added.'
 
 servers:
   - url: https://api.solodesk.space/api/v1
@@ -58,6 +59,8 @@ tags:
     description: Standalone AI endpoints for lead qualification, proposal/contract generation, and follow-up drafts. All require an AI-enabled subscription.
   - name: Admin
     description: Platform administration — user management, subscription overrides, plan catalog, templates, feature flags, AI cost monitoring, and audit logs. Requires `role=admin`.
+  - name: Intake Form
+    description: Authenticated endpoints for freelancers to configure their client-facing intake form — field definitions, labels, visibility, and required-field rules.
   - name: Public
     description: Client-facing unauthenticated endpoints for viewing and responding to proposals, contracts, and invoices via shareable links.
 
@@ -66,6 +69,37 @@ tags:
 # ===========================================================================
 paths:
 
+
+  /intake/{share_token}/config:
+    get:
+      tags: [Public]
+      summary: Get public intake form configuration
+      description: |
+        Returns the freelancer's intake form configuration for public display.
+        Only fields with `is_visible=true` are included. Used by the client-facing
+        intake page to render the correct form before submission.
+        No authentication required — the `share_token` identifies the freelancer.
+      security: []
+      parameters:
+        - name: share_token
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Public form configuration
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/PublicIntakeFormConfigResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
 
   /intake/{share_token}:
     post:
@@ -117,6 +151,62 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiError'
+
+  # -------------------------------------------------------------------------
+  # INTAKE FORM (authenticated)
+  # -------------------------------------------------------------------------
+  /intake-form:
+    get:
+      tags: [Intake Form]
+      summary: Get intake form configuration
+      description: |
+        Returns the authenticated freelancer's intake form configuration including
+        all fields (visible and hidden). Falls back to the 7-field default form if
+        no configuration has been saved yet. The `share_url` in the response is the
+        public link to share with potential clients.
+      responses:
+        '200':
+          description: Intake form configuration
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/IntakeFormResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    put:
+      tags: [Intake Form]
+      summary: Save intake form configuration
+      description: |
+        Creates or fully replaces the authenticated freelancer's intake form
+        configuration. The `fields` array is a complete replacement — omitting a
+        field removes it. Returns the saved configuration including all fields.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IntakeFormUpdateRequest'
+      responses:
+        '200':
+          description: Saved intake form configuration
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/IntakeFormResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
 
   # -------------------------------------------------------------------------
   # AUTH
@@ -3746,6 +3836,132 @@ components:
         updated_at:
           type: string
           format: date-time
+
+    IntakeFormFieldRequest:
+      type: object
+      required: [field_key, label, field_type]
+      properties:
+        field_key:
+          type: string
+          maxLength: 100
+        label:
+          type: string
+          maxLength: 200
+        placeholder:
+          type: string
+          maxLength: 500
+          nullable: true
+        field_type:
+          type: string
+          maxLength: 50
+          default: text
+        is_required:
+          type: boolean
+          default: false
+        is_visible:
+          type: boolean
+          default: true
+        sort_order:
+          type: integer
+          default: 0
+
+    IntakeFormUpdateRequest:
+      type: object
+      required: [title, fields]
+      properties:
+        title:
+          type: string
+          maxLength: 500
+        description:
+          type: string
+          nullable: true
+        is_active:
+          type: boolean
+          default: true
+        fields:
+          type: array
+          items:
+            $ref: '#/components/schemas/IntakeFormFieldRequest'
+
+    IntakeFormFieldResponse:
+      type: object
+      required: [id, field_key, label, field_type, is_required, is_visible, sort_order]
+      properties:
+        id:
+          type: string
+          format: uuid
+        field_key:
+          type: string
+        label:
+          type: string
+        placeholder:
+          type: string
+          nullable: true
+        field_type:
+          type: string
+        is_required:
+          type: boolean
+        is_visible:
+          type: boolean
+        sort_order:
+          type: integer
+
+    IntakeFormResponse:
+      type: object
+      required: [title, is_active, fields]
+      properties:
+        id:
+          type: string
+          format: uuid
+          nullable: true
+          description: null when no config has been saved yet (defaults are returned)
+        title:
+          type: string
+        description:
+          type: string
+          nullable: true
+        is_active:
+          type: boolean
+        share_url:
+          type: string
+          nullable: true
+          description: Public URL to share with clients for intake submission
+        fields:
+          type: array
+          items:
+            $ref: '#/components/schemas/IntakeFormFieldResponse'
+
+    PublicIntakeFormFieldResponse:
+      type: object
+      required: [field_key, label, field_type, is_required]
+      properties:
+        field_key:
+          type: string
+        label:
+          type: string
+        placeholder:
+          type: string
+          nullable: true
+        field_type:
+          type: string
+        is_required:
+          type: boolean
+
+    PublicIntakeFormConfigResponse:
+      type: object
+      required: [title, freelancer_name, fields]
+      properties:
+        title:
+          type: string
+        description:
+          type: string
+          nullable: true
+        freelancer_name:
+          type: string
+        fields:
+          type: array
+          items:
+            $ref: '#/components/schemas/PublicIntakeFormFieldResponse'
 
     PublicIntakeRequest:
       type: object
