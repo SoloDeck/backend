@@ -18,6 +18,12 @@ class DealResponse(BaseModel):
     actual_value: Decimal | None
     currency: str
     notes: str | None
+    project_type: str | None
+    service_category: str | None
+    pricing_tier: str | None
+    ai_qualification_score: int | None
+    ai_qualification_recommendation: str | None
+    closed_at: datetime | None
     created_at: datetime
     updated_at: datetime
 

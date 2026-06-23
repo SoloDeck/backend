@@ -52,7 +52,7 @@ async def require_admin(
     return claims
 
 
-# Convenience type aliases for router signatures
+# Convenience type aliases for api signatures
 CurrentUser = Annotated[TokenClaims, Depends(get_current_user)]
 AdminUser = Annotated[TokenClaims, Depends(require_admin)]
 

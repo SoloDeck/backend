@@ -6,6 +6,9 @@ from datetime import UTC, datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.modules.deals.domain.aggregates.deal_aggregate import DealAggregate
+from src.modules.deals.domain.entities.deal import Deal
+from src.modules.deals.domain.value_objects.ai_confidence import AIConfidence
 from src.modules.deals.domain.value_objects.deal_stage import DealStage, STAGE_TRANSITIONS, TERMINAL_STAGES
 from src.modules.deals.infrastructure.repository import DealsRepository
 from src.modules.deals.schemas.request import DealRequest, DealStageRequest, PublicIntakeRequest
@@ -61,6 +64,9 @@ class DealsService:
             actual_value=payload.actual_value,
             currency=payload.currency,
             notes=payload.notes,
+            project_type=payload.project_type,
+            service_category=payload.service_category,
+            pricing_tier=payload.pricing_tier,
         )
 
     async def create_public_intake(self, share_token: str, payload: PublicIntakeRequest):
@@ -90,7 +96,7 @@ class DealsService:
         await self.repo.create(
             owner_user_id=owner.id,
             client_id=client.id,
-            title=f"Intake — {payload.name}",
+            title=payload.project_name or f"Intake — {payload.name}",
             stage="new_lead",
             source="inbound",
             currency=owner.currency,
@@ -98,7 +104,7 @@ class DealsService:
         return await self.repo.create_intake(
             owner_user_id=owner.id,
             client_id=client.id,
-            inquiry_text=payload.inquiry_text,
+            inquiry_text=payload.inquiry_text or "",
             estimated_budget=payload.estimated_budget,
             desired_timeline=payload.desired_timeline,
             source="inbound",
@@ -109,15 +115,18 @@ class DealsService:
         user_id: uuid.UUID,
         title: str | None = None,
         stage: str | None = None,
-    ) -> list:
-        return await self.repo.list_all(user_id, title=title, stage=stage)
+        page: int = 1,
+        page_size: int = 20,
+    ) -> tuple[list, int]:
+        return await self.repo.list_all(user_id, title=title, stage=stage, page=page, page_size=page_size)
 
     async def get_one(self, user_id: uuid.UUID, deal_id: uuid.UUID):  # type: ignore[return]
         return await self._get_deal(user_id, deal_id)
 
     async def update(self, user_id: uuid.UUID, deal_id: uuid.UUID, payload: DealRequest):  # type: ignore[return]
         deal = await self._get_deal(user_id, deal_id)
-        for field in ("title", "source", "estimated_value", "actual_value", "currency", "notes"):
+        for field in ("title", "source", "estimated_value", "actual_value", "currency", "notes",
+                      "project_type", "service_category", "pricing_tier"):
             value = getattr(payload, field, None)
             if value is not None:
                 setattr(deal, field, value)
@@ -154,21 +163,74 @@ class DealsService:
             user_id: uuid.UUID,
             intake_id: uuid.UUID,
     ):
-        intake = await self._get_intake(
-            user_id,
-            intake_id,
-        )
+        intake = await self._get_intake(user_id, intake_id)
 
         if not intake.inquiry_text:
-            raise ValueError(
-                "Deal intake has no inquiry text"
-            )
+            raise ValueError("Deal intake has no inquiry text")
 
         if not self.ai_facade:
             raise RuntimeError("AIFacade not initialized")
 
-        return await self.ai_facade.qualify_lead(
+        result = await self.ai_facade.qualify_lead(
             inquiry_text=intake.inquiry_text,
             user_can_use_ai=True,  # TODO: get from subscriptions
         )
+
+        _score_map = {"HOT": 80, "WARM": 50, "COLD": 20}
+        _confidence_map = {"HOT": AIConfidence.high(), "WARM": AIConfidence.medium(), "COLD": AIConfidence.low()}
+        raw = str(result.get("suggested_lead_score", "")).upper()
+        score = _score_map.get(raw, 50)
+        confidence = _confidence_map.get(raw, AIConfidence.medium())
+        reasoning = str(result.get("reasoning", ""))
+        model_version = "gemma-4-31b-it"
+
+        deal_model = await self.repo.get_deal_by_client_id(intake.client_id, user_id)
+        if deal_model is not None:
+            # Build a minimal domain Deal so the aggregate can run its logic
+            deal_domain = Deal(
+                id=deal_model.id,
+                owner_user_id=deal_model.owner_user_id,
+                client_id=deal_model.client_id,
+                title=deal_model.title,
+                stage=DealStage(deal_model.stage),
+                value=None,
+                source=deal_model.source,
+                expected_close_date=None,
+                ai_score=deal_model.ai_qualification_score,
+                ai_confidence=None,
+                ai_recommendation=deal_model.ai_qualification_recommendation,
+                closed_at=deal_model.closed_at,
+                created_at=deal_model.created_at,
+                updated_at=deal_model.updated_at,
+                deleted_at=deal_model.deleted_at,
+            )
+            aggregate = DealAggregate(deal=deal_domain)
+            lead_score = aggregate.score_lead(
+                score=score,
+                confidence=confidence.value,
+                reasoning=reasoning,
+                model_version=model_version,
+            )
+
+            await self.repo.create_lead_score(
+                id=lead_score.id,
+                deal_id=lead_score.deal_id,
+                score=lead_score.score,
+                confidence=lead_score.confidence.value,
+                reasoning=lead_score.reasoning,
+                model_version=lead_score.model_version,
+                generated_at=lead_score.generated_at,
+                project_type=result.get("project_type"),
+                budget_signal=result.get("budget_signal"),
+                timeline_signal=result.get("timeline_signal"),
+                urgency_signal=result.get("urgency_signal"),
+                red_flags=result.get("red_flags"),
+            )
+
+            deal_model.ai_qualification_score = lead_score.score
+            deal_model.ai_qualification_confidence = lead_score.confidence.value
+            deal_model.ai_qualification_recommendation = aggregate.deal.ai_recommendation
+            await self.repo.save(deal_model)
+
+        return {**result, "ai_qualification_score": score, "ai_qualification_recommendation": aggregate.deal.ai_recommendation if deal_model else None}
 

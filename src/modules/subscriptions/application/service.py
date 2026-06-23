@@ -3,9 +3,9 @@
 import uuid
 from dataclasses import dataclass
 
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.modules.subscriptions.infrastructure.repository import SubscriptionsRepository
 from src.modules.subscriptions.schemas.response import SubscriptionResponse
 from src.shared.exceptions.domain import NotFoundError
 
@@ -13,27 +13,21 @@ from src.shared.exceptions.domain import NotFoundError
 @dataclass
 class SubscriptionsService:
     db: AsyncSession
+    repo: SubscriptionsRepository | None = None
+
+    def __post_init__(self) -> None:
+        if self.repo is None:
+            self.repo = SubscriptionsRepository(self.db)
 
     async def list_plans(self) -> list:
-        from src.infrastructure.database.models import PlanModel
-
-        result = await self.db.execute(
-            select(PlanModel).where(PlanModel.is_active.is_(True))
-        )
-        return list(result.scalars().all())
+        return await self.repo.list_active_plans()
 
     async def get_my_subscription(self, user_id: uuid.UUID) -> SubscriptionResponse:
-        from src.infrastructure.database.models import PlanModel, SubscriptionModel
-
-        sub = await self.db.scalar(
-            select(SubscriptionModel).where(SubscriptionModel.user_id == user_id)
-        )
+        sub = await self.repo.get_subscription(user_id)
         if sub is None:
             raise NotFoundError("No active subscription found")
 
-        plan = await self.db.scalar(
-            select(PlanModel).where(PlanModel.id == sub.plan_id)
-        )
+        plan = await self.repo.get_plan(sub.plan_id)
         if plan is None:
             raise NotFoundError("Subscription plan not found")
 

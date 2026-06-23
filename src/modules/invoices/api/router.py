@@ -1,4 +1,4 @@
-"""Invoices API router."""
+"""Invoices API api."""
 
 import uuid
 from typing import Annotated
