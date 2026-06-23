@@ -2424,7 +2424,7 @@ requires-dist = [
     { name = "structlog", specifier = ">=25.1" },
     { name = "tenacity", specifier = ">=9.0" },
     { name = "types-python-jose", marker = "extra == 'dev'", specifier = ">=3.3" },
-    { name = "uvicorn", extras = ["standard"], specifier = ">=0.34" },
+    { name = "uvicorn", extras = ["standard"], specifier = ">=0.49.0" },
     { name = "weasyprint", specifier = ">=69.0" },
 ]
 provides-extras = ["dev"]
