@@ -153,6 +153,122 @@ paths:
                 $ref: '#/components/schemas/ApiError'
 
   # -------------------------------------------------------------------------
+  # PUBLIC FREELANCER DIRECTORY
+  # -------------------------------------------------------------------------
+  /public/freelancers/categories:
+    get:
+      tags: [Public]
+      summary: List freelancer categories
+      description: |
+        Returns the 5 static skill categories used to browse and filter the
+        freelancer directory. No authentication required.
+      security: []
+      responses:
+        '200':
+          description: List of categories
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/FreelancerCategoryResponse'
+
+  /public/freelancers:
+    get:
+      tags: [Public]
+      summary: Search freelancers
+      description: |
+        Paginated public search across opted-in freelancers (`is_listed=true`).
+        Supports free-text search (`q`) over name, professional title, and bio,
+        and multi-value category filter (array overlap — a freelancer matching
+        any of the supplied slugs is returned). Both filters are combinable.
+        No authentication required.
+      security: []
+      parameters:
+        - name: q
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Search by name, title, or bio (case-insensitive, partial match)
+        - name: categories
+          in: query
+          required: false
+          schema:
+            type: array
+            items:
+              type: string
+              enum: [design, programming, marketing, content, consulting]
+          style: form
+          explode: true
+          description: Filter by category slugs — multiple values are OR-combined
+        - name: page
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 1
+            minimum: 1
+        - name: page_size
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 20
+            minimum: 1
+            maximum: 100
+      responses:
+        '200':
+          description: Paginated list of freelancers
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/PaginatedResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/FreelancerPublicResponse'
+
+  /public/freelancers/{freelancer_id}:
+    get:
+      tags: [Public]
+      summary: Get freelancer public profile
+      description: |
+        Returns the public profile of a single opted-in freelancer.
+        Returns 404 if the freelancer does not exist or has `is_listed=false`.
+        No authentication required.
+      security: []
+      parameters:
+        - name: freelancer_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Freelancer public profile
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/FreelancerPublicResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # -------------------------------------------------------------------------
   # INTAKE FORM (authenticated)
   # -------------------------------------------------------------------------
   /intake-form:
@@ -3834,6 +3950,65 @@ components:
           type: string
           format: date-time
         updated_at:
+          type: string
+          format: date-time
+
+    FreelancerCategoryResponse:
+      type: object
+      required: [slug, name, sub_skills]
+      properties:
+        slug:
+          type: string
+          description: Category identifier (design, programming, marketing, content, consulting)
+        name:
+          type: string
+          description: Display name of the category
+        sub_skills:
+          type: string
+          description: Comma-separated example skills within this category
+
+    FreelancerPublicResponse:
+      type: object
+      required: [id, full_name, skills, service_categories, rating_count, completed_project_count, is_new, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        full_name:
+          type: string
+        professional_title:
+          type: string
+          nullable: true
+        bio:
+          type: string
+          nullable: true
+        avatar_url:
+          type: string
+          nullable: true
+        skills:
+          type: array
+          items:
+            type: string
+        service_categories:
+          type: array
+          items:
+            type: string
+        portfolio_url:
+          type: string
+          nullable: true
+        rating_average:
+          type: number
+          format: float
+          nullable: true
+        rating_count:
+          type: integer
+        completed_project_count:
+          type: integer
+          description: Number of deals in completed_and_billed stage owned by this freelancer
+        is_new:
+          type: boolean
+          description: true if the account is under 30 days old
+        created_at:
           type: string
           format: date-time
 
