@@ -150,9 +150,11 @@
 
 <h2>7. Ghi Chú Và Giả Định</h2>
 
-<p>
-    {{ assumptions }}
-</p>
+<ul>
+{% for item in assumptions %}
+    <li>{{ item }}</li>
+{% endfor %}
+</ul>
 
 <table class="signature">
     <tr>

@@ -14,4 +14,4 @@ class ProposalContent(BaseModel):
 
     payment_terms: str
 
-    assumptions: str
+    assumptions: List[str]

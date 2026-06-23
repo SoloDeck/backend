@@ -57,14 +57,66 @@ The proposal is not a legally binding agreement.
 
 Return ONLY valid JSON.
 
-Schema:
+Do NOT return markdown.
+
+Do NOT wrap the JSON in ```json blocks.
+
+Do NOT include explanations before or after the JSON.
+
+The response MUST exactly match this schema:
 
 {
-"project_overview": "...",
-"scope_of_work": [],
-"deliverables": [],
-"timeline": "...",
-"pricing": "...",
-"payment_terms": "...",
-"assumptions": "..."
+"project_overview": "string",
+"scope_of_work": [
+"string"
+],
+"deliverables": [
+"string"
+],
+"timeline": "string",
+"pricing": "string",
+"payment_terms": "string",
+"assumptions": [
+"string"
+]
+}
+
+Field requirements:
+
+project_overview MUST be a string.
+scope_of_work MUST be an array of strings.
+deliverables MUST be an array of strings.
+timeline MUST be a string.
+pricing MUST be a string.
+payment_terms MUST be a string.
+assumptions MUST be an array of strings.
+
+Never change field names.
+
+Never add extra fields.
+
+Never omit required fields.
+
+If information is unavailable, use:
+"Thông tin chưa được cung cấp"
+
+Example:
+
+{
+"project_overview": "Tổng quan dự án...",
+"scope_of_work": [
+"Phân tích yêu cầu",
+"Thiết kế giao diện"
+],
+"deliverables": [
+"Tài liệu thiết kế",
+"Mã nguồn hoàn chỉnh"
+],
+"timeline": "4 tuần",
+"pricing": "15.000.000 VND",
+"payment_terms": "50% trước, 50% sau khi bàn giao",
+"assumptions": [
+"Khách hàng cung cấp nội dung",
+"Phản hồi trong vòng 48 giờ"
+]
 }

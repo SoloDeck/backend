@@ -1,27 +1,18 @@
 from pydantic import BaseModel
-from typing import List, Optional
+from typing import Optional
 
-class ProposalDocument(BaseModel):
-    freelancer_name: str
-
+class ProposalGenerationInput(BaseModel):
     client_name: str
-
     company_name: Optional[str] = None
 
     project_type: str
+    project_description: str
 
-    proposal_date: str
+    estimated_scope: Optional[str] = None
+    budget: Optional[str] = None
+    urgency: Optional[str] = None
 
-    project_overview: str
+    service_category: str
+    pricing_tier: str
 
-    scope_of_work: List[str]
-
-    deliverables: List[str]
-
-    timeline: str
-
-    pricing: str
-
-    payment_terms: str
-
-    assumptions: str
+    freelancer_name: str
