@@ -142,6 +142,8 @@ class IntakeStub:
     id: uuid.UUID
     client_id: uuid.UUID
     inquiry_text: str = "I need a website built."
+    estimated_budget: str | None = None
+    desired_timeline: str | None = None
 
 
 @dataclass
