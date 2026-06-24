@@ -10,3 +10,4 @@ class LeadQualificationResponse(BaseModel):
     urgency_signal: str
     red_flags: List[str]
     suggested_lead_score: str
+    reasoning: str

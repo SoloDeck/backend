@@ -5,6 +5,8 @@ POST /api/v1/intake/{share_token} — no auth. Verifies the happy path, bad-toke
 Uses real PostgreSQL (rolled back per test).
 """
 
+from unittest.mock import patch
+
 from httpx import AsyncClient
 
 from tests.integration.modules.clients.test_clients_api import _auth_headers
@@ -23,17 +25,18 @@ async def _owner_intake_token(client: AsyncClient) -> tuple[dict, str]:
 async def test_public_intake_creates_lead_and_appears_in_owner_deals(client: AsyncClient) -> None:
     headers, token = await _owner_intake_token(client)
 
-    resp = await client.post(
-        f"/api/v1/intake/{token}",
-        json={
-            "name": "Khách Hàng Mới",
-            "email": "lead@example.com",
-            "phone": "0900000000",
-            "inquiry_text": "Cần thiết kế website bán hàng.",
-            "estimated_budget": "20,000,000 VND",
-            "desired_timeline": "1 tháng",
-        },
-    )
+    with patch("src.workers.ai_jobs.tasks.qualify_intake_async.delay"):
+        resp = await client.post(
+            f"/api/v1/intake/{token}",
+            json={
+                "name": "Khách Hàng Mới",
+                "email": "lead@example.com",
+                "phone": "0900000000",
+                "inquiry_text": "Cần thiết kế website bán hàng.",
+                "estimated_budget": "20,000,000 VND",
+                "desired_timeline": "1 tháng",
+            },
+        )
     assert resp.status_code == 201, resp.text
     body = resp.json()["data"]
     assert "id" in body and "submitted_at" in body

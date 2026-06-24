@@ -1,6 +1,7 @@
 """Integration tests for the intake form configuration endpoints."""
 
 import uuid
+from unittest.mock import patch
 
 from httpx import AsyncClient
 
@@ -209,10 +210,11 @@ async def test_submit_uses_project_name_as_deal_title(client: AsyncClient):
         {"field_key": "inquiry_text", "label": "Details", "field_type": "textarea", "is_required": False, "is_visible": True, "sort_order": 3},
     ]
     await client.put("/api/v1/intake-form", headers=headers, json={"title": "F", "is_active": True, "fields": fields})
-    resp = await client.post(
-        f"/api/v1/intake/{token}",
-        json={"name": "Bob", "project_name": "Online Store"},
-    )
+    with patch("src.workers.ai_jobs.tasks.qualify_intake_async.delay"):
+        resp = await client.post(
+            f"/api/v1/intake/{token}",
+            json={"name": "Bob", "project_name": "Online Store"},
+        )
     assert resp.status_code == 201
     deals = await client.get("/api/v1/deals", headers=headers)
     titles = [d["title"] for d in deals.json()["data"]]
@@ -229,8 +231,9 @@ async def test_submit_falls_back_to_default_validation(client: AsyncClient):
 async def test_submit_succeeds_with_all_required_fields_present(client: AsyncClient):
     headers, _ = await _auth(client)
     token = await _get_share_token(client, headers)
-    resp = await client.post(
-        f"/api/v1/intake/{token}",
-        json={"name": "Dave", "inquiry_text": "Need a logo"},
-    )
+    with patch("src.workers.ai_jobs.tasks.qualify_intake_async.delay"):
+        resp = await client.post(
+            f"/api/v1/intake/{token}",
+            json={"name": "Dave", "inquiry_text": "Need a logo"},
+        )
     assert resp.status_code == 201
