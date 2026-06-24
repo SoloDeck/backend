@@ -125,6 +125,13 @@ class DealsService:
     ) -> tuple[list, int]:
         return await self.repo.list_all(user_id, title=title, stage=stage, page=page, page_size=page_size)
 
+    async def list_intakes(self, user_id: uuid.UUID, page: int = 1, page_size: int = 20) -> tuple[list, int]:
+        return await self.repo.list_intakes(user_id, page=page, page_size=page_size)
+
+    async def get_intake(self, user_id: uuid.UUID, intake_id: uuid.UUID):
+        intake = await self._get_intake(user_id, intake_id)
+        return intake
+
     async def get_one(self, user_id: uuid.UUID, deal_id: uuid.UUID):  # type: ignore[return]
         return await self._get_deal(user_id, deal_id)
 

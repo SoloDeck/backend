@@ -50,6 +50,20 @@ class DealResponse(BaseModel):
         return self.ai_qualification_score is not None and self.ai_qualification_score >= 60
 
 
+class IntakeResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    owner_user_id: uuid.UUID
+    client_id: uuid.UUID
+    inquiry_text: str
+    estimated_budget: str | None
+    desired_timeline: str | None
+    source: str | None
+    submitted_at: datetime
+    created_at: datetime
+
+
 class PublicIntakeResponse(BaseModel):
     """Minimal confirmation returned to an unauthenticated intake submitter.
 
