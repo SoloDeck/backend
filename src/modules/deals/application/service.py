@@ -183,8 +183,15 @@ class DealsService:
         if not self.ai_facade:
             raise RuntimeError("AIFacade not initialized")
 
+        parts = [intake.inquiry_text]
+        if intake.estimated_budget:
+            parts.append(f"Estimated budget: {intake.estimated_budget}")
+        if intake.desired_timeline:
+            parts.append(f"Desired timeline: {intake.desired_timeline}")
+        inquiry_context = "\n".join(parts)
+
         result = await self.ai_facade.qualify_lead(
-            inquiry_text=intake.inquiry_text,
+            inquiry_text=inquiry_context,
             user_can_use_ai=True,  # TODO: get from subscriptions
         )
 
