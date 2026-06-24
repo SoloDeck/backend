@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from decimal import Decimal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, computed_field
 
 
 class DealResponse(BaseModel):
@@ -23,9 +23,31 @@ class DealResponse(BaseModel):
     pricing_tier: str | None
     ai_qualification_score: int | None
     ai_qualification_recommendation: str | None
+    ai_qualification_reasoning: str | None
+    ai_qualification_project_type: str | None
+    ai_qualification_budget_signal: str | None
+    ai_qualification_timeline_signal: str | None
+    ai_qualification_urgency_signal: str | None
+    ai_qualification_red_flags: list[str] | None
     closed_at: datetime | None
     created_at: datetime
     updated_at: datetime
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def ai_level(self) -> str | None:
+        if self.ai_qualification_score is None:
+            return None
+        if self.ai_qualification_score >= 80:
+            return "hot"
+        if self.ai_qualification_score >= 50:
+            return "warm"
+        return "cold"
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def is_ai_qualified(self) -> bool:
+        return self.ai_qualification_score is not None and self.ai_qualification_score >= 60
 
 
 class PublicIntakeResponse(BaseModel):

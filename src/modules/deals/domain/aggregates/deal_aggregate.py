@@ -177,7 +177,7 @@ class DealAggregate:
         )
         self.lead_scores.append(lead_score)
         self.deal.apply_lead_score(
-            score, ai_confidence, recommendation or ("qualify" if score >= 60 else "pass")
+            score, ai_confidence, recommendation or ("qualify" if lead_score.is_qualified else "pass")
         )
 
         self.activities.append(

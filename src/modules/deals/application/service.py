@@ -101,7 +101,7 @@ class DealsService:
             source="inbound",
             currency=owner.currency,
         )
-        return await self.repo.create_intake(
+        intake = await self.repo.create_intake(
             owner_user_id=owner.id,
             client_id=client.id,
             inquiry_text=payload.inquiry_text or "",
@@ -109,6 +109,11 @@ class DealsService:
             desired_timeline=payload.desired_timeline,
             source="inbound",
         )
+
+        from src.workers.ai_jobs.tasks import qualify_intake_async
+        qualify_intake_async.delay(str(owner.id), str(intake.id))
+
+        return intake
 
     async def list_all(
         self,
@@ -230,7 +235,14 @@ class DealsService:
             deal_model.ai_qualification_score = lead_score.score
             deal_model.ai_qualification_confidence = lead_score.confidence.value
             deal_model.ai_qualification_recommendation = aggregate.deal.ai_recommendation
+            deal_model.ai_qualification_reasoning = reasoning
+            deal_model.ai_qualification_project_type = result.get("project_type")
+            deal_model.ai_qualification_budget_signal = result.get("budget_signal")
+            deal_model.ai_qualification_timeline_signal = result.get("timeline_signal")
+            deal_model.ai_qualification_urgency_signal = result.get("urgency_signal")
+            deal_model.ai_qualification_red_flags = result.get("red_flags")
             await self.repo.save(deal_model)
 
-        return {**result, "ai_qualification_score": score, "ai_qualification_recommendation": aggregate.deal.ai_recommendation if deal_model else None}
+        recommendation = aggregate.deal.ai_recommendation if deal_model else None
+        return {**result, "ai_qualification_score": score, "ai_qualification_recommendation": recommendation}
 

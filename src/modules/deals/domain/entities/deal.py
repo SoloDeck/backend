@@ -44,6 +44,20 @@ class Deal:
         return self.stage in TERMINAL_STAGES
 
     @property
+    def ai_level(self) -> str | None:
+        if self.ai_score is None:
+            return None
+        if self.ai_score >= 80:
+            return "hot"
+        if self.ai_score >= 50:
+            return "warm"
+        return "cold"
+
+    @property
+    def is_ai_qualified(self) -> bool:
+        return self.ai_score is not None and self.ai_score >= 60
+
+    @property
     def is_won(self) -> bool:
         return self.stage == DealStage.COMPLETED_AND_BILLED
 
