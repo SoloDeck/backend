@@ -32,6 +32,13 @@ class DealsRepository:
     async def get_intake_by_id(self, intake_id: uuid.UUID, owner_user_id: uuid.UUID):
         return await self.db.scalar(select(DealIntakeModel).where(DealIntakeModel.id == intake_id, DealIntakeModel.owner_user_id == owner_user_id, DealIntakeModel.deleted_at.is_(None)))
 
+    async def list_intakes(self, owner_user_id: uuid.UUID, page: int = 1, page_size: int = 20) -> tuple[list, int]:
+        conditions = [DealIntakeModel.owner_user_id == owner_user_id, DealIntakeModel.deleted_at.is_(None)]
+        total = await self.db.scalar(select(func.count()).select_from(DealIntakeModel).where(*conditions)) or 0
+        offset = (page - 1) * page_size
+        result = await self.db.execute(select(DealIntakeModel).where(*conditions).order_by(DealIntakeModel.submitted_at.desc()).offset(offset).limit(page_size))
+        return list(result.scalars().all()), total
+
     async def get_client_by_id(self, client_id: uuid.UUID, owner_user_id: uuid.UUID):
         return await self.db.scalar(select(ClientModel).where(ClientModel.id == client_id, ClientModel.owner_user_id == owner_user_id, ClientModel.deleted_at.is_(None)))
 

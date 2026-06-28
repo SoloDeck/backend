@@ -101,7 +101,7 @@ class DealsService:
             source="inbound",
             currency=owner.currency,
         )
-        return await self.repo.create_intake(
+        intake = await self.repo.create_intake(
             owner_user_id=owner.id,
             client_id=client.id,
             inquiry_text=payload.inquiry_text or "",
@@ -109,6 +109,11 @@ class DealsService:
             desired_timeline=payload.desired_timeline,
             source="inbound",
         )
+
+        from src.workers.ai_jobs.tasks import qualify_intake_async
+        qualify_intake_async.delay(str(owner.id), str(intake.id))
+
+        return intake
 
     async def list_all(
         self,
@@ -119,6 +124,13 @@ class DealsService:
         page_size: int = 20,
     ) -> tuple[list, int]:
         return await self.repo.list_all(user_id, title=title, stage=stage, page=page, page_size=page_size)
+
+    async def list_intakes(self, user_id: uuid.UUID, page: int = 1, page_size: int = 20) -> tuple[list, int]:
+        return await self.repo.list_intakes(user_id, page=page, page_size=page_size)
+
+    async def get_intake(self, user_id: uuid.UUID, intake_id: uuid.UUID):
+        intake = await self._get_intake(user_id, intake_id)
+        return intake
 
     async def get_one(self, user_id: uuid.UUID, deal_id: uuid.UUID):  # type: ignore[return]
         return await self._get_deal(user_id, deal_id)
@@ -171,8 +183,15 @@ class DealsService:
         if not self.ai_facade:
             raise RuntimeError("AIFacade not initialized")
 
+        parts = [intake.inquiry_text]
+        if intake.estimated_budget:
+            parts.append(f"Estimated budget: {intake.estimated_budget}")
+        if intake.desired_timeline:
+            parts.append(f"Desired timeline: {intake.desired_timeline}")
+        inquiry_context = "\n".join(parts)
+
         result = await self.ai_facade.qualify_lead(
-            inquiry_text=intake.inquiry_text,
+            inquiry_text=inquiry_context,
             user_can_use_ai=True,  # TODO: get from subscriptions
         )
 
@@ -230,7 +249,14 @@ class DealsService:
             deal_model.ai_qualification_score = lead_score.score
             deal_model.ai_qualification_confidence = lead_score.confidence.value
             deal_model.ai_qualification_recommendation = aggregate.deal.ai_recommendation
+            deal_model.ai_qualification_reasoning = reasoning
+            deal_model.ai_qualification_project_type = result.get("project_type")
+            deal_model.ai_qualification_budget_signal = result.get("budget_signal")
+            deal_model.ai_qualification_timeline_signal = result.get("timeline_signal")
+            deal_model.ai_qualification_urgency_signal = result.get("urgency_signal")
+            deal_model.ai_qualification_red_flags = result.get("red_flags")
             await self.repo.save(deal_model)
 
-        return {**result, "ai_qualification_score": score, "ai_qualification_recommendation": aggregate.deal.ai_recommendation if deal_model else None}
+        recommendation = aggregate.deal.ai_recommendation if deal_model else None
+        return {**result, "ai_qualification_score": score, "ai_qualification_recommendation": recommendation}
 

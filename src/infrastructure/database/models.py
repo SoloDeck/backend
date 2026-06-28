@@ -462,6 +462,12 @@ class DealModel(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     ai_qualification_recommendation: Mapped[str | None] = mapped_column(
         _ai_recommendation, nullable=True
     )
+    ai_qualification_reasoning: Mapped[str | None] = mapped_column(Text, nullable=True)
+    ai_qualification_project_type: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    ai_qualification_budget_signal: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    ai_qualification_timeline_signal: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    ai_qualification_urgency_signal: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    ai_qualification_red_flags: Mapped[list | None] = mapped_column(JSONB, nullable=True)
     closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     __table_args__ = (

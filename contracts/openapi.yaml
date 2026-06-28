@@ -1248,6 +1248,69 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
 
+  /deals/intakes:
+    get:
+      tags: [Deals]
+      summary: List deal intakes
+      description: Returns all intake submissions received by the authenticated owner, ordered by submission date descending.
+      parameters:
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: page_size
+          in: query
+          schema:
+            type: integer
+            default: 20
+            maximum: 100
+      responses:
+        '200':
+          description: Paginated list of intakes
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/IntakeResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /deals/intakes/{intake_id}:
+    parameters:
+      - name: intake_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      tags: [Deals]
+      summary: Get a single deal intake
+      description: Returns the intake record identified by intake_id. Only accessible by the owner.
+      responses:
+        '200':
+          description: Intake detail
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/IntakeResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
   /deals/intakes/{intake_id}/qualify:
     parameters:
       - name: intake_id
@@ -4166,6 +4229,37 @@ components:
           type: string
           maxLength: 255
           nullable: true
+
+    IntakeResponse:
+      type: object
+      required: [id, owner_user_id, client_id, inquiry_text, submitted_at, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        owner_user_id:
+          type: string
+          format: uuid
+        client_id:
+          type: string
+          format: uuid
+        inquiry_text:
+          type: string
+        estimated_budget:
+          type: string
+          nullable: true
+        desired_timeline:
+          type: string
+          nullable: true
+        source:
+          type: string
+          nullable: true
+        submitted_at:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
 
     PublicIntakeResponse:
       type: object
