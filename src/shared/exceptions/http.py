@@ -15,6 +15,7 @@ from src.shared.exceptions.domain import (
     ForbiddenError,
     NotFoundError,
     RateLimitError,
+    ValidationError,
 )
 from src.shared.logging.config import get_logger
 from src.shared.logging.context import get_request_id
@@ -92,6 +93,10 @@ def setup_exception_handlers(app: FastAPI) -> None:
     @app.exception_handler(EntitlementError)
     async def entitlement(_: Request, exc: EntitlementError) -> JSONResponse:
         return _err(402, ErrorCode.SUBSCRIPTION_REQUIRED, exc.message)
+
+    @app.exception_handler(ValidationError)
+    async def domain_validation(_: Request, exc: ValidationError) -> JSONResponse:
+        return _err(422, ErrorCode.VALIDATION_FAILED, exc.message)
 
     @app.exception_handler(BusinessRuleError)
     async def business_rule(_: Request, exc: BusinessRuleError) -> JSONResponse:

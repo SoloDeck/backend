@@ -13,6 +13,9 @@ class DealRequest(BaseModel):
     actual_value: Decimal | None = None
     currency: str = "VND"
     notes: str | None = None
+    project_type: str | None = None
+    service_category: str | None = None
+    pricing_tier: str | None = None
 
 
 class DealStageRequest(BaseModel):
@@ -26,14 +29,14 @@ class DealStageRequest(BaseModel):
 class PublicIntakeRequest(BaseModel):
     """Body for the public (unauthenticated) lead intake form.
 
-    `name` and `inquiry_text` are required; an empty body fails validation (422).
-    `inquiry_text` is length-capped so an oversized body is rejected (422) rather
-    than persisted.
+    Required fields are validated dynamically against the freelancer's form config.
+    `name` is always required at the schema level (needed to create a client record).
     """
 
     name: str = Field(min_length=1, max_length=255)
     email: str | None = Field(default=None, max_length=255)
     phone: str | None = Field(default=None, max_length=50)
-    inquiry_text: str = Field(min_length=1, max_length=5000)
+    project_name: str | None = Field(default=None, max_length=500)
+    inquiry_text: str | None = Field(default=None, max_length=5000)
     estimated_budget: str | None = Field(default=None, max_length=255)
     desired_timeline: str | None = Field(default=None, max_length=255)

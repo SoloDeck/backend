@@ -13,6 +13,10 @@ class ProposalResponse(BaseModel):
     version_number: int
     status: str
     content: dict
+    ai_generated: bool
     share_token: str | None
+    share_expires_at: datetime | None
+    sent_at: datetime | None
+    responded_at: datetime | None
     created_at: datetime
     updated_at: datetime

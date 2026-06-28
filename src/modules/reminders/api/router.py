@@ -1,4 +1,4 @@
-"""Reminders API router."""
+"""Reminders API api."""
 
 import uuid
 from typing import Annotated

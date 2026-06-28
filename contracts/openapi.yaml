@@ -14,11 +14,12 @@ info:
     lint_status: 'PASS'
     fixes_applied:
       - 'Renamed /deals/{deal_id}/qualify -> /deals/intakes/{intake_id}/qualify to match qualify_deal_intake endpoint.'
-      - 'Added POST /users/me/change-password (implemented in router but missing from spec).'
+      - 'Added POST /users/me/change-password (implemented in api but missing from spec).'
       - '6.5: /invoices/public/{share_token} implemented; InvoiceResponse exposes share_token.'
       - '6.6: POST /intake/{share_token} implemented (201/404/422/429); UserResponse exposes intake_share_token; added PublicIntakeRequest/PublicIntakeResponse.'
     intentional_gaps:
       - 'None outstanding for Phase 6 Package 2 endpoints.'
+      - 'Phase 6 Package 3: GET /intake/{share_token}/config, GET /intake-form, PUT /intake-form added.'
 
 servers:
   - url: https://api.solodesk.space/api/v1
@@ -62,6 +63,8 @@ tags:
     description: Standalone AI endpoints for lead qualification, proposal/contract generation, and follow-up drafts. All require an AI-enabled subscription.
   - name: Admin
     description: Platform administration — user management, subscription overrides, plan catalog, templates, feature flags, AI cost monitoring, and audit logs. Requires `role=admin`.
+  - name: Intake Form
+    description: Authenticated endpoints for freelancers to configure their client-facing intake form — field definitions, labels, visibility, and required-field rules.
   - name: Public
     description: Client-facing unauthenticated endpoints for viewing and responding to proposals, contracts, and invoices via shareable links.
 
@@ -70,6 +73,37 @@ tags:
 # ===========================================================================
 paths:
 
+
+  /intake/{share_token}/config:
+    get:
+      tags: [Public]
+      summary: Get public intake form configuration
+      description: |
+        Returns the freelancer's intake form configuration for public display.
+        Only fields with `is_visible=true` are included. Used by the client-facing
+        intake page to render the correct form before submission.
+        No authentication required — the `share_token` identifies the freelancer.
+      security: []
+      parameters:
+        - name: share_token
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Public form configuration
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/PublicIntakeFormConfigResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
 
   /intake/{share_token}:
     post:
@@ -121,6 +155,178 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiError'
+
+  # -------------------------------------------------------------------------
+  # PUBLIC FREELANCER DIRECTORY
+  # -------------------------------------------------------------------------
+  /public/freelancers/categories:
+    get:
+      tags: [Public]
+      summary: List freelancer categories
+      description: |
+        Returns the 5 static skill categories used to browse and filter the
+        freelancer directory. No authentication required.
+      security: []
+      responses:
+        '200':
+          description: List of categories
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/FreelancerCategoryResponse'
+
+  /public/freelancers:
+    get:
+      tags: [Public]
+      summary: Search freelancers
+      description: |
+        Paginated public search across opted-in freelancers (`is_listed=true`).
+        Supports free-text search (`q`) over name, professional title, and bio,
+        and multi-value category filter (array overlap — a freelancer matching
+        any of the supplied slugs is returned). Both filters are combinable.
+        No authentication required.
+      security: []
+      parameters:
+        - name: q
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Search by name, title, or bio (case-insensitive, partial match)
+        - name: categories
+          in: query
+          required: false
+          schema:
+            type: array
+            items:
+              type: string
+              enum: [design, programming, marketing, content, consulting]
+          style: form
+          explode: true
+          description: Filter by category slugs — multiple values are OR-combined
+        - name: page
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 1
+            minimum: 1
+        - name: page_size
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 20
+            minimum: 1
+            maximum: 100
+      responses:
+        '200':
+          description: Paginated list of freelancers
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/PaginatedResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/FreelancerPublicResponse'
+
+  /public/freelancers/{freelancer_id}:
+    get:
+      tags: [Public]
+      summary: Get freelancer public profile
+      description: |
+        Returns the public profile of a single opted-in freelancer.
+        Returns 404 if the freelancer does not exist or has `is_listed=false`.
+        No authentication required.
+      security: []
+      parameters:
+        - name: freelancer_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Freelancer public profile
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/FreelancerPublicResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # -------------------------------------------------------------------------
+  # INTAKE FORM (authenticated)
+  # -------------------------------------------------------------------------
+  /intake-form:
+    get:
+      tags: [Intake Form]
+      summary: Get intake form configuration
+      description: |
+        Returns the authenticated freelancer's intake form configuration including
+        all fields (visible and hidden). Falls back to the 7-field default form if
+        no configuration has been saved yet. The `share_url` in the response is the
+        public link to share with potential clients.
+      responses:
+        '200':
+          description: Intake form configuration
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/IntakeFormResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    put:
+      tags: [Intake Form]
+      summary: Save intake form configuration
+      description: |
+        Creates or fully replaces the authenticated freelancer's intake form
+        configuration. The `fields` array is a complete replacement — omitting a
+        field removes it. Returns the saved configuration including all fields.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IntakeFormUpdateRequest'
+      responses:
+        '200':
+          description: Saved intake form configuration
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/IntakeFormResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
 
   # -------------------------------------------------------------------------
   # AUTH
@@ -868,6 +1074,12 @@ paths:
       parameters:
         - $ref: '#/components/parameters/Page'
         - $ref: '#/components/parameters/PageSize'
+        - name: client_id
+          in: query
+          description: Filter deals belonging to a single client (Client Detail view)
+          schema:
+            type: string
+            format: uuid
         - name: title
           in: query
           description: Search by title (case-insensitive, partial match)
@@ -1043,6 +1255,69 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /deals/intakes:
+    get:
+      tags: [Deals]
+      summary: List deal intakes
+      description: Returns all intake submissions received by the authenticated owner, ordered by submission date descending.
+      parameters:
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: page_size
+          in: query
+          schema:
+            type: integer
+            default: 20
+            maximum: 100
+      responses:
+        '200':
+          description: Paginated list of intakes
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/IntakeResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /deals/intakes/{intake_id}:
+    parameters:
+      - name: intake_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      tags: [Deals]
+      summary: Get a single deal intake
+      description: Returns the intake record identified by intake_id. Only accessible by the owner.
+      responses:
+        '200':
+          description: Intake detail
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/IntakeResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
         '404':
           $ref: '#/components/responses/NotFound'
 
@@ -3061,8 +3336,8 @@ paths:
                           $ref: '#/components/schemas/SystemTemplateResponse'
     post:
       tags: [Admin]
-      summary: Create a system template
-      description: Creates a new template starting at `version_number=1`. Set `plan_tier_required` to restrict availability to paid plans.
+      summary: Create a system templates
+      description: Creates a new templates starting at `version_number=1`. Set `plan_tier_required` to restrict availability to paid plans.
       requestBody:
         required: true
         content:
@@ -3092,8 +3367,8 @@ paths:
           format: uuid
     patch:
       tags: [Admin]
-      summary: Activate, deactivate, or update a template
-      description: Setting `is_active=false` hides the template from AI generation without deleting it. Content changes increment `version_number`.
+      summary: Activate, deactivate, or update a templates
+      description: Setting `is_active=false` hides the templates from AI generation without deleting it. Content changes increment `version_number`.
       requestBody:
         required: true
         content:
@@ -3102,7 +3377,7 @@ paths:
               $ref: '#/components/schemas/UpdateSystemTemplateRequest'
       responses:
         '200':
-          description: Updated template
+          description: Updated templates
           content:
             application/json:
               schema:
@@ -3320,7 +3595,7 @@ paths:
         Returns tasks where `entity_type=project` and `entity_id={project_id}`.
         Backed by the shared TaskService.
       parameters:
-        - name: status
+        - name: task_status
           in: query
           description: Filter by task status
           schema:
@@ -3377,7 +3652,7 @@ paths:
         Returns tasks where `entity_type=deal` and `entity_id={deal_id}`.
         Backed by the shared TaskService.
       parameters:
-        - name: status
+        - name: task_status
           in: query
           description: Filter by task status
           schema:
@@ -3434,7 +3709,7 @@ paths:
         Returns tasks where `entity_type=reminder` and `entity_id={reminder_id}`.
         Backed by the shared TaskService.
       parameters:
-        - name: status
+        - name: task_status
           in: query
           description: Filter by task status
           schema:
@@ -3844,6 +4119,13 @@ components:
       type: string
       enum: [inbound, referral, outreach, platform, other]
 
+    ProjectStatus:
+      type: string
+      description: >-
+        Lifecycle of a Project. Projects can be created directly or auto-created
+        in `planning` when a Deal transitions to `active`.
+      enum: [planning, active, on_hold, completed]
+
     DealActivityType:
       type: string
       enum: [stage_change, note_added, document_attached, ai_qualification]
@@ -4206,6 +4488,191 @@ components:
           type: string
           format: date-time
 
+    FreelancerCategoryResponse:
+      type: object
+      required: [slug, name, sub_skills]
+      properties:
+        slug:
+          type: string
+          description: Category identifier (design, programming, marketing, content, consulting)
+        name:
+          type: string
+          description: Display name of the category
+        sub_skills:
+          type: string
+          description: Comma-separated example skills within this category
+
+    FreelancerPublicResponse:
+      type: object
+      required: [id, full_name, skills, service_categories, rating_count, completed_project_count, is_new, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        full_name:
+          type: string
+        professional_title:
+          type: string
+          nullable: true
+        bio:
+          type: string
+          nullable: true
+        avatar_url:
+          type: string
+          nullable: true
+        skills:
+          type: array
+          items:
+            type: string
+        service_categories:
+          type: array
+          items:
+            type: string
+        portfolio_url:
+          type: string
+          nullable: true
+        rating_average:
+          type: number
+          format: float
+          nullable: true
+        rating_count:
+          type: integer
+        completed_project_count:
+          type: integer
+          description: Number of deals in completed_and_billed stage owned by this freelancer
+        is_new:
+          type: boolean
+          description: true if the account is under 30 days old
+        created_at:
+          type: string
+          format: date-time
+
+    IntakeFormFieldRequest:
+      type: object
+      required: [field_key, label, field_type]
+      properties:
+        field_key:
+          type: string
+          maxLength: 100
+        label:
+          type: string
+          maxLength: 200
+        placeholder:
+          type: string
+          maxLength: 500
+          nullable: true
+        field_type:
+          type: string
+          maxLength: 50
+          default: text
+        is_required:
+          type: boolean
+          default: false
+        is_visible:
+          type: boolean
+          default: true
+        sort_order:
+          type: integer
+          default: 0
+
+    IntakeFormUpdateRequest:
+      type: object
+      required: [title, fields]
+      properties:
+        title:
+          type: string
+          maxLength: 500
+        description:
+          type: string
+          nullable: true
+        is_active:
+          type: boolean
+          default: true
+        fields:
+          type: array
+          items:
+            $ref: '#/components/schemas/IntakeFormFieldRequest'
+
+    IntakeFormFieldResponse:
+      type: object
+      required: [id, field_key, label, field_type, is_required, is_visible, sort_order]
+      properties:
+        id:
+          type: string
+          format: uuid
+        field_key:
+          type: string
+        label:
+          type: string
+        placeholder:
+          type: string
+          nullable: true
+        field_type:
+          type: string
+        is_required:
+          type: boolean
+        is_visible:
+          type: boolean
+        sort_order:
+          type: integer
+
+    IntakeFormResponse:
+      type: object
+      required: [title, is_active, fields]
+      properties:
+        id:
+          type: string
+          format: uuid
+          nullable: true
+          description: null when no config has been saved yet (defaults are returned)
+        title:
+          type: string
+        description:
+          type: string
+          nullable: true
+        is_active:
+          type: boolean
+        share_url:
+          type: string
+          nullable: true
+          description: Public URL to share with clients for intake submission
+        fields:
+          type: array
+          items:
+            $ref: '#/components/schemas/IntakeFormFieldResponse'
+
+    PublicIntakeFormFieldResponse:
+      type: object
+      required: [field_key, label, field_type, is_required]
+      properties:
+        field_key:
+          type: string
+        label:
+          type: string
+        placeholder:
+          type: string
+          nullable: true
+        field_type:
+          type: string
+        is_required:
+          type: boolean
+
+    PublicIntakeFormConfigResponse:
+      type: object
+      required: [title, freelancer_name, fields]
+      properties:
+        title:
+          type: string
+        description:
+          type: string
+          nullable: true
+        freelancer_name:
+          type: string
+        fields:
+          type: array
+          items:
+            $ref: '#/components/schemas/PublicIntakeFormFieldResponse'
+
     PublicIntakeRequest:
       type: object
       required: [name, inquiry_text]
@@ -4234,6 +4701,37 @@ components:
           type: string
           maxLength: 255
           nullable: true
+
+    IntakeResponse:
+      type: object
+      required: [id, owner_user_id, client_id, inquiry_text, submitted_at, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        owner_user_id:
+          type: string
+          format: uuid
+        client_id:
+          type: string
+          format: uuid
+        inquiry_text:
+          type: string
+        estimated_budget:
+          type: string
+          nullable: true
+        desired_timeline:
+          type: string
+          nullable: true
+        source:
+          type: string
+          nullable: true
+        submitted_at:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
 
     PublicIntakeResponse:
       type: object
@@ -4589,6 +5087,13 @@ components:
           type: string
           format: date-time
           nullable: true
+        project_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: >-
+            Set once the deal reaches stage `active`, when its Project is created.
+            Null for deals that have not been won yet.
         created_at:
           type: string
           format: date-time
@@ -5911,7 +6416,7 @@ components:
         template_id:
           type: string
           format: uuid
-          description: Optional system template to use as base
+          description: Optional system templates to use as base
         language:
           type: string
           enum: [vi, en]
@@ -6325,10 +6830,6 @@ components:
     # ---------------------------------------------------------------------------
     # Projects & Tasks (polymorphic)
     # ---------------------------------------------------------------------------
-    ProjectStatus:
-      type: string
-      enum: [planning, active, on_hold, completed]
-
     TaskStatus:
       type: string
       enum: [todo, in_progress, review, done]

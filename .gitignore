@@ -1,3 +1,8 @@
+# IDE
+*.iml
+fastapi/
+.idea/
+
 # Python
 __pycache__/
 *.py[cod]
@@ -47,6 +52,9 @@ Thumbs.db
 
 # Docker volumes
 postgres_data/
+
+# Temporary image storage
+temp_img/
 
 # Alembic — migrations are intentionally tracked in version control
 

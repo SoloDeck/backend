@@ -2,12 +2,12 @@
 
 import uuid
 from dataclasses import dataclass
-from datetime import UTC
+from datetime import UTC, datetime
 
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.modules.users.schemas.request import ChangePasswordRequest, UpdateUserRequest
+from src.modules.users.infrastructure.repository import UsersRepository
+from src.modules.users.schemas.request import ChangePasswordRequest, FreelancerProfileUpdateRequest, UpdateUserRequest
 from src.shared.exceptions.domain import AuthenticationError, NotFoundError
 from src.shared.security.passwords import hash_password, verify_password
 
@@ -15,16 +15,14 @@ from src.shared.security.passwords import hash_password, verify_password
 @dataclass
 class UsersService:
     db: AsyncSession
+    repo: UsersRepository | None = None
+
+    def __post_init__(self) -> None:
+        if self.repo is None:
+            self.repo = UsersRepository(self.db)
 
     async def get_me(self, user_id: uuid.UUID):  # type: ignore[return]
-        from src.infrastructure.database.models import UserModel
-
-        user = await self.db.scalar(
-            select(UserModel).where(
-                UserModel.id == user_id,
-                UserModel.deleted_at.is_(None),
-            )
-        )
+        user = await self.repo.get_by_id(user_id)
         if user is None:
             raise NotFoundError("User not found")
         return user
@@ -35,17 +33,21 @@ class UsersService:
             user.full_name = payload.full_name
         if payload.phone is not None:
             user.phone = payload.phone
-        await self.db.flush()
-        await self.db.refresh(user)
-        return user
+        return await self.repo.save(user)
 
     async def delete_me(self, user_id: uuid.UUID) -> None:
-        from datetime import datetime
-
         user = await self.get_me(user_id)
         user.deleted_at = datetime.now(UTC)
         user.status = "deleted"
-        await self.db.flush()
+        await self.repo.save(user)
+
+    async def update_freelancer_profile(
+        self, user_id: uuid.UUID, payload: FreelancerProfileUpdateRequest
+    ):  # type: ignore[return]
+        user = await self.get_me(user_id)
+        for field in payload.model_fields_set:
+            setattr(user, field, getattr(payload, field))
+        return await self.repo.save(user)
 
     async def change_password(self, user_id: uuid.UUID, payload: ChangePasswordRequest) -> None:
         user = await self.get_me(user_id)
@@ -54,4 +56,4 @@ class UsersService:
         ):
             raise AuthenticationError("Current password is incorrect")
         user.hashed_password = hash_password(payload.new_password)
-        await self.db.flush()
+        await self.repo.save(user)

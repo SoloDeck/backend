@@ -52,6 +52,10 @@ class EntitlementError(DomainError):
 # ---------------------------------------------------------------------------
 
 
+class ValidationError(DomainError):
+    """Request payload fails semantic validation (HTTP 422)."""
+
+
 class BusinessRuleError(DomainError):
     """General business invariant violated."""
 

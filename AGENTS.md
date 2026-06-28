@@ -144,8 +144,14 @@ lifecycle, logout + token blacklisting, password reset.
 **Depends on:** Users (owner_user_id).
 **Key rule:** client email is unique per owner user, not globally.
 
+### `intake_form`
+**Responsibilities:** configurable client-facing intake form — field definitions, visibility rules, and required-field validation. Provides a public shareable link (`share_token`) that potential clients use to self-submit project inquiries.
+**Boundaries:** does NOT create deals directly — delegates to Deals service after validating the submission. Does NOT own the share token (stored on `users`).
+**Depends on:** Users (resolves owner from `intake_share_token`), Deals (calls `DealsService.create_public_intake()` on submission).
+**Key rule:** `GET /intake/{token}/config` and `POST /intake/{token}` are unauthenticated — the share token is the only identity signal. Only `is_visible=true` fields are returned to the public config endpoint.
+
 ### `deals`
-**Responsibilities:** deal CRUD, pipeline stage transitions, activity log, AI qualification trigger, embeddable intake form (shareable link for client self-submission).
+**Responsibilities:** deal CRUD, pipeline stage transitions, activity log, and AI qualification trigger.
 **Boundaries:** does NOT own proposal documents, contract documents, invoices, or reminders.
 **Depends on:** Clients (client_id immutable after creation).
 **Pipeline stages (forward-only):** `new_lead` → `qualified` → `proposal_sent` → `in_negotiation` → `active` → `completed_and_billed`. Terminal stages: `completed_and_billed`, `lost`.
@@ -292,7 +298,7 @@ async def transition_stage(
     deal = await service.transition_stage(deal_id, body.target_stage, user_id)
     return ApiResponse.ok(DealResponse.model_validate(deal))
 
-# WRONG — raw return and business logic in router
+# WRONG — raw return and business logic in api
 @router.post("/{deal_id}/stage-transition")
 async def transition_stage(...):
     if deal.stage == "lost":

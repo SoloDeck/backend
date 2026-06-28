@@ -92,6 +92,7 @@ _contract_status = PgEnum(
     "completed",
     "terminated",
     "expired",
+    "archived",
     name="contract_status",
     create_type=False,
 )
@@ -165,6 +166,11 @@ class UserModel(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     currency: Mapped[str] = mapped_column(String(3), nullable=False, server_default="VND")
     portfolio_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     business_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+    # Public freelancer directory
+    professional_title: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    service_categories: Mapped[list[str] | None] = mapped_column(ARRAY(Text), nullable=True)
+    is_listed: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
 
     # Payment info
     momo_phone_number: Mapped[str | None] = mapped_column(String(20), nullable=True)
@@ -458,10 +464,20 @@ class DealModel(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     actual_value: Mapped[Decimal | None] = mapped_column(Numeric(15, 2), nullable=True)
     currency: Mapped[str] = mapped_column(String(3), nullable=False, server_default="VND")
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    project_type: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    service_category: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    pricing_tier: Mapped[str | None] = mapped_column(String(100), nullable=True)
     ai_qualification_score: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
+    ai_qualification_confidence: Mapped[float | None] = mapped_column(nullable=True)
     ai_qualification_recommendation: Mapped[str | None] = mapped_column(
         _ai_recommendation, nullable=True
     )
+    ai_qualification_reasoning: Mapped[str | None] = mapped_column(Text, nullable=True)
+    ai_qualification_project_type: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    ai_qualification_budget_signal: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    ai_qualification_timeline_signal: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    ai_qualification_urgency_signal: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    ai_qualification_red_flags: Mapped[list | None] = mapped_column(JSONB, nullable=True)
     closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     __table_args__ = (
@@ -555,6 +571,105 @@ class DealActivityEntryModel(UUIDMixin, Base):
     __table_args__ = (
         Index("idx_deal_activity_entries_deal", "deal_id", "created_at"),
         Index("idx_deal_activity_entries_user", "owner_user_id"),
+    )
+
+
+class IntakeFormConfigModel(UUIDMixin, TimestampMixin, Base):
+    __tablename__ = "intake_form_configs"
+
+    owner_user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=False
+    )
+    title: Mapped[str] = mapped_column(String(500), nullable=False, server_default="Gửi yêu cầu dự án")
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
+
+    __table_args__ = (
+        UniqueConstraint("owner_user_id", name="uq_intake_form_configs_owner"),
+        Index("idx_intake_form_configs_owner", "owner_user_id"),
+    )
+
+
+class IntakeFormFieldModel(UUIDMixin, Base):
+    __tablename__ = "intake_form_fields"
+
+    form_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("intake_form_configs.id", ondelete="CASCADE"), nullable=False
+    )
+    field_key: Mapped[str] = mapped_column(String(100), nullable=False)
+    label: Mapped[str] = mapped_column(String(200), nullable=False)
+    placeholder: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    field_type: Mapped[str] = mapped_column(String(50), nullable=False, server_default="text")
+    is_required: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+    is_visible: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+
+    __table_args__ = (
+        UniqueConstraint("form_id", "field_key", name="uq_intake_form_fields_form_key"),
+        Index("idx_intake_form_fields_form", "form_id", "sort_order"),
+    )
+
+
+class LeadScoreModel(Base):
+    __tablename__ = "lead_scores"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    deal_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("deals.id"), nullable=False
+    )
+    score: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+    confidence: Mapped[float] = mapped_column(nullable=False)
+    reasoning: Mapped[str] = mapped_column(Text, nullable=False)
+    model_version: Mapped[str] = mapped_column(String(100), nullable=False)
+    generated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    project_type: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    budget_signal: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    timeline_signal: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    urgency_signal: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    red_flags: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+
+    __table_args__ = (
+        Index("idx_lead_scores_deal", "deal_id"),
+        CheckConstraint("score BETWEEN 0 AND 100", name="ck_lead_scores_score_range"),
+        CheckConstraint("confidence BETWEEN 0.0 AND 1.0", name="ck_lead_scores_confidence_range"),
+    )
+
+
+class ProjectModel(UUIDMixin, TimestampMixin, Base):
+    __tablename__ = "projects"
+
+    deal_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("deals.id"), nullable=False
+    )
+    owner_user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=False
+    )
+    title: Mapped[str] = mapped_column(String(500), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    __table_args__ = (
+        Index("idx_projects_deal", "deal_id"),
+        Index("idx_projects_owner", "owner_user_id"),
+        Index("idx_projects_owner_deal", "owner_user_id", "deal_id"),
+    )
+
+
+class TaskModel(UUIDMixin, TimestampMixin, Base):
+    __tablename__ = "tasks"
+
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("projects.id"), nullable=False
+    )
+    owner_user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=False
+    )
+    title: Mapped[str] = mapped_column(String(500), nullable=False)
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_done: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+
+    __table_args__ = (
+        Index("idx_tasks_project", "project_id"),
+        Index("idx_tasks_owner_project", "owner_user_id", "project_id"),
     )
 
 
