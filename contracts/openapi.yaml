@@ -43,6 +43,8 @@ tags:
     description: Client address book, contact info, communication logs, and description.
   - name: Deals
     description: Deal CRUD, pipeline stage transitions, activity timeline, and AI lead qualification.
+  - name: Projects
+    description: Read-only projects spawned from won deals (deal stage `active`).
   - name: Proposals
     description: Proposal versioning, lifecycle (draft → sent → accepted/rejected/expired), and AI generation.
   - name: Contracts
@@ -1070,6 +1072,12 @@ paths:
       parameters:
         - $ref: '#/components/parameters/Page'
         - $ref: '#/components/parameters/PageSize'
+        - name: client_id
+          in: query
+          description: Filter deals belonging to a single client (Client Detail view)
+          schema:
+            type: string
+            format: uuid
         - name: title
           in: query
           description: Search by title (case-insensitive, partial match)
@@ -1397,6 +1405,78 @@ paths:
                     properties:
                       data:
                         $ref: '#/components/schemas/DealActivityEntryResponse'
+
+  # -------------------------------------------------------------------------
+  # PROJECTS
+  # -------------------------------------------------------------------------
+  /projects:
+    get:
+      tags: [Projects]
+      summary: List projects
+      description: |
+        Returns only projects owned by the authenticated user. A project is created
+        automatically when its deal reaches stage `active`. Read-only — projects are
+        not created or deleted directly via the API.
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - name: client_id
+          in: query
+          description: Filter projects belonging to a single client
+          schema:
+            type: string
+            format: uuid
+        - name: status
+          in: query
+          description: Filter by project status
+          schema:
+            $ref: '#/components/schemas/ProjectStatus'
+        - name: deal_id
+          in: query
+          description: Filter by the originating deal
+          schema:
+            type: string
+            format: uuid
+        - name: sort_by
+          in: query
+          schema:
+            type: string
+            enum: [created_at, updated_at, due_date]
+            default: created_at
+        - $ref: '#/components/parameters/SortOrder'
+      responses:
+        '200':
+          description: Paginated project list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectPage'
+
+  /projects/{project_id}:
+    parameters:
+      - name: project_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      tags: [Projects]
+      summary: Get project detail
+      responses:
+        '200':
+          description: Project detail
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/ProjectResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
 
   # -------------------------------------------------------------------------
   # PROPOSALS
@@ -3654,6 +3734,13 @@ components:
       type: string
       enum: [inbound, referral, outreach, platform, other]
 
+    ProjectStatus:
+      type: string
+      description: >-
+        Lifecycle of a Project (the active work spawned from a won deal).
+        A project is born `active` when its deal reaches stage `active`.
+      enum: [active, on_hold, completed, cancelled]
+
     DealActivityType:
       type: string
       enum: [stage_change, note_added, document_attached, ai_qualification]
@@ -4615,6 +4702,13 @@ components:
           type: string
           format: date-time
           nullable: true
+        project_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: >-
+            Set once the deal reaches stage `active`, when its Project is created.
+            Null for deals that have not been won yet.
         created_at:
           type: string
           format: date-time
@@ -4631,6 +4725,55 @@ components:
               type: array
               items:
                 $ref: '#/components/schemas/DealResponse'
+
+    ProjectResponse:
+      type: object
+      required: [id, owner_user_id, client_id, deal_id, status, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        owner_user_id:
+          type: string
+          format: uuid
+        client_id:
+          type: string
+          format: uuid
+        client_name:
+          type: string
+          description: Denormalized for display
+        deal_id:
+          type: string
+          format: uuid
+          description: The won deal this project was created from (1:1, immutable)
+        title:
+          type: string
+        status:
+          $ref: '#/components/schemas/ProjectStatus'
+        start_date:
+          type: string
+          format: date
+          nullable: true
+        due_date:
+          type: string
+          format: date
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    ProjectPage:
+      allOf:
+        - $ref: '#/components/schemas/PaginatedResponse'
+        - type: object
+          properties:
+            data:
+              type: array
+              items:
+                $ref: '#/components/schemas/ProjectResponse'
 
     CreateDealRequest:
       type: object
