@@ -5,7 +5,7 @@ All DB calls are mocked via AsyncMock — no real database required.
 
 import uuid
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -14,6 +14,8 @@ from src.modules.auth.application.service import AuthService
 from src.modules.auth.schemas.request import (
     GoogleAuthRequest,
     LoginRequest,
+    PasswordResetConfirmRequest,
+    PasswordResetRequestBody,
     RegisterRequest,
 )
 from src.shared.exceptions.domain import AlreadyExistsError, AuthenticationError
@@ -70,7 +72,7 @@ class TestRegister:
 
     async def test_creates_user_and_subscription_when_free_plan_exists(self) -> None:
         free_plan = _make_plan()
-        db = _mock_db([None, free_plan, None]) # user check, free plan, issue_tokens sub
+        db = _mock_db([None, free_plan, None])  # user check, free plan, issue_tokens sub
         service = AuthService(db=db)
         await service.register(
             RegisterRequest(email="new@example.com", password="Test@1234!", full_name="New User")
@@ -78,7 +80,7 @@ class TestRegister:
         assert db.add.call_count == 2
 
     async def test_creates_only_user_when_no_free_plan(self) -> None:
-        db = _mock_db([None, None, None]) # user check, free plan, issue_tokens sub
+        db = _mock_db([None, None, None])  # user check, free plan, issue_tokens sub
         service = AuthService(db=db)
         result = await service.register(
             RegisterRequest(email="new@example.com", password="Test@1234!", full_name="New User")
@@ -105,11 +107,9 @@ class TestRegister:
 class TestLogin:
     async def test_success_returns_token_response(self) -> None:
         user = _make_user()
-        db = _mock_db([user, None]) # login user, issue_tokens sub
+        db = _mock_db([user, None])  # login user, issue_tokens sub
         service = AuthService(db=db)
-        result = await service.login(
-            LoginRequest(email=user.email, password="Test@1234!")
-        )
+        result = await service.login(LoginRequest(email=user.email, password="Test@1234!"))
         assert result.access_token
         assert result.token_type == "Bearer"
 
@@ -155,9 +155,7 @@ _VALID_CLAIMS = {
 
 
 def _identity() -> SimpleNamespace:
-    return SimpleNamespace(
-        user_id=uuid.uuid4(), provider="google", provider_sub="google-sub-123"
-    )
+    return SimpleNamespace(user_id=uuid.uuid4(), provider="google", provider_sub="google-sub-123")
 
 
 class TestGoogleAuth:
@@ -176,16 +174,12 @@ class TestGoogleAuth:
         mock_verify.return_value = dict(_VALID_CLAIMS)
         db = _mock_db([_identity(), _make_user(), None])
         service = AuthService(db=db)
-        result = await service.google_auth(
-            GoogleAuthRequest(id_token="tok", platform="web")
-        )
+        result = await service.google_auth(GoogleAuthRequest(id_token="tok", platform="web"))
         assert result.access_token
         mock_verify.assert_called_once()
 
     @_patch(_VERIFY)
-    async def test_audience_accepts_web_or_native_client_id(
-        self, mock_verify: MagicMock
-    ) -> None:
+    async def test_audience_accepts_web_or_native_client_id(self, mock_verify: MagicMock) -> None:
         # Each platform accepts the web/server client id; mobile additionally
         # accepts its native client id (in case serverClientId is not set).
         accepted = [
@@ -205,9 +199,7 @@ class TestGoogleAuth:
             assert result.access_token, (platform, aud)
 
     @_patch(_VERIFY)
-    async def test_audience_rejects_foreign_client_id(
-        self, mock_verify: MagicMock
-    ) -> None:
+    async def test_audience_rejects_foreign_client_id(self, mock_verify: MagicMock) -> None:
         mock_verify.return_value = {**_VALID_CLAIMS, "aud": "attacker.apps.googleusercontent.com"}
         with pytest.raises(AuthenticationError):
             await AuthService(db=_mock_db([])).google_auth(
@@ -245,9 +237,7 @@ class TestGoogleAuth:
         # identity None, email None, free plan, issue_tokens sub
         db = _mock_db([None, None, _make_plan(), None])
         service = AuthService(db=db)
-        result = await service.google_auth(
-            GoogleAuthRequest(id_token="tok", platform="ios")
-        )
+        result = await service.google_auth(GoogleAuthRequest(id_token="tok", platform="ios"))
         assert result.access_token
         assert db.add.call_count == 3  # user + identity + subscription
 
@@ -257,9 +247,7 @@ class TestGoogleAuth:
         # identity None, existing email user, issue_tokens sub
         db = _mock_db([None, _make_user(), None])
         service = AuthService(db=db)
-        result = await service.google_auth(
-            GoogleAuthRequest(id_token="tok", platform="web")
-        )
+        result = await service.google_auth(GoogleAuthRequest(id_token="tok", platform="web"))
         assert result.access_token
         assert db.add.call_count == 1  # only the linked identity
 
@@ -268,9 +256,6 @@ class TestGoogleAuth:
 # TestPasswordReset
 # ---------------------------------------------------------------------------
 
-from unittest.mock import patch
-from src.modules.auth.schemas.request import PasswordResetRequestBody, PasswordResetConfirmRequest
-
 class TestPasswordReset:
     @patch("src.shared.email.smtp.send_email")
     async def test_request_reset_success(self, mock_send_email: AsyncMock) -> None:
@@ -278,17 +263,19 @@ class TestPasswordReset:
         db = _mock_db([user])
         service = AuthService(db=db)
         await service.request_password_reset(PasswordResetRequestBody(email=user.email))
-        
+
         assert db.add.call_count == 1  # reset_token
         db.flush.assert_called_once()
         mock_send_email.assert_called_once()
-        
+
     @patch("src.shared.email.smtp.send_email")
-    async def test_request_reset_user_not_found_returns_silently(self, mock_send_email: AsyncMock) -> None:
+    async def test_request_reset_user_not_found_returns_silently(
+        self, mock_send_email: AsyncMock
+    ) -> None:
         db = _mock_db([None])
         service = AuthService(db=db)
         await service.request_password_reset(PasswordResetRequestBody(email="ghost@example.com"))
-        
+
         db.add.assert_not_called()
         mock_send_email.assert_not_called()
 
@@ -297,11 +284,11 @@ class TestPasswordReset:
         user = _make_user()
         db = _mock_db([token_model, user])
         service = AuthService(db=db)
-        
+
         await service.confirm_password_reset(
             PasswordResetConfirmRequest(otp="123456", new_password="NewPassword@123!")
         )
-        
+
         assert token_model.used_at is not None
         assert user.hashed_password is not None
         db.flush.assert_called_once()
@@ -309,7 +296,7 @@ class TestPasswordReset:
     async def test_confirm_reset_invalid_token_raises_error(self) -> None:
         db = _mock_db([None])
         service = AuthService(db=db)
-        
+
         with pytest.raises(AuthenticationError, match="Invalid or expired reset token"):
             await service.confirm_password_reset(
                 PasswordResetConfirmRequest(otp="123456", new_password="NewPassword@123!")

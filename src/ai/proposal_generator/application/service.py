@@ -3,8 +3,8 @@ from pathlib import Path
 
 from google import genai
 
-from ..schemas.ProposalContent import ProposalContent
-from ..schemas.ProposalGenerationInput import ProposalGenerationInput
+from ..schemas.proposal_content import ProposalContent
+from ..schemas.proposal_generation_input import ProposalGenerationInput
 
 
 class ProposalGenerationService:
@@ -13,11 +13,7 @@ class ProposalGenerationService:
         self.client = client
 
     def _load_prompt(self) -> str:
-        prompt_path = (
-            Path(__file__).parent.parent
-            / "prompts"
-            / "prompts.txt"
-        )
+        prompt_path = Path(__file__).parent.parent / "prompts" / "prompts.txt"
 
         return prompt_path.read_text(encoding="utf-8")
 
@@ -43,17 +39,11 @@ class ProposalGenerationService:
 
         return text
 
-    def generate(
-        self,
-        request: ProposalGenerationInput
-    ) -> ProposalContent:
+    def generate(self, request: ProposalGenerationInput) -> ProposalContent:
 
         prompt_template = self._load_prompt()
 
-        prompt = (
-            prompt_template
-            + "\n\n"
-            + f"""
+        prompt = prompt_template + "\n\n" + f"""
 Project Information
 
 Client Name:
@@ -83,23 +73,15 @@ Service Category:
 Pricing Tier:
 {request.pricing_tier}
 """
-        )
 
-        response = self.client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=prompt
-        )
+        response = self.client.models.generate_content(model="gemini-2.5-flash", contents=prompt)
 
-        response_text = self._clean_response(
-            response.text
-        )
+        response_text = self._clean_response(response.text)
 
         try:
             content = json.loads(response_text)
 
         except json.JSONDecodeError as exc:
-            raise ValueError(
-                f"Gemini did not return valid JSON:\n{response.text}"
-            ) from exc
+            raise ValueError(f"Gemini did not return valid JSON:\n{response.text}") from exc
 
         return ProposalContent(**content)

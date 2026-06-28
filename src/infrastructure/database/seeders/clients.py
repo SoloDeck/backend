@@ -63,9 +63,7 @@ class ClientsSeeder(BaseSeeder):
     async def run(self) -> None:
         self._log.info("seeder.start", admin_email=ADMIN_EMAIL)
 
-        admin = await self.db.scalar(
-            select(UserModel).where(UserModel.email == ADMIN_EMAIL)
-        )
+        admin = await self.db.scalar(select(UserModel).where(UserModel.email == ADMIN_EMAIL))
         if admin is None:
             self._log.info("seeder.skip", reason="admin user not found — run AdminSeeder first")
             return

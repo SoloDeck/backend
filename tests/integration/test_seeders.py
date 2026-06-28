@@ -27,6 +27,7 @@ from src.infrastructure.database.seeders.run import run_all
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 async def _plan_count(db: AsyncSession) -> int:
     result = await db.execute(select(func.count()).select_from(PlanModel))
     return result.scalar_one()
@@ -44,6 +45,7 @@ async def _user_by_email(db: AsyncSession, email: str) -> UserModel | None:
 # ---------------------------------------------------------------------------
 # PlansSeeder
 # ---------------------------------------------------------------------------
+
 
 class TestPlansSeeder:
     async def test_creates_three_plans(self, db_session: AsyncSession) -> None:
@@ -71,9 +73,7 @@ class TestPlansSeeder:
 
     async def test_agency_plan_has_most_ai(self, db_session: AsyncSession) -> None:
         await PlansSeeder(db_session).run()
-        agency = await db_session.scalar(
-            select(PlanModel).where(PlanModel.slug == "agency")
-        )
+        agency = await db_session.scalar(select(PlanModel).where(PlanModel.slug == "agency"))
         assert agency is not None
         assert agency.can_use_ai is True
         assert agency.max_ai_generations_per_month == 500
@@ -107,6 +107,7 @@ class TestPlansSeeder:
 # AdminSeeder
 # ---------------------------------------------------------------------------
 
+
 class TestAdminSeeder:
     async def test_creates_admin_user(self, db_session: AsyncSession) -> None:
         await PlansSeeder(db_session).run()
@@ -129,9 +130,7 @@ class TestAdminSeeder:
         await AdminSeeder(db_session).run()
         await AdminSeeder(db_session).run()
         result = await db_session.execute(
-            select(func.count()).select_from(UserModel).where(
-                UserModel.email == ADMIN_EMAIL
-            )
+            select(func.count()).select_from(UserModel).where(UserModel.email == ADMIN_EMAIL)
         )
         assert result.scalar_one() == 1
 
@@ -139,6 +138,7 @@ class TestAdminSeeder:
 # ---------------------------------------------------------------------------
 # run_all — environment guard
 # ---------------------------------------------------------------------------
+
 
 class TestRunAll:
     async def test_seeds_plans_in_production(self, db_session: AsyncSession) -> None:
@@ -168,8 +168,6 @@ class TestRunAll:
             await run_all(db_session)
         assert await _plan_count(db_session) == 3
         result = await db_session.execute(
-            select(func.count()).select_from(UserModel).where(
-                UserModel.email == ADMIN_EMAIL
-            )
+            select(func.count()).select_from(UserModel).where(UserModel.email == ADMIN_EMAIL)
         )
         assert result.scalar_one() == 1

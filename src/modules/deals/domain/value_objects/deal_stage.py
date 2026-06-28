@@ -22,6 +22,4 @@ STAGE_TRANSITIONS: dict[DealStage, frozenset[DealStage]] = {
     DealStage.LOST: frozenset(),
 }
 
-TERMINAL_STAGES: frozenset[DealStage] = frozenset(
-    {DealStage.COMPLETED_AND_BILLED, DealStage.LOST}
-)
+TERMINAL_STAGES: frozenset[DealStage] = frozenset({DealStage.COMPLETED_AND_BILLED, DealStage.LOST})

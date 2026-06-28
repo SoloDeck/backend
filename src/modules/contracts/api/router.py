@@ -9,9 +9,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.infrastructure.database.session import get_db_session
 from src.modules.contracts.application.service import ContractsService
-from src.modules.contracts.schemas.request import ContractRequest, ContractStatusRequest, ContractTerminateRequest
-from src.shared.dependencies.ai import AIFacadeDep
+from src.modules.contracts.schemas.request import (
+    ContractRequest,
+    ContractStatusRequest,
+    ContractTerminateRequest,
+)
 from src.modules.contracts.schemas.response import ContractExportResponse, ContractResponse
+from src.shared.dependencies.ai import AIFacadeDep
 from src.shared.dependencies.auth import CurrentUserId
 from src.shared.responses.response import ApiResponse, PaginatedResponse
 

@@ -4,24 +4,32 @@ import uuid
 
 from httpx import AsyncClient
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 async def _auth(client: AsyncClient) -> dict:
     resp = await client.post(
         "/api/v1/auth/register",
-        json={"email": f"u_{uuid.uuid4().hex[:8]}@example.com", "password": "Test@1234!", "full_name": "Test User"},
+        json={
+            "email": f"u_{uuid.uuid4().hex[:8]}@example.com",
+            "password": "Test@1234!",
+            "full_name": "Test User",
+        },
     )
     assert resp.status_code == 201, resp.text
     return {"Authorization": f"Bearer {resp.json()['data']['access_token']}"}
 
 
 async def _make_deal(client: AsyncClient, headers: dict, title: str = "Deal") -> str:
-    c = await client.post("/api/v1/clients", json={"name": "Client", "status": "prospect"}, headers=headers)
+    c = await client.post(
+        "/api/v1/clients", json={"name": "Client", "status": "prospect"}, headers=headers
+    )
     assert c.status_code == 201
-    d = await client.post("/api/v1/deals", json={"client_id": c.json()["data"]["id"], "title": title}, headers=headers)
+    d = await client.post(
+        "/api/v1/deals", json={"client_id": c.json()["data"]["id"], "title": title}, headers=headers
+    )
     assert d.status_code == 201
     return d.json()["data"]["id"]
 
@@ -39,6 +47,7 @@ async def _create_proposal(client: AsyncClient, headers: dict, deal_id: str) -> 
 # ---------------------------------------------------------------------------
 # POST /proposals
 # ---------------------------------------------------------------------------
+
 
 class TestCreateProposal:
     async def test_creates_proposal_returns_201(self, client: AsyncClient) -> None:
@@ -69,13 +78,16 @@ class TestCreateProposal:
         assert resp.status_code == 422
 
     async def test_unauthenticated_returns_401(self, client: AsyncClient) -> None:
-        resp = await client.post("/api/v1/proposals", json={"deal_id": str(uuid.uuid4()), "content": {}})
+        resp = await client.post(
+            "/api/v1/proposals", json={"deal_id": str(uuid.uuid4()), "content": {}}
+        )
         assert resp.status_code == 401
 
 
 # ---------------------------------------------------------------------------
 # GET /proposals
 # ---------------------------------------------------------------------------
+
 
 class TestListProposals:
     async def test_returns_own_proposals(self, client: AsyncClient) -> None:
@@ -111,7 +123,9 @@ class TestListProposals:
         headers = await _auth(client)
         deal_id = await _make_deal(client, headers)
         p = await _create_proposal(client, headers, deal_id)
-        await client.patch(f"/api/v1/proposals/{p['id']}/status", json={"status": "sent"}, headers=headers)
+        await client.patch(
+            f"/api/v1/proposals/{p['id']}/status", json={"status": "sent"}, headers=headers
+        )
         await _create_proposal(client, headers, deal_id)  # stays draft
         resp = await client.get("/api/v1/proposals?status=sent", headers=headers)
         data = resp.json()["data"]
@@ -138,8 +152,18 @@ class TestListProposals:
         deal_id = await _make_deal(client, headers)
         for _ in range(5):
             await _create_proposal(client, headers, deal_id)
-        p1 = [p["id"] for p in (await client.get("/api/v1/proposals?page=1&page_size=3", headers=headers)).json()["data"]]
-        p2 = [p["id"] for p in (await client.get("/api/v1/proposals?page=2&page_size=3", headers=headers)).json()["data"]]
+        p1 = [
+            p["id"]
+            for p in (
+                await client.get("/api/v1/proposals?page=1&page_size=3", headers=headers)
+            ).json()["data"]
+        ]
+        p2 = [
+            p["id"]
+            for p in (
+                await client.get("/api/v1/proposals?page=2&page_size=3", headers=headers)
+            ).json()["data"]
+        ]
         assert len(p2) == 2
         assert not set(p1) & set(p2)
 
@@ -159,6 +183,7 @@ class TestListProposals:
 # ---------------------------------------------------------------------------
 # GET /proposals/{id}
 # ---------------------------------------------------------------------------
+
 
 class TestGetProposal:
     async def test_returns_proposal(self, client: AsyncClient) -> None:
@@ -191,6 +216,7 @@ class TestGetProposal:
 # DELETE /proposals/{id}
 # ---------------------------------------------------------------------------
 
+
 class TestDeleteProposal:
     async def test_deletes_draft_returns_200(self, client: AsyncClient) -> None:
         headers = await _auth(client)
@@ -204,7 +230,9 @@ class TestDeleteProposal:
         deal_id = await _make_deal(client, headers)
         proposal = await _create_proposal(client, headers, deal_id)
         await client.delete(f"/api/v1/proposals/{proposal['id']}", headers=headers)
-        ids = [p["id"] for p in (await client.get("/api/v1/proposals", headers=headers)).json()["data"]]
+        ids = [
+            p["id"] for p in (await client.get("/api/v1/proposals", headers=headers)).json()["data"]
+        ]
         assert proposal["id"] not in ids
 
     async def test_not_found_returns_404(self, client: AsyncClient) -> None:

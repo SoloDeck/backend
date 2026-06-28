@@ -15,7 +15,7 @@ class DeliveryRecord:
 
     id: uuid.UUID
     reminder_id: uuid.UUID
-    channel: str            # "email" | "zalo" | "in_app"
+    channel: str  # "email" | "zalo" | "in_app"
     outcome: DeliveryOutcome
     sent_at: datetime
     error_message: str | None

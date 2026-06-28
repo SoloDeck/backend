@@ -44,6 +44,7 @@ class PaginatedResponse[T](BaseModel):
         page_size: int,
     ) -> "PaginatedResponse[T]":
         import math
+
         total_pages = math.ceil(total / page_size) if page_size else 1
         return cls(
             data=data,

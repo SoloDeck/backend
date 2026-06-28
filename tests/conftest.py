@@ -71,9 +71,7 @@ def _ensure_test_db() -> None:
             user=user, password=password, host=host, port=port, database="postgres"
         )
         try:
-            exists = await conn.fetchval(
-                "SELECT 1 FROM pg_database WHERE datname = $1", db_name
-            )
+            exists = await conn.fetchval("SELECT 1 FROM pg_database WHERE datname = $1", db_name)
             if not exists:
                 await conn.execute(f'CREATE DATABASE "{db_name}"')
         finally:

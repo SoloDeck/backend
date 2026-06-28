@@ -42,10 +42,7 @@ def _is_sensitive_key(key: Any) -> bool:
 
 def _redact(value: Any) -> Any:
     if isinstance(value, Mapping):
-        return {
-            k: (REDACTED if _is_sensitive_key(k) else _redact(v))
-            for k, v in value.items()
-        }
+        return {k: (REDACTED if _is_sensitive_key(k) else _redact(v)) for k, v in value.items()}
     if isinstance(value, (list, tuple)):
         rebuilt = [_redact(item) for item in value]
         return type(value)(rebuilt) if isinstance(value, tuple) else rebuilt
@@ -57,8 +54,6 @@ def redact_mapping(data: Mapping[str, Any]) -> dict[str, Any]:
     return _redact(dict(data))
 
 
-def redact_processor(
-    _logger: Any, _method_name: str, event_dict: dict[str, Any]
-) -> dict[str, Any]:
+def redact_processor(_logger: Any, _method_name: str, event_dict: dict[str, Any]) -> dict[str, Any]:
     """structlog processor that redacts sensitive keys in every log entry."""
     return redact_mapping(event_dict)

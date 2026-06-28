@@ -136,9 +136,7 @@ class TestLoginEndpoint:
         payload = _register_payload()
         await _register(client, **payload)
 
-        user = await db_session.scalar(
-            select(UserModel).where(UserModel.email == payload["email"])
-        )
+        user = await db_session.scalar(select(UserModel).where(UserModel.email == payload["email"]))
         assert user is not None
         user.status = "suspended"
         await db_session.flush()

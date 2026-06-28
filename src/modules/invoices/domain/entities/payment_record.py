@@ -22,6 +22,6 @@ class PaymentRecord:
     invoice_id: uuid.UUID
     amount: Money
     method: PaymentMethod
-    reference: str | None           # bank ref, MoMo transaction ID, etc.
+    reference: str | None  # bank ref, MoMo transaction ID, etc.
     note: str | None
     recorded_at: datetime

@@ -59,6 +59,7 @@ class Subscription:
             from src.modules.subscriptions.domain.value_objects.entitlement import (
                 EntitlementViolationError,
             )
+
             raise EntitlementViolationError("PDF export requires a paid subscription")
 
     # ------------------------------------------------------------------ #
@@ -73,6 +74,7 @@ class Subscription:
         from src.modules.subscriptions.domain.exceptions.exceptions import (
             InvalidSubscriptionTransitionError,
         )
+
         if self.status not in {SubscriptionStatus.ACTIVE, SubscriptionStatus.PAST_DUE}:
             raise InvalidSubscriptionTransitionError(self.status, SubscriptionStatus.SUSPENDED)
         self.status = SubscriptionStatus.SUSPENDED
@@ -82,6 +84,7 @@ class Subscription:
         from src.modules.subscriptions.domain.exceptions.exceptions import (
             InvalidSubscriptionTransitionError,
         )
+
         if self.status not in {SubscriptionStatus.SUSPENDED, SubscriptionStatus.PAST_DUE}:
             raise InvalidSubscriptionTransitionError(self.status, SubscriptionStatus.ACTIVE)
         self.status = SubscriptionStatus.ACTIVE

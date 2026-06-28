@@ -6,9 +6,9 @@ from datetime import UTC, datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.shared.exceptions.domain import NotFoundError
 from src.modules.clients.infrastructure.repository import ClientsRepository
 from src.modules.clients.schemas.request import ClientRequest, CommLogRequest
+from src.shared.exceptions.domain import NotFoundError
 
 
 @dataclass
@@ -52,6 +52,7 @@ class ClientsService:
         page_size: int = 20,
     ) -> tuple[list, int]:
         from sqlalchemy import func, select
+
         from src.infrastructure.database.models import ClientModel
 
         conditions = [
@@ -81,8 +82,19 @@ class ClientsService:
 
     async def update(self, user_id: uuid.UUID, client_id: uuid.UUID, payload: ClientRequest):  # type: ignore[return]
         client = await self._get_client(user_id, client_id)
-        for field in ("name", "email", "phone", "type", "website", "linkedin_url",
-                      "address_city", "address_country", "status", "notes", "description"):
+        for field in (
+            "name",
+            "email",
+            "phone",
+            "type",
+            "website",
+            "linkedin_url",
+            "address_city",
+            "address_country",
+            "status",
+            "notes",
+            "description",
+        ):
             value = getattr(payload, field, None)
             if value is not None:
                 setattr(client, field, value)
@@ -106,4 +118,3 @@ class ClientsService:
     async def list_comm_logs(self, user_id: uuid.UUID, client_id: uuid.UUID) -> list:
         await self._get_client(user_id, client_id)
         return await self.repo.list_comm_logs(user_id, client_id)
-

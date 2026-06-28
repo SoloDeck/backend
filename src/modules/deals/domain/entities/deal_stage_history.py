@@ -13,6 +13,6 @@ class DealStageHistory:
     deal_id: uuid.UUID
     from_stage: DealStage
     to_stage: DealStage
-    transitioned_by: uuid.UUID      # owner_user_id
+    transitioned_by: uuid.UUID  # owner_user_id
     transitioned_at: datetime
     note: str | None = None

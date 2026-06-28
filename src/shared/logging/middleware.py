@@ -36,9 +36,7 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
         super().__init__(app)
 
     async def dispatch(self, request: Request, call_next) -> Response:  # type: ignore[override]
-        rid = bind_request_id(
-            _sanitize_request_id(request.headers.get(REQUEST_ID_HEADER))
-        )
+        rid = bind_request_id(_sanitize_request_id(request.headers.get(REQUEST_ID_HEADER)))
         response = await call_next(request)
         response.headers[REQUEST_ID_HEADER] = rid
         # Clear only on the success path. If the handler raised, the exception

@@ -1,6 +1,5 @@
-from pydantic import BaseModel
-from typing import List
 
+from pydantic import BaseModel
 
 
 class LeadQualificationResponse(BaseModel):
@@ -8,6 +7,6 @@ class LeadQualificationResponse(BaseModel):
     budget_signal: str
     timeline_signal: str
     urgency_signal: str
-    red_flags: List[str]
+    red_flags: list[str]
     suggested_lead_score: str
     reasoning: str

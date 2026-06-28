@@ -104,9 +104,7 @@ def _install_queue_handler(level: int) -> None:
     log_queue: queue.Queue[logging.LogRecord] = queue.Queue(-1)
     stream = logging.StreamHandler(sys.stdout)
     stream.setFormatter(logging.Formatter("%(message)s"))
-    _listener = logging.handlers.QueueListener(
-        log_queue, stream, respect_handler_level=True
-    )
+    _listener = logging.handlers.QueueListener(log_queue, stream, respect_handler_level=True)
     _listener.start()
     atexit.register(_listener.stop)
     root.addHandler(logging.handlers.QueueHandler(log_queue))

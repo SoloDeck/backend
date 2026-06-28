@@ -21,7 +21,7 @@ from src.shared.domain.value_objects.money import Money
 class Deal:
     id: uuid.UUID
     owner_user_id: uuid.UUID
-    client_id: uuid.UUID            # immutable after creation
+    client_id: uuid.UUID  # immutable after creation
     title: str
     stage: DealStage
     value: Money | None
@@ -29,7 +29,7 @@ class Deal:
     expected_close_date: datetime | None
     ai_score: int | None
     ai_confidence: AIConfidence | None
-    ai_recommendation: str | None   # "qualify" | "pass" | None
+    ai_recommendation: str | None  # "qualify" | "pass" | None
     closed_at: datetime | None
     created_at: datetime
     updated_at: datetime
@@ -79,9 +79,7 @@ class Deal:
         if target in TERMINAL_STAGES:
             self.closed_at = datetime.now(UTC)
 
-    def apply_lead_score(
-        self, score: int, confidence: AIConfidence, recommendation: str
-    ) -> None:
+    def apply_lead_score(self, score: int, confidence: AIConfidence, recommendation: str) -> None:
         self.ai_score = score
         self.ai_confidence = confidence
         self.ai_recommendation = recommendation

@@ -23,5 +23,5 @@ class UsageRecord:
     used_at: datetime
     period_start: datetime
     period_end: datetime
-    tokens_used: int | None         # for AI features
+    tokens_used: int | None  # for AI features
     cost_usd: float | None

@@ -44,7 +44,9 @@ tags:
   - name: Deals
     description: Deal CRUD, pipeline stage transitions, activity timeline, and AI lead qualification.
   - name: Projects
-    description: Read-only projects spawned from won deals (deal stage `active`).
+    description: Project lifecycle linked to a Deal — a Deal moving to the `active` stage auto-creates a linked Project.
+  - name: Tasks
+    description: Polymorphic task tracking attached to a project, deal, or reminder (entity_type + entity_id), with checklist items.
   - name: Proposals
     description: Proposal versioning, lifecycle (draft → sent → accepted/rejected/expired), and AI generation.
   - name: Contracts
@@ -1405,78 +1407,6 @@ paths:
                     properties:
                       data:
                         $ref: '#/components/schemas/DealActivityEntryResponse'
-
-  # -------------------------------------------------------------------------
-  # PROJECTS
-  # -------------------------------------------------------------------------
-  /projects:
-    get:
-      tags: [Projects]
-      summary: List projects
-      description: |
-        Returns only projects owned by the authenticated user. A project is created
-        automatically when its deal reaches stage `active`. Read-only — projects are
-        not created or deleted directly via the API.
-      parameters:
-        - $ref: '#/components/parameters/Page'
-        - $ref: '#/components/parameters/PageSize'
-        - name: client_id
-          in: query
-          description: Filter projects belonging to a single client
-          schema:
-            type: string
-            format: uuid
-        - name: status
-          in: query
-          description: Filter by project status
-          schema:
-            $ref: '#/components/schemas/ProjectStatus'
-        - name: deal_id
-          in: query
-          description: Filter by the originating deal
-          schema:
-            type: string
-            format: uuid
-        - name: sort_by
-          in: query
-          schema:
-            type: string
-            enum: [created_at, updated_at, due_date]
-            default: created_at
-        - $ref: '#/components/parameters/SortOrder'
-      responses:
-        '200':
-          description: Paginated project list
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ProjectPage'
-
-  /projects/{project_id}:
-    parameters:
-      - name: project_id
-        in: path
-        required: true
-        schema:
-          type: string
-          format: uuid
-    get:
-      tags: [Projects]
-      summary: Get project detail
-      responses:
-        '200':
-          description: Project detail
-          content:
-            application/json:
-              schema:
-                allOf:
-                  - $ref: '#/components/schemas/ApiResponseBase'
-                  - type: object
-                    properties:
-                      data:
-                        $ref: '#/components/schemas/ProjectResponse'
-        '404':
-          $ref: '#/components/responses/NotFound'
 
   # -------------------------------------------------------------------------
   # PROPOSALS
@@ -3528,6 +3458,440 @@ paths:
                       data:
                         $ref: '#/components/schemas/PlatformMetricsResponse'
 
+  # =========================================================================
+  # Projects
+  # =========================================================================
+  /projects:
+    get:
+      tags: [Projects]
+      summary: List projects
+      description: |
+        Returns only projects owned by the authenticated user (`owner_id` filter is
+        applied automatically). Optionally filter by `deal_id` and `status`.
+      parameters:
+        - name: deal_id
+          in: query
+          description: Filter by the linked deal
+          schema:
+            type: string
+            format: uuid
+        - name: status
+          in: query
+          description: Filter by project status
+          schema:
+            $ref: '#/components/schemas/ProjectStatus'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: Paginated project list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectPage'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      tags: [Projects]
+      summary: Create a project
+      description: |
+        Creates a project for the authenticated user. `deal_id` is optional — a project
+        may be created standalone or auto-created when a Deal transitions to `active`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateProjectRequest'
+      responses:
+        '201':
+          description: Created project
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/ProjectResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /projects/{project_id}:
+    parameters:
+      - $ref: '#/components/parameters/ProjectId'
+    get:
+      tags: [Projects]
+      summary: Get project detail
+      responses:
+        '200':
+          description: Project detail
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/ProjectResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    put:
+      tags: [Projects]
+      summary: Update project
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateProjectRequest'
+      responses:
+        '200':
+          description: Updated project
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/ProjectResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      tags: [Projects]
+      summary: Delete a project
+      responses:
+        '204':
+          description: Project deleted
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # =========================================================================
+  # Tasks (polymorphic — entity_type: project | deal | reminder)
+  # =========================================================================
+  /projects/{project_id}/tasks:
+    parameters:
+      - $ref: '#/components/parameters/ProjectId'
+    get:
+      tags: [Tasks]
+      summary: List tasks for a project
+      description: |
+        Returns tasks where `entity_type=project` and `entity_id={project_id}`.
+        Backed by the shared TaskService.
+      parameters:
+        - name: task_status
+          in: query
+          description: Filter by task status
+          schema:
+            $ref: '#/components/schemas/TaskStatus'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: Paginated task list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskPage'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    post:
+      tags: [Tasks]
+      summary: Create a task on a project
+      description: Creates a task with `entity_type=project` and `entity_id={project_id}`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateTaskRequest'
+      responses:
+        '201':
+          description: Created task
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/TaskResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /deals/{deal_id}/tasks:
+    parameters:
+      - $ref: '#/components/parameters/DealId'
+    get:
+      tags: [Tasks]
+      summary: List tasks for a deal
+      description: |
+        Returns tasks where `entity_type=deal` and `entity_id={deal_id}`.
+        Backed by the shared TaskService.
+      parameters:
+        - name: task_status
+          in: query
+          description: Filter by task status
+          schema:
+            $ref: '#/components/schemas/TaskStatus'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: Paginated task list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskPage'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    post:
+      tags: [Tasks]
+      summary: Create a task on a deal
+      description: Creates a task with `entity_type=deal` and `entity_id={deal_id}`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateTaskRequest'
+      responses:
+        '201':
+          description: Created task
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/TaskResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /reminders/{reminder_id}/tasks:
+    parameters:
+      - $ref: '#/components/parameters/ReminderId'
+    get:
+      tags: [Tasks]
+      summary: List tasks for a reminder
+      description: |
+        Returns tasks where `entity_type=reminder` and `entity_id={reminder_id}`.
+        Backed by the shared TaskService.
+      parameters:
+        - name: task_status
+          in: query
+          description: Filter by task status
+          schema:
+            $ref: '#/components/schemas/TaskStatus'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: Paginated task list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskPage'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    post:
+      tags: [Tasks]
+      summary: Create a task on a reminder
+      description: Creates a task with `entity_type=reminder` and `entity_id={reminder_id}`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateTaskRequest'
+      responses:
+        '201':
+          description: Created task
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/TaskResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /tasks/{task_id}:
+    parameters:
+      - $ref: '#/components/parameters/TaskId'
+    get:
+      tags: [Tasks]
+      summary: Get task detail
+      responses:
+        '200':
+          description: Task detail
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/TaskResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      tags: [Tasks]
+      summary: Update task
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateTaskRequest'
+      responses:
+        '200':
+          description: Updated task
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/TaskResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      tags: [Tasks]
+      summary: Delete a task
+      responses:
+        '204':
+          description: Task deleted
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # =========================================================================
+  # Checklist items (sub-resource of a task)
+  # =========================================================================
+  /tasks/{task_id}/checklist:
+    parameters:
+      - $ref: '#/components/parameters/TaskId'
+    post:
+      tags: [Tasks]
+      summary: Add a checklist item to a task
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateChecklistItemRequest'
+      responses:
+        '201':
+          description: Created checklist item
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/ChecklistItemResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /tasks/{task_id}/checklist/{item_id}:
+    parameters:
+      - $ref: '#/components/parameters/TaskId'
+      - $ref: '#/components/parameters/ChecklistItemId'
+    patch:
+      tags: [Tasks]
+      summary: Update a checklist item
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateChecklistItemRequest'
+      responses:
+        '200':
+          description: Updated checklist item
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/ChecklistItemResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      tags: [Tasks]
+      summary: Delete a checklist item
+      responses:
+        '204':
+          description: Checklist item deleted
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
 # ===========================================================================
 # COMPONENTS
 # ===========================================================================
@@ -3629,6 +3993,27 @@ components:
         format: uuid
     PlanId:
       name: plan_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    ProjectId:
+      name: project_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    TaskId:
+      name: task_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    ChecklistItemId:
+      name: item_id
       in: path
       required: true
       schema:
@@ -3737,9 +4122,9 @@ components:
     ProjectStatus:
       type: string
       description: >-
-        Lifecycle of a Project (the active work spawned from a won deal).
-        A project is born `active` when its deal reaches stage `active`.
-      enum: [active, on_hold, completed, cancelled]
+        Lifecycle of a Project. Projects can be created directly or auto-created
+        in `planning` when a Deal transitions to `active`.
+      enum: [planning, active, on_hold, completed]
 
     DealActivityType:
       type: string
@@ -4725,55 +5110,6 @@ components:
               type: array
               items:
                 $ref: '#/components/schemas/DealResponse'
-
-    ProjectResponse:
-      type: object
-      required: [id, owner_user_id, client_id, deal_id, status, created_at]
-      properties:
-        id:
-          type: string
-          format: uuid
-        owner_user_id:
-          type: string
-          format: uuid
-        client_id:
-          type: string
-          format: uuid
-        client_name:
-          type: string
-          description: Denormalized for display
-        deal_id:
-          type: string
-          format: uuid
-          description: The won deal this project was created from (1:1, immutable)
-        title:
-          type: string
-        status:
-          $ref: '#/components/schemas/ProjectStatus'
-        start_date:
-          type: string
-          format: date
-          nullable: true
-        due_date:
-          type: string
-          format: date
-          nullable: true
-        created_at:
-          type: string
-          format: date-time
-        updated_at:
-          type: string
-          format: date-time
-
-    ProjectPage:
-      allOf:
-        - $ref: '#/components/schemas/PaginatedResponse'
-        - type: object
-          properties:
-            data:
-              type: array
-              items:
-                $ref: '#/components/schemas/ProjectResponse'
 
     CreateDealRequest:
       type: object
@@ -6490,3 +6826,235 @@ components:
         computed_at:
           type: string
           format: date-time
+
+    # ---------------------------------------------------------------------------
+    # Projects & Tasks (polymorphic)
+    # ---------------------------------------------------------------------------
+    TaskStatus:
+      type: string
+      enum: [todo, in_progress, review, done]
+
+    Priority:
+      type: string
+      enum: [low, medium, high]
+
+    TaskOwner:
+      type: string
+      description: Polymorphic owner type of a task (`entity_type`).
+      enum: [project, deal, reminder]
+
+    ProjectResponse:
+      type: object
+      required: [id, deal_id, owner_id, name, status, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        deal_id:
+          type: string
+          format: uuid
+          nullable: true
+        owner_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        description:
+          type: string
+          nullable: true
+        start_date:
+          type: string
+          format: date
+          nullable: true
+        end_date:
+          type: string
+          format: date
+          nullable: true
+        status:
+          $ref: '#/components/schemas/ProjectStatus'
+        task_count:
+          type: integer
+        done_count:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    ProjectPage:
+      allOf:
+        - $ref: '#/components/schemas/PaginatedResponse'
+        - type: object
+          properties:
+            data:
+              type: array
+              items:
+                $ref: '#/components/schemas/ProjectResponse'
+
+    CreateProjectRequest:
+      type: object
+      required: [name]
+      properties:
+        deal_id:
+          type: string
+          format: uuid
+          nullable: true
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+        description:
+          type: string
+          nullable: true
+        start_date:
+          type: string
+          format: date
+          nullable: true
+        end_date:
+          type: string
+          format: date
+          nullable: true
+
+    UpdateProjectRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+        description:
+          type: string
+          nullable: true
+        start_date:
+          type: string
+          format: date
+          nullable: true
+        end_date:
+          type: string
+          format: date
+          nullable: true
+        status:
+          $ref: '#/components/schemas/ProjectStatus'
+
+    ChecklistItemResponse:
+      type: object
+      required: [id, task_id, text, is_done, position]
+      properties:
+        id:
+          type: string
+          format: uuid
+        task_id:
+          type: string
+          format: uuid
+        text:
+          type: string
+        is_done:
+          type: boolean
+        position:
+          type: integer
+
+    TaskResponse:
+      type: object
+      required: [id, entity_type, entity_id, title, status, priority, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        entity_type:
+          $ref: '#/components/schemas/TaskOwner'
+        entity_id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        description:
+          type: string
+          nullable: true
+        priority:
+          $ref: '#/components/schemas/Priority'
+        status:
+          $ref: '#/components/schemas/TaskStatus'
+        deadline:
+          type: string
+          format: date-time
+          nullable: true
+        checklist_items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ChecklistItemResponse'
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    TaskPage:
+      allOf:
+        - $ref: '#/components/schemas/PaginatedResponse'
+        - type: object
+          properties:
+            data:
+              type: array
+              items:
+                $ref: '#/components/schemas/TaskResponse'
+
+    CreateTaskRequest:
+      type: object
+      required: [title]
+      properties:
+        title:
+          type: string
+          minLength: 1
+          maxLength: 500
+        description:
+          type: string
+          nullable: true
+        priority:
+          $ref: '#/components/schemas/Priority'
+        deadline:
+          type: string
+          format: date-time
+          nullable: true
+
+    UpdateTaskRequest:
+      type: object
+      properties:
+        title:
+          type: string
+          minLength: 1
+          maxLength: 500
+        description:
+          type: string
+          nullable: true
+        priority:
+          $ref: '#/components/schemas/Priority'
+        status:
+          $ref: '#/components/schemas/TaskStatus'
+        deadline:
+          type: string
+          format: date-time
+          nullable: true
+
+    CreateChecklistItemRequest:
+      type: object
+      required: [text]
+      properties:
+        text:
+          type: string
+          minLength: 1
+        position:
+          type: integer
+          default: 0
+
+    UpdateChecklistItemRequest:
+      type: object
+      properties:
+        text:
+          type: string
+        is_done:
+          type: boolean
+        position:
+          type: integer

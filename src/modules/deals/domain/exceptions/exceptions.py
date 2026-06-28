@@ -7,18 +7,14 @@ class DealDomainError(Exception):
 
 class InvalidStageTransitionError(DealDomainError):
     def __init__(self, from_stage: DealStage, to_stage: DealStage) -> None:
-        super().__init__(
-            f"Cannot transition deal from '{from_stage.value}' to '{to_stage.value}'"
-        )
+        super().__init__(f"Cannot transition deal from '{from_stage.value}' to '{to_stage.value}'")
         self.from_stage = from_stage
         self.to_stage = to_stage
 
 
 class TerminalDealError(DealDomainError):
     def __init__(self, stage: DealStage) -> None:
-        super().__init__(
-            f"Deal is in terminal stage '{stage.value}' — no further changes allowed"
-        )
+        super().__init__(f"Deal is in terminal stage '{stage.value}' — no further changes allowed")
         self.stage = stage
 
 

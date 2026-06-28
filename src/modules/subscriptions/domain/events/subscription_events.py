@@ -13,6 +13,7 @@ class SubscriptionCreatedEvent(DomainEvent):
 @dataclass(frozen=True)
 class PlanChangedEvent(DomainEvent):
     """Consumed by Auth to re-issue JWT with new subscription tier."""
+
     user_id: uuid.UUID
     old_plan_slug: str
     new_plan_slug: str

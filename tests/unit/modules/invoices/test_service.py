@@ -7,7 +7,11 @@ from unittest.mock import AsyncMock
 import pytest
 
 from src.modules.invoices.application.service import InvoicesService
-from src.modules.invoices.schemas.request import InvoiceRequest, InvoiceUpdateRequest, PaymentRequest
+from src.modules.invoices.schemas.request import (
+    InvoiceRequest,
+    InvoiceUpdateRequest,
+    PaymentRequest,
+)
 from src.shared.exceptions.domain import BusinessRuleError, NotFoundError
 
 
@@ -45,7 +49,9 @@ async def test_create_allows_contract_only_invoice() -> None:
     repo.save.side_effect = lambda invoice: invoice
     service = InvoicesService(db=AsyncMock(), repo=repo)
 
-    result = await service.create(uuid.uuid4(), invoice_request(deal_id=None, contract_id=uuid.uuid4()))
+    result = await service.create(
+        uuid.uuid4(), invoice_request(deal_id=None, contract_id=uuid.uuid4())
+    )
 
     assert result.status == "draft"
 
@@ -70,7 +76,9 @@ async def test_update_is_draft_only() -> None:
 
 async def test_void_blocks_recorded_payment() -> None:
     repo = AsyncMock()
-    repo.get_by_id.return_value = InvoiceStub(id=uuid.uuid4(), status="partially_paid", amount_paid=Decimal("1"))
+    repo.get_by_id.return_value = InvoiceStub(
+        id=uuid.uuid4(), status="partially_paid", amount_paid=Decimal("1")
+    )
     service = InvoicesService(db=AsyncMock(), repo=repo)
 
     with pytest.raises(BusinessRuleError):
@@ -83,7 +91,13 @@ async def test_record_payment_rejects_non_positive_amount() -> None:
     service = InvoicesService(db=AsyncMock(), repo=repo)
 
     with pytest.raises(BusinessRuleError):
-        await service.record_payment(uuid.uuid4(), uuid.uuid4(), PaymentRequest.model_construct(amount=Decimal("0"), payment_date=date(2026, 1, 1), payment_method="other"))
+        await service.record_payment(
+            uuid.uuid4(),
+            uuid.uuid4(),
+            PaymentRequest.model_construct(
+                amount=Decimal("0"), payment_date=date(2026, 1, 1), payment_method="other"
+            ),
+        )
 
 
 async def test_get_public_view_returns_invoice() -> None:

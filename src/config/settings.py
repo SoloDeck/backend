@@ -101,7 +101,7 @@ class Settings(BaseSettings):
     smtp_password: str = ""
     smtp_from_email: str = "noreply@solodesk.space"
     smtp_from_name: str = "SoloDesk"
-    smtp_tls: bool = False      # True → SMTP_SSL (port 465)
+    smtp_tls: bool = False  # True → SMTP_SSL (port 465)
     smtp_starttls: bool = False  # True → STARTTLS after connect (port 587)
 
     # -----------------------------------------------------------------------
@@ -118,6 +118,7 @@ class Settings(BaseSettings):
             if v.startswith("[") and v.endswith("]"):
                 try:
                     import json
+
                     return json.loads(v)
                 except Exception:
                     pass

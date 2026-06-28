@@ -28,7 +28,7 @@ class Reminder:
     owner_user_id: uuid.UUID
     target: ReminderTarget
     reminder_type: ReminderType
-    channel: str                # "email" | "zalo" | "in_app"
+    channel: str  # "email" | "zalo" | "in_app"
     message: str
     scheduled_at: datetime
     status: ReminderStatus
@@ -59,6 +59,7 @@ class Reminder:
 
     def mark_sent(self) -> None:
         from src.modules.reminders.domain.exceptions.exceptions import TerminalReminderError
+
         if self.is_terminal:
             raise TerminalReminderError(self.status)
         now = datetime.now(UTC)
@@ -68,6 +69,7 @@ class Reminder:
 
     def mark_failed(self) -> None:
         from src.modules.reminders.domain.exceptions.exceptions import TerminalReminderError
+
         if self.is_terminal:
             raise TerminalReminderError(self.status)
         self.status = ReminderStatus.FAILED
@@ -75,6 +77,7 @@ class Reminder:
 
     def cancel(self, reason: str | None = None) -> None:
         from src.modules.reminders.domain.exceptions.exceptions import ReminderNotCancellableError
+
         if not self.is_cancellable:
             raise ReminderNotCancellableError(self.status)
         now = datetime.now(UTC)
@@ -88,6 +91,7 @@ class Reminder:
         if not self.is_recurring or self.recurrence_interval_days is None:
             return None
         from datetime import timedelta
+
         next_at = self.scheduled_at + timedelta(days=self.recurrence_interval_days)
         if self.recurrence_end_date and next_at > self.recurrence_end_date:
             return None

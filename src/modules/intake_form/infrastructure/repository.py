@@ -4,7 +4,11 @@ from dataclasses import dataclass
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.infrastructure.database.models import IntakeFormConfigModel, IntakeFormFieldModel, UserModel
+from src.infrastructure.database.models import (
+    IntakeFormConfigModel,
+    IntakeFormFieldModel,
+    UserModel,
+)
 
 
 @dataclass
@@ -32,7 +36,9 @@ class IntakeFormRepository:
             )
         )
 
-    async def create_config(self, *, owner_user_id: uuid.UUID, title: str, description, is_active: bool):
+    async def create_config(
+        self, *, owner_user_id: uuid.UUID, title: str, description, is_active: bool
+    ):
         config = IntakeFormConfigModel(
             owner_user_id=owner_user_id,
             title=title,
@@ -44,7 +50,9 @@ class IntakeFormRepository:
         await self.db.refresh(config)
         return config
 
-    async def update_config(self, config: IntakeFormConfigModel, *, title: str, description, is_active: bool):
+    async def update_config(
+        self, config: IntakeFormConfigModel, *, title: str, description, is_active: bool
+    ):
         config.title = title
         config.description = description
         config.is_active = is_active
@@ -63,7 +71,9 @@ class IntakeFormRepository:
     async def get_visible_fields(self, form_id: uuid.UUID) -> list[IntakeFormFieldModel]:
         result = await self.db.execute(
             select(IntakeFormFieldModel)
-            .where(IntakeFormFieldModel.form_id == form_id, IntakeFormFieldModel.is_visible.is_(True))
+            .where(
+                IntakeFormFieldModel.form_id == form_id, IntakeFormFieldModel.is_visible.is_(True)
+            )
             .order_by(IntakeFormFieldModel.sort_order)
         )
         return list(result.scalars().all())
@@ -73,8 +83,18 @@ class IntakeFormRepository:
             delete(IntakeFormFieldModel).where(IntakeFormFieldModel.form_id == form_id)
         )
 
-    async def create_field(self, *, form_id: uuid.UUID, field_key: str, label: str, placeholder,
-                           field_type: str, is_required: bool, is_visible: bool, sort_order: int):
+    async def create_field(
+        self,
+        *,
+        form_id: uuid.UUID,
+        field_key: str,
+        label: str,
+        placeholder,
+        field_type: str,
+        is_required: bool,
+        is_visible: bool,
+        sort_order: int,
+    ):
         field = IntakeFormFieldModel(
             form_id=form_id,
             field_key=field_key,

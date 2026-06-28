@@ -28,17 +28,20 @@ class ContractsRepository:
         )
 
     async def get_proposal(self, proposal_id: uuid.UUID):
-        return await self.db.scalar(
-            select(ProposalModel).where(ProposalModel.id == proposal_id)
-        )
+        return await self.db.scalar(select(ProposalModel).where(ProposalModel.id == proposal_id))
 
     async def get_client(self, client_id: uuid.UUID):
         return await self.db.scalar(select(ClientModel).where(ClientModel.id == client_id))
 
     async def count_by_deal(self, deal_id: uuid.UUID) -> int:
-        return await self.db.scalar(
-            select(func.count()).select_from(ContractModel).where(ContractModel.deal_id == deal_id)
-        ) or 0
+        return (
+            await self.db.scalar(
+                select(func.count())
+                .select_from(ContractModel)
+                .where(ContractModel.deal_id == deal_id)
+            )
+            or 0
+        )
 
     async def create(self, **values):
         contract = ContractModel(**values)
@@ -60,9 +63,10 @@ class ContractsRepository:
             conditions.append(ContractModel.status == status)
         if deal_id is not None:
             conditions.append(ContractModel.deal_id == deal_id)
-        total = await self.db.scalar(
-            select(func.count()).select_from(ContractModel).where(*conditions)
-        ) or 0
+        total = (
+            await self.db.scalar(select(func.count()).select_from(ContractModel).where(*conditions))
+            or 0
+        )
         offset = (page - 1) * page_size
         result = await self.db.execute(
             select(ContractModel)

@@ -12,8 +12,8 @@ from src.modules.contracts.domain.value_objects.contract_status import (
 @dataclass
 class Contract:
     id: uuid.UUID
-    deal_id: uuid.UUID          # immutable
-    proposal_id: uuid.UUID      # immutable
+    deal_id: uuid.UUID  # immutable
+    proposal_id: uuid.UUID  # immutable
     owner_user_id: uuid.UUID
     status: ContractStatus
     title: str
@@ -52,6 +52,7 @@ class Contract:
         from src.modules.contracts.domain.exceptions.exceptions import (
             InvalidContractTransitionError,
         )
+
         if not self.can_transition_to(ContractStatus.PENDING_SIGNATURES):
             raise InvalidContractTransitionError(self.status, ContractStatus.PENDING_SIGNATURES)
         self.status = ContractStatus.PENDING_SIGNATURES
@@ -61,6 +62,7 @@ class Contract:
         from src.modules.contracts.domain.exceptions.exceptions import (
             InvalidContractTransitionError,
         )
+
         if not self.can_transition_to(ContractStatus.ACTIVE):
             raise InvalidContractTransitionError(self.status, ContractStatus.ACTIVE)
         now = datetime.now(UTC)
@@ -72,6 +74,7 @@ class Contract:
         from src.modules.contracts.domain.exceptions.exceptions import (
             InvalidContractTransitionError,
         )
+
         if not self.can_transition_to(ContractStatus.COMPLETED):
             raise InvalidContractTransitionError(self.status, ContractStatus.COMPLETED)
         now = datetime.now(UTC)
@@ -83,6 +86,7 @@ class Contract:
         from src.modules.contracts.domain.exceptions.exceptions import (
             InvalidContractTransitionError,
         )
+
         if not self.can_transition_to(ContractStatus.TERMINATED):
             raise InvalidContractTransitionError(self.status, ContractStatus.TERMINATED)
         now = datetime.now(UTC)
@@ -93,6 +97,7 @@ class Contract:
 
     def update_content(self, content: dict[str, object]) -> None:
         from src.modules.contracts.domain.exceptions.exceptions import ContractEditForbiddenError
+
         if not self.is_editable:
             raise ContractEditForbiddenError(self.status)
         self.content = content

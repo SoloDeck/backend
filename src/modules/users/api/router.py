@@ -7,7 +7,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.infrastructure.database.session import get_db_session
 from src.modules.users.application.service import UsersService
-from src.modules.users.schemas.request import ChangePasswordRequest, FreelancerProfileUpdateRequest, UpdateUserRequest
+from src.modules.users.schemas.request import (
+    ChangePasswordRequest,
+    FreelancerProfileUpdateRequest,
+    UpdateUserRequest,
+)
 from src.modules.users.schemas.response import MessageResponse, UserResponse
 from src.shared.dependencies.auth import CurrentUserId
 from src.shared.responses.response import ApiResponse

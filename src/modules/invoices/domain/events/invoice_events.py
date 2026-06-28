@@ -27,6 +27,7 @@ class PaymentRecordedEvent(DomainEvent):
 @dataclass(frozen=True)
 class InvoicePaidEvent(DomainEvent):
     """Consumed by Deals — may trigger completed_and_billed stage."""
+
     deal_id: uuid.UUID | None
     owner_user_id: uuid.UUID
 

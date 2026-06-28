@@ -23,9 +23,7 @@ EventHandler = Callable[[dict[str, Any]], Awaitable[None]]
 
 @dataclass
 class EventBus:
-    _handlers: dict[str, list[EventHandler]] = field(
-        default_factory=lambda: defaultdict(list)
-    )
+    _handlers: dict[str, list[EventHandler]] = field(default_factory=lambda: defaultdict(list))
 
     def subscribe(self, event_type: str, handler: EventHandler) -> None:
         self._handlers[event_type].append(handler)

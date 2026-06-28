@@ -7,6 +7,7 @@ from src.shared.domain.base import DomainEvent
 @dataclass(frozen=True)
 class UserCreatedEvent(DomainEvent):
     """Consumed by Subscriptions to create a Free plan subscription."""
+
     email: str
     role: UserRole
 
@@ -14,6 +15,7 @@ class UserCreatedEvent(DomainEvent):
 @dataclass(frozen=True)
 class UserSuspendedEvent(DomainEvent):
     """Consumed by Auth to invalidate active tokens."""
+
     email: str
 
 
