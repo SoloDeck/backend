@@ -1,7 +1,7 @@
 """add projects and tasks tables
 
-Revision ID: h3c4d5e6f7a8
-Revises: g2b3c4d5e6f7
+Revision ID: a0b1c2d3e4f5
+Revises: e3f359c35eaf
 Create Date: 2026-06-28 16:00:00.000000
 """
 
@@ -11,8 +11,8 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects import postgresql
 
-revision: str = 'h3c4d5e6f7a8'
-down_revision: str | None = 'g2b3c4d5e6f7'
+revision: str = 'a0b1c2d3e4f5'
+down_revision: str | None = 'e3f359c35eaf'
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
@@ -22,6 +22,10 @@ def _exec(sql: str) -> None:
 
 
 def upgrade() -> None:
+    # --- Drop existing basic implementation of projects and tasks tables ------
+    op.execute("DROP TABLE IF EXISTS tasks CASCADE")
+    op.execute("DROP TABLE IF EXISTS projects CASCADE")
+
     # --- ENUM types (ORM declares them with create_type=False) ----------------
     _exec("CREATE TYPE project_status AS ENUM ('planning', 'active', 'on_hold', 'completed')")
     _exec("CREATE TYPE task_status AS ENUM ('todo', 'in_progress', 'review', 'done')")
