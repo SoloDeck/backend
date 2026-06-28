@@ -9,6 +9,7 @@ import yaml
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from src.ai.lead_qualifier.api.router import router as lead_qualifier_router
 from src.config.settings import settings
 from src.infrastructure.database.session import engine
 from src.infrastructure.redis.client import close_redis_pool
@@ -19,19 +20,22 @@ from src.modules.analytics.api.router import router as analytics_router
 from src.modules.auth.api.router import router as auth_router
 from src.modules.clients.api.router import router as clients_router
 from src.modules.contracts.api.router import router as contracts_router
-from src.modules.deals.api.router import router as deals_router
 from src.modules.deals.api.public_router import router as public_intake_router
-from src.modules.invoices.api.router import router as invoices_router
+from src.modules.deals.api.router import router as deals_router
 from src.modules.invoices.api.public_router import router as public_invoices_router
+from src.modules.invoices.api.router import router as invoices_router
 from src.modules.proposals.api.router import router as proposals_router
 from src.modules.reminders.api.router import router as reminders_router
 from src.modules.subscriptions.api.router import router as subscriptions_router
 from src.modules.users.api.router import router as users_router
 from src.shared.exceptions.http import setup_exception_handlers
-from src.shared.logging.config import configure_logging
-from src.ai.lead_qualifier.api.router import router as lead_qualifier_router
+from src.shared.logging import (
+    AccessLogMiddleware,
+    RequestContextMiddleware,
+    setup_logging,
+)
 
-configure_logging()
+setup_logging()
 log = structlog.get_logger()
 
 
@@ -83,6 +87,11 @@ app.openapi = custom_openapi  # type: ignore[method-assign]
 # ---------------------------------------------------------------------------
 # Middleware
 # ---------------------------------------------------------------------------
+# Order matters: middleware added last is outermost. RequestContextMiddleware
+# must be outermost so the correlation id is bound before access logging and
+# request handling run.
+app.add_middleware(AccessLogMiddleware)
+app.add_middleware(RequestContextMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
