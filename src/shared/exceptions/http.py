@@ -17,8 +17,12 @@ from src.shared.exceptions.domain import (
     RateLimitError,
     ValidationError,
 )
+from src.shared.logging.config import get_logger
+from src.shared.logging.context import get_request_id
 from src.shared.responses.error import ErrorCode, ValidationErrorDetail
 from src.shared.responses.response import ErrorResponse
+
+_log = get_logger("solodesk.exceptions")
 
 
 def _err(
@@ -111,5 +115,15 @@ def setup_exception_handlers(app: FastAPI) -> None:
         return _err(400, ErrorCode.BUSINESS_RULE_VIOLATION, exc.message)
 
     @app.exception_handler(Exception)
-    async def unhandled(_: Request, exc: Exception) -> JSONResponse:
+    async def unhandled(request: Request, exc: Exception) -> JSONResponse:
+        # Log the full stack trace + request context server-side; the client
+        # only ever receives a generic message (no internal detail leaks).
+        _log.error(
+            "http.unhandled_exception",
+            method=request.method,
+            path=request.url.path,
+            request_id=get_request_id(),
+            error_type=type(exc).__name__,
+            exc_info=exc,
+        )
         return _err(500, ErrorCode.INTERNAL_SERVER_ERROR, "An unexpected error occurred")
