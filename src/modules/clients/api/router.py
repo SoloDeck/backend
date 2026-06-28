@@ -36,9 +36,15 @@ async def create_client(
 async def list_clients(
     user_id: CurrentUserId,
     db: DBSession,
-    status: str | None = Query(default=None, description="Filter by status: prospect, active, inactive, archived"),
-    name: str | None = Query(default=None, description="Search by name (case-insensitive, partial match)"),
-    email: str | None = Query(default=None, description="Search by email (case-insensitive, partial match)"),
+    status: str | None = Query(
+        default=None, description="Filter by status: prospect, active, inactive, archived"
+    ),
+    name: str | None = Query(
+        default=None, description="Search by name (case-insensitive, partial match)"
+    ),
+    email: str | None = Query(
+        default=None, description="Search by email (case-insensitive, partial match)"
+    ),
     page: int = Query(default=1, ge=1, description="Page number"),
     page_size: int = Query(default=20, ge=1, le=100, description="Items per page"),
 ) -> PaginatedResponse[ClientResponse]:
@@ -103,5 +109,3 @@ async def list_comm_logs(
 ) -> ApiResponse[list[CommLogResponse]]:
     logs = await ClientsService(db=db).list_comm_logs(user_id, client_id)
     return ApiResponse.ok([CommLogResponse.model_validate(log) for log in logs])
-
-

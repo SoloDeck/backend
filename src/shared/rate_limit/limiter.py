@@ -50,9 +50,7 @@ class FixedWindowRateLimiter:
             recent = [t for t in self._hits.get(key, []) if t > cutoff]
             if len(recent) >= self._max:
                 self._hits[key] = recent
-                raise RateLimitError(
-                    "Too many submissions from this link. Please try again later."
-                )
+                raise RateLimitError("Too many submissions from this link. Please try again later.")
             recent.append(now)
             self._hits[key] = recent
 

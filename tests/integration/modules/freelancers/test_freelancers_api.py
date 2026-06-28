@@ -4,10 +4,10 @@ import uuid
 
 from httpx import AsyncClient
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 async def _register(client: AsyncClient, **overrides) -> dict:
     resp = await client.post(
@@ -32,15 +32,14 @@ async def _register(client: AsyncClient, **overrides) -> dict:
 
 
 async def _set_profile(client: AsyncClient, headers: dict, **fields) -> None:
-    resp = await client.patch(
-        "/api/v1/users/me/freelancer-profile", json=fields, headers=headers
-    )
+    resp = await client.patch("/api/v1/users/me/freelancer-profile", json=fields, headers=headers)
     assert resp.status_code == 200, resp.text
 
 
 # ---------------------------------------------------------------------------
 # GET /public/freelancers/categories  (Page 1)
 # ---------------------------------------------------------------------------
+
 
 class TestListCategories:
     async def test_returns_five_categories(self, client: AsyncClient) -> None:
@@ -70,6 +69,7 @@ class TestListCategories:
 # GET /public/freelancers  (Page 2 — list + search)
 # ---------------------------------------------------------------------------
 
+
 class TestSearchFreelancers:
     async def test_unlisted_user_not_visible(self, client: AsyncClient) -> None:
         await _register(client)  # never calls set_profile, so is_listed=False
@@ -81,7 +81,8 @@ class TestSearchFreelancers:
     async def test_listed_user_appears(self, client: AsyncClient) -> None:
         user = await _register(client)
         await _set_profile(
-            client, user["headers"],
+            client,
+            user["headers"],
             professional_title="Senior Dev",
             service_categories=["programming"],
             is_listed=True,
@@ -100,32 +101,31 @@ class TestSearchFreelancers:
     async def test_filter_by_category(self, client: AsyncClient) -> None:
         user = await _register(client)
         await _set_profile(
-            client, user["headers"],
+            client,
+            user["headers"],
             service_categories=["design"],
             is_listed=True,
         )
-        resp = await client.get(
-            "/api/v1/public/freelancers", params={"categories": "design"}
-        )
+        resp = await client.get("/api/v1/public/freelancers", params={"categories": "design"})
         for fl in resp.json()["data"]:
             assert "design" in fl["service_categories"]
 
     async def test_filter_by_category_excludes_other(self, client: AsyncClient) -> None:
         user_prog = await _register(client)
         await _set_profile(
-            client, user_prog["headers"],
+            client,
+            user_prog["headers"],
             service_categories=["programming"],
             is_listed=True,
         )
         user_mkt = await _register(client)
         await _set_profile(
-            client, user_mkt["headers"],
+            client,
+            user_mkt["headers"],
             service_categories=["marketing"],
             is_listed=True,
         )
-        resp = await client.get(
-            "/api/v1/public/freelancers", params={"categories": "marketing"}
-        )
+        resp = await client.get("/api/v1/public/freelancers", params={"categories": "marketing"})
         ids = [f["id"] for f in resp.json()["data"]]
         assert user_mkt["id"] in ids
         assert user_prog["id"] not in ids
@@ -134,16 +134,15 @@ class TestSearchFreelancers:
         user = await _register(client, full_name="UniqueNameXYZ999")
         await _set_profile(client, user["headers"], is_listed=True)
 
-        resp = await client.get(
-            "/api/v1/public/freelancers", params={"q": "UniqueNameXYZ999"}
-        )
+        resp = await client.get("/api/v1/public/freelancers", params={"q": "UniqueNameXYZ999"})
         ids = [f["id"] for f in resp.json()["data"]]
         assert user["id"] in ids
 
     async def test_search_by_bio(self, client: AsyncClient) -> None:
         user = await _register(client)
         await _set_profile(
-            client, user["headers"],
+            client,
+            user["headers"],
             bio="ExpertInRocketScienceABC",
             is_listed=True,
         )
@@ -156,7 +155,8 @@ class TestSearchFreelancers:
     async def test_search_by_professional_title(self, client: AsyncClient) -> None:
         user = await _register(client)
         await _set_profile(
-            client, user["headers"],
+            client,
+            user["headers"],
             professional_title="QuantumMLSpecialistZZZ",
             is_listed=True,
         )
@@ -169,19 +169,22 @@ class TestSearchFreelancers:
     async def test_filter_by_multiple_categories(self, client: AsyncClient) -> None:
         user_design = await _register(client)
         await _set_profile(
-            client, user_design["headers"],
+            client,
+            user_design["headers"],
             service_categories=["design"],
             is_listed=True,
         )
         user_content = await _register(client)
         await _set_profile(
-            client, user_content["headers"],
+            client,
+            user_content["headers"],
             service_categories=["content"],
             is_listed=True,
         )
         user_mkt = await _register(client)
         await _set_profile(
-            client, user_mkt["headers"],
+            client,
+            user_mkt["headers"],
             service_categories=["marketing"],
             is_listed=True,
         )
@@ -198,13 +201,15 @@ class TestSearchFreelancers:
     async def test_filter_combined_q_and_category(self, client: AsyncClient) -> None:
         user_match = await _register(client, full_name="CombinedFilterTestUser")
         await _set_profile(
-            client, user_match["headers"],
+            client,
+            user_match["headers"],
             service_categories=["consulting"],
             is_listed=True,
         )
         user_wrong_cat = await _register(client, full_name="CombinedFilterTestUser")
         await _set_profile(
-            client, user_wrong_cat["headers"],
+            client,
+            user_wrong_cat["headers"],
             service_categories=["design"],
             is_listed=True,
         )
@@ -226,9 +231,7 @@ class TestSearchFreelancers:
     async def test_progress_fields_in_response(self, client: AsyncClient) -> None:
         user = await _register(client)
         await _set_profile(client, user["headers"], is_listed=True)
-        resp = await client.get(
-            "/api/v1/public/freelancers", params={"q": user["id"]}
-        )
+        await client.get("/api/v1/public/freelancers", params={"q": user["id"]})
         # Just verify schema — search by id won't match, so check a listed user
         resp2 = await client.get("/api/v1/public/freelancers")
         if resp2.json()["data"]:
@@ -243,9 +246,7 @@ class TestSearchFreelancers:
         assert resp.status_code == 200
 
     async def test_pagination(self, client: AsyncClient) -> None:
-        resp = await client.get(
-            "/api/v1/public/freelancers", params={"page": 1, "page_size": 2}
-        )
+        resp = await client.get("/api/v1/public/freelancers", params={"page": 1, "page_size": 2})
         assert resp.status_code == 200
         assert "pagination" in resp.json()
 
@@ -254,11 +255,13 @@ class TestSearchFreelancers:
 # GET /public/freelancers/:id
 # ---------------------------------------------------------------------------
 
+
 class TestGetFreelancer:
     async def test_returns_listed_freelancer(self, client: AsyncClient) -> None:
         user = await _register(client)
         await _set_profile(
-            client, user["headers"],
+            client,
+            user["headers"],
             professional_title="Frontend Dev",
             bio="React and Vue expert.",
             service_categories=["programming"],
@@ -294,6 +297,7 @@ class TestGetFreelancer:
 # PATCH /users/me/freelancer-profile
 # ---------------------------------------------------------------------------
 
+
 class TestUpdateFreelancerProfile:
     async def test_sets_profile_fields(self, client: AsyncClient) -> None:
         user = await _register(client)
@@ -313,7 +317,8 @@ class TestUpdateFreelancerProfile:
     async def test_partial_update_leaves_other_fields(self, client: AsyncClient) -> None:
         user = await _register(client)
         await _set_profile(
-            client, user["headers"],
+            client,
+            user["headers"],
             professional_title="Original Title",
             bio="Original bio",
             is_listed=True,
@@ -339,7 +344,5 @@ class TestUpdateFreelancerProfile:
         assert resp.status_code == 404
 
     async def test_unauthenticated_returns_401(self, client: AsyncClient) -> None:
-        resp = await client.patch(
-            "/api/v1/users/me/freelancer-profile", json={"is_listed": True}
-        )
+        resp = await client.patch("/api/v1/users/me/freelancer-profile", json={"is_listed": True})
         assert resp.status_code == 401

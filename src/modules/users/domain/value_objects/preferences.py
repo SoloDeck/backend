@@ -3,10 +3,10 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class Preferences:
-    locale: str                     # e.g. "vi", "en"
-    timezone: str                   # IANA tz string e.g. "Asia/Ho_Chi_Minh"
-    notification_channel: str       # "email" | "in_app" | "both" | "zalo"
-    theme: str                      # "light" | "dark"
+    locale: str  # e.g. "vi", "en"
+    timezone: str  # IANA tz string e.g. "Asia/Ho_Chi_Minh"
+    notification_channel: str  # "email" | "in_app" | "both" | "zalo"
+    theme: str  # "light" | "dark"
 
     VALID_CHANNELS = frozenset({"email", "in_app", "both", "zalo"})
     VALID_THEMES = frozenset({"light", "dark"})

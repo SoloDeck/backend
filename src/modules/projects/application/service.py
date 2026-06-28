@@ -18,7 +18,7 @@ from src.shared.exceptions.domain import NotFoundError
 @dataclass
 class ProjectService:
     db: AsyncSession
-    repo: ProjectRepository | None = None
+    repo: ProjectRepository = None  # type: ignore[assignment]
 
     def __post_init__(self) -> None:
         if self.repo is None:
@@ -30,9 +30,7 @@ class ProjectService:
             raise NotFoundError(f"Project {project_id} not found")
         return project
 
-    async def create(
-        self, owner_user_id: uuid.UUID, payload: CreateProjectRequest
-    ) -> ProjectModel:
+    async def create(self, owner_user_id: uuid.UUID, payload: CreateProjectRequest) -> ProjectModel:
         return await self.repo.create(
             owner_id=owner_user_id,
             deal_id=payload.deal_id,

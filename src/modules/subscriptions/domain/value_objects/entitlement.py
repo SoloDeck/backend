@@ -18,16 +18,14 @@ class Entitlement:
 
     can_use_ai: bool
     can_export_pdf: bool
-    max_clients: int | None         # None = unlimited
-    max_deals: int | None           # None = unlimited
+    max_clients: int | None  # None = unlimited
+    max_deals: int | None  # None = unlimited
     max_ai_generations_per_month: int  # 0 = unlimited
 
     def check_ai_access(self) -> None:
         """Raise if AI features are not available."""
         if not self.can_use_ai:
-            raise EntitlementViolationError(
-                "AI features require a paid subscription"
-            )
+            raise EntitlementViolationError("AI features require a paid subscription")
 
     def check_client_limit(self, current_count: int) -> None:
         if self.max_clients is not None and current_count >= self.max_clients:

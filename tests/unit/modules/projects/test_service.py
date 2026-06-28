@@ -2,6 +2,7 @@
 
 import uuid
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
@@ -11,8 +12,8 @@ from src.modules.projects.schemas.request import CreateProjectRequest
 from src.shared.exceptions.domain import NotFoundError
 
 
-def _project_stub(**overrides: object) -> SimpleNamespace:
-    base = {
+def _project_stub(**overrides: object) -> Any:
+    base: dict[str, Any] = {
         "id": uuid.uuid4(),
         "owner_id": uuid.uuid4(),
         "deal_id": None,

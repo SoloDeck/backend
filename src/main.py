@@ -22,6 +22,9 @@ from src.modules.clients.api.router import router as clients_router
 from src.modules.contracts.api.router import router as contracts_router
 from src.modules.deals.api.public_router import router as public_intake_router
 from src.modules.deals.api.router import router as deals_router
+from src.modules.freelancers.api.router import router as freelancers_router
+from src.modules.intake_form.api.public_router import router as public_intake_form_router
+from src.modules.intake_form.api.router import router as intake_form_router
 from src.modules.invoices.api.public_router import router as public_invoices_router
 from src.modules.invoices.api.router import router as invoices_router
 from src.modules.projects.api.router import router as projects_router
@@ -30,10 +33,6 @@ from src.modules.reminders.api.router import router as reminders_router
 from src.modules.subscriptions.api.router import router as subscriptions_router
 from src.modules.tasks.api.router import router as tasks_router
 from src.modules.users.api.router import router as users_router
-from src.modules.freelancers.api.router import router as freelancers_router
-from src.modules.intake_form.api.router import router as intake_form_router
-from src.modules.intake_form.api.public_router import router as public_intake_form_router
-from src.modules.projects.api.router import router as projects_router
 from src.shared.exceptions.http import setup_exception_handlers
 from src.shared.logging import (
     AccessLogMiddleware,
@@ -62,7 +61,7 @@ app = FastAPI(
     docs_url="/docs" if settings.debug else None,
     redoc_url="/redoc" if settings.debug else None,
     openapi_url="/openapi.json" if settings.debug else None,
-    swagger_ui_parameters={"tryItOutEnabled": True} # Luôn bật sẵn chế độ nhập và chạy API
+    swagger_ui_parameters={"tryItOutEnabled": True},  # Luôn bật sẵn chế độ nhập và chạy API
 )
 
 
@@ -116,31 +115,28 @@ setup_exception_handlers(app)
 # ---------------------------------------------------------------------------
 API_V1 = "/api/v1"
 
-app.include_router(auth_router,          prefix=f"{API_V1}/auth",          tags=["Auth"])
-app.include_router(users_router,         prefix=f"{API_V1}/users",         tags=["Users"])
+app.include_router(auth_router, prefix=f"{API_V1}/auth", tags=["Auth"])
+app.include_router(users_router, prefix=f"{API_V1}/users", tags=["Users"])
 app.include_router(subscriptions_router, prefix=f"{API_V1}/subscriptions", tags=["Subscriptions"])
-app.include_router(clients_router,       prefix=f"{API_V1}/clients",       tags=["Clients"])
-app.include_router(deals_router,         prefix=f"{API_V1}/deals",         tags=["Deals"])
-app.include_router(proposals_router,     prefix=f"{API_V1}/proposals",     tags=["Proposals"])
-app.include_router(contracts_router,     prefix=f"{API_V1}/contracts",     tags=["Contracts"])
+app.include_router(clients_router, prefix=f"{API_V1}/clients", tags=["Clients"])
+app.include_router(deals_router, prefix=f"{API_V1}/deals", tags=["Deals"])
+app.include_router(proposals_router, prefix=f"{API_V1}/proposals", tags=["Proposals"])
+app.include_router(contracts_router, prefix=f"{API_V1}/contracts", tags=["Contracts"])
 app.include_router(public_invoices_router, prefix=f"{API_V1}/invoices/public", tags=["Public"])
-app.include_router(invoices_router,      prefix=f"{API_V1}/invoices",      tags=["Invoices"])
-app.include_router(reminders_router,     prefix=f"{API_V1}/reminders",     tags=["Reminders"])
-app.include_router(projects_router,      prefix=f"{API_V1}/projects",      tags=["Projects"])
+app.include_router(invoices_router, prefix=f"{API_V1}/invoices", tags=["Invoices"])
+app.include_router(reminders_router, prefix=f"{API_V1}/reminders", tags=["Reminders"])
+app.include_router(projects_router, prefix=f"{API_V1}/projects", tags=["Projects"])
 # Tasks use polymorphic paths (/projects/.../tasks, /deals/.../tasks,
 # /reminders/.../tasks, /tasks/...) so the router carries full paths under API_V1.
-app.include_router(tasks_router,         prefix=API_V1,                    tags=["Tasks"])
-app.include_router(analytics_router,     prefix=f"{API_V1}/analytics",     tags=["Analytics"])
-app.include_router(public_intake_form_router, prefix=f"{API_V1}/intake",        tags=["Public"])
-app.include_router(public_intake_router,      prefix=f"{API_V1}/intake",         tags=["Public"])
-app.include_router(intake_form_router,        prefix=f"{API_V1}/intake-form",    tags=["Intake Form"])
-app.include_router(freelancers_router,   prefix=f"{API_V1}/public/freelancers",  tags=["Public"])
-app.include_router(projects_router,      prefix=f"{API_V1}/projects",             tags=["Projects"])
-app.include_router(admin_router,         prefix=f"{API_V1}/admin",               tags=["Admin"])
-app.include_router(
-    lead_qualifier_router,
-prefix=f"{API_V1}/ai"
-)
+app.include_router(tasks_router, prefix=API_V1, tags=["Tasks"])
+app.include_router(analytics_router, prefix=f"{API_V1}/analytics", tags=["Analytics"])
+app.include_router(public_intake_form_router, prefix=f"{API_V1}/intake", tags=["Public"])
+app.include_router(public_intake_router, prefix=f"{API_V1}/intake", tags=["Public"])
+app.include_router(intake_form_router, prefix=f"{API_V1}/intake-form", tags=["Intake Form"])
+app.include_router(freelancers_router, prefix=f"{API_V1}/public/freelancers", tags=["Public"])
+app.include_router(projects_router, prefix=f"{API_V1}/projects", tags=["Projects"])
+app.include_router(admin_router, prefix=f"{API_V1}/admin", tags=["Admin"])
+app.include_router(lead_qualifier_router, prefix=f"{API_V1}/ai")
 
 
 # ---------------------------------------------------------------------------

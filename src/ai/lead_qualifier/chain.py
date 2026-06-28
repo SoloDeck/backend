@@ -1,4 +1,5 @@
 """LeadQualifier Gemini chain — implementing Gemini 2.0+ SDK."""
+
 import json
 import os
 from typing import Any
@@ -62,11 +63,7 @@ class LeadQualifier(BaseAIChain):
 
         client = self._get_client()
 
-        prompt_path = os.path.join(
-            os.path.dirname(__file__),
-            "prompts",
-            "prompts.txt"
-        )
+        prompt_path = os.path.join(os.path.dirname(__file__), "prompts", "prompts.txt")
 
         try:
             with open(prompt_path, encoding="utf-8") as f:

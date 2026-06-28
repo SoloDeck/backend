@@ -26,9 +26,7 @@ class TestRateLimiterProcessor:
 
     def test_window_resets_after_expiry(self) -> None:
         clock = {"t": 1000.0}
-        proc = RateLimiterProcessor(
-            max_per_window=1, window_seconds=10, time_fn=lambda: clock["t"]
-        )
+        proc = RateLimiterProcessor(max_per_window=1, window_seconds=10, time_fn=lambda: clock["t"])
         assert proc(None, "info", {"event": "x"}) == {"event": "x"}
         with pytest.raises(structlog.DropEvent):
             proc(None, "info", {"event": "x"})

@@ -4,10 +4,10 @@ import uuid
 
 from httpx import AsyncClient
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 async def _register(client: AsyncClient, full_name: str = "Test User") -> tuple[dict, str]:
     email = f"u_{uuid.uuid4().hex[:8]}@example.com"
@@ -22,6 +22,7 @@ async def _register(client: AsyncClient, full_name: str = "Test User") -> tuple[
 # ---------------------------------------------------------------------------
 # GET /users/me
 # ---------------------------------------------------------------------------
+
 
 class TestGetMe:
     async def test_returns_own_profile(self, client: AsyncClient) -> None:
@@ -46,10 +47,13 @@ class TestGetMe:
 # PATCH /users/me
 # ---------------------------------------------------------------------------
 
+
 class TestUpdateMe:
     async def test_updates_full_name(self, client: AsyncClient) -> None:
         headers, _ = await _register(client, "Old Name")
-        resp = await client.patch("/api/v1/users/me", json={"full_name": "New Name"}, headers=headers)
+        resp = await client.patch(
+            "/api/v1/users/me", json={"full_name": "New Name"}, headers=headers
+        )
         assert resp.status_code == 200
         assert resp.json()["data"]["full_name"] == "New Name"
 
@@ -74,6 +78,7 @@ class TestUpdateMe:
 # DELETE /users/me
 # ---------------------------------------------------------------------------
 
+
 class TestDeleteMe:
     async def test_soft_deletes_account(self, client: AsyncClient) -> None:
         headers, _ = await _register(client)
@@ -94,6 +99,7 @@ class TestDeleteMe:
 # ---------------------------------------------------------------------------
 # POST /users/me/change-password
 # ---------------------------------------------------------------------------
+
 
 class TestChangePassword:
     async def test_correct_password_succeeds(self, client: AsyncClient) -> None:

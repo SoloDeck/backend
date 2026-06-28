@@ -8,9 +8,7 @@ class TestRedactMapping:
         assert redact_mapping({"password": "hunter2"}) == {"password": REDACTED}
 
     def test_redacts_token_variants(self) -> None:
-        out = redact_mapping(
-            {"token": "x", "refresh_token": "y", "access_token": "z"}
-        )
+        out = redact_mapping({"token": "x", "refresh_token": "y", "access_token": "z"})
         assert out == {
             "token": REDACTED,
             "refresh_token": REDACTED,
@@ -26,9 +24,7 @@ class TestRedactMapping:
         assert out == {"Client_Secret": REDACTED, "MY_SECRET": REDACTED}
 
     def test_redacts_otp_cvv_card(self) -> None:
-        out = redact_mapping(
-            {"otp": "123456", "cvv": "999", "credit_card": "4111111111111111"}
-        )
+        out = redact_mapping({"otp": "123456", "cvv": "999", "credit_card": "4111111111111111"})
         assert out == {"otp": REDACTED, "cvv": REDACTED, "credit_card": REDACTED}
 
     def test_does_not_redact_benign_fields(self) -> None:

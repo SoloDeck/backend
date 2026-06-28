@@ -13,12 +13,12 @@ from src.shared.domain.value_objects.money import Money
 @dataclass
 class Proposal:
     id: uuid.UUID
-    deal_id: uuid.UUID              # immutable
+    deal_id: uuid.UUID  # immutable
     owner_user_id: uuid.UUID
-    version: int                    # 1-based, incremented on revision
+    version: int  # 1-based, incremented on revision
     status: ProposalStatus
     title: str
-    content: dict[str, object]      # structured JSONB (sections, line items)
+    content: dict[str, object]  # structured JSONB (sections, line items)
     total_value: Money
     valid_until: datetime | None
     share_token: str | None
@@ -52,6 +52,7 @@ class Proposal:
 
     def update_content(self, content: dict[str, object], total_value: Money) -> None:
         from src.modules.proposals.domain.exceptions.exceptions import ProposalEditForbiddenError
+
         if not self.is_editable:
             raise ProposalEditForbiddenError(self.status)
         self.content = content
@@ -62,6 +63,7 @@ class Proposal:
         from src.modules.proposals.domain.exceptions.exceptions import (
             InvalidProposalTransitionError,
         )
+
         if not self.can_transition_to(ProposalStatus.SENT):
             raise InvalidProposalTransitionError(self.status, ProposalStatus.SENT)
         if self.total_value.is_zero():
@@ -74,6 +76,7 @@ class Proposal:
         from src.modules.proposals.domain.exceptions.exceptions import (
             InvalidProposalTransitionError,
         )
+
         if not self.can_transition_to(ProposalStatus.ACCEPTED):
             raise InvalidProposalTransitionError(self.status, ProposalStatus.ACCEPTED)
         now = datetime.now(UTC)
@@ -85,6 +88,7 @@ class Proposal:
         from src.modules.proposals.domain.exceptions.exceptions import (
             InvalidProposalTransitionError,
         )
+
         if not self.can_transition_to(ProposalStatus.REJECTED):
             raise InvalidProposalTransitionError(self.status, ProposalStatus.REJECTED)
         now = datetime.now(UTC)
@@ -97,6 +101,7 @@ class Proposal:
         from src.modules.proposals.domain.exceptions.exceptions import (
             InvalidProposalTransitionError,
         )
+
         if not self.can_transition_to(ProposalStatus.EXPIRED):
             raise InvalidProposalTransitionError(self.status, ProposalStatus.EXPIRED)
         self.status = ProposalStatus.EXPIRED

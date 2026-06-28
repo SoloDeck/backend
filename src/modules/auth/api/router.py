@@ -94,9 +94,7 @@ async def logout(
     current_user: CurrentUser,
     db: DBSession,
 ) -> ApiResponse[MessageResponse]:
-    expires_at = datetime.now(UTC) + timedelta(
-        minutes=settings.jwt_access_token_expire_minutes
-    )
+    expires_at = datetime.now(UTC) + timedelta(minutes=settings.jwt_access_token_expire_minutes)
     await AuthService(db=db).logout(
         user_id=uuid.UUID(current_user.sub),
         jti=current_user.jti,

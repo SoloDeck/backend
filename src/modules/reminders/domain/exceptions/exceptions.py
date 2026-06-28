@@ -12,6 +12,4 @@ class TerminalReminderError(ReminderDomainError):
 
 class ReminderNotCancellableError(ReminderDomainError):
     def __init__(self, status: ReminderStatus) -> None:
-        super().__init__(
-            f"Reminder in status '{status.value}' cannot be cancelled"
-        )
+        super().__init__(f"Reminder in status '{status.value}' cannot be cancelled")

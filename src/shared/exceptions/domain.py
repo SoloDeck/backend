@@ -68,9 +68,7 @@ class InvalidStateTransitionError(BusinessRuleError):
     """Entity is in a state that does not permit the requested transition."""
 
     def __init__(self, entity: str, current_state: str, target_state: str) -> None:
-        super().__init__(
-            f"Cannot transition {entity} from '{current_state}' to '{target_state}'"
-        )
+        super().__init__(f"Cannot transition {entity} from '{current_state}' to '{target_state}'")
         self.entity = entity
         self.current_state = current_state
         self.target_state = target_state

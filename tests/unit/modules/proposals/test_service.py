@@ -15,8 +15,8 @@ def _make_proposal(**kwargs) -> MagicMock:
     m.deal_id = kwargs.get("deal_id", uuid.uuid4())
     m.owner_user_id = kwargs.get("owner_user_id", uuid.uuid4())
     m.status = kwargs.get("status", "draft")
-    m.sent_at = kwargs.get("sent_at", None)
-    m.responded_at = kwargs.get("responded_at", None)
+    m.sent_at = kwargs.get("sent_at")
+    m.responded_at = kwargs.get("responded_at")
     return m
 
 

@@ -27,7 +27,9 @@ async def test_revenue_pipeline_win_rate_top_clients_and_ai_usage_return_contrac
     assert revenue.status_code == 200
     assert set(revenue.json()["data"]) == {"total_invoiced", "total_collected", "total_outstanding"}
 
-    pipeline = await client.get("/api/v1/analytics/pipeline?snapshot_date=2026-01-01", headers=headers)
+    pipeline = await client.get(
+        "/api/v1/analytics/pipeline?snapshot_date=2026-01-01", headers=headers
+    )
     assert pipeline.status_code == 200
     assert isinstance(pipeline.json()["data"], list)
 
@@ -35,7 +37,9 @@ async def test_revenue_pipeline_win_rate_top_clients_and_ai_usage_return_contrac
     assert win_rate.status_code == 200
     assert set(win_rate.json()["data"]) == {"won", "lost", "win_rate"}
 
-    top_clients = await client.get("/api/v1/analytics/clients/top?limit=5&metric=total_collected", headers=headers)
+    top_clients = await client.get(
+        "/api/v1/analytics/clients/top?limit=5&metric=total_collected", headers=headers
+    )
     assert top_clients.status_code == 200
     assert isinstance(top_clients.json()["data"], list)
 
@@ -48,11 +52,39 @@ async def test_revenue_aggregates_paid_invoices(client: AsyncClient) -> None:
     headers = await _auth_headers(client)
 
     # Seed: create client → deal → invoice → send → pay in full
-    client_obj = (await client.post("/api/v1/clients", json={"name": "Acme", "email": "acme@example.com", "type": "company"}, headers=headers)).json()["data"]
-    deal = (await client.post("/api/v1/deals", json={"client_id": client_obj["id"], "title": "Analytics test deal"}, headers=headers)).json()["data"]
-    inv = (await client.post("/api/v1/invoices", json={"client_id": client_obj["id"], "deal_id": deal["id"], "subtotal": "500.00", "tax_rate": "0", "due_date": "2026-12-31"}, headers=headers)).json()["data"]
+    client_obj = (
+        await client.post(
+            "/api/v1/clients",
+            json={"name": "Acme", "email": "acme@example.com", "type": "company"},
+            headers=headers,
+        )
+    ).json()["data"]
+    deal = (
+        await client.post(
+            "/api/v1/deals",
+            json={"client_id": client_obj["id"], "title": "Analytics test deal"},
+            headers=headers,
+        )
+    ).json()["data"]
+    inv = (
+        await client.post(
+            "/api/v1/invoices",
+            json={
+                "client_id": client_obj["id"],
+                "deal_id": deal["id"],
+                "subtotal": "500.00",
+                "tax_rate": "0",
+                "due_date": "2026-12-31",
+            },
+            headers=headers,
+        )
+    ).json()["data"]
     await client.post(f"/api/v1/invoices/{inv['id']}/send", headers=headers)
-    await client.post(f"/api/v1/invoices/{inv['id']}/payments", json={"amount": "500.00", "payment_date": "2026-01-01", "payment_method": "bank_transfer"}, headers=headers)
+    await client.post(
+        f"/api/v1/invoices/{inv['id']}/payments",
+        json={"amount": "500.00", "payment_date": "2026-01-01", "payment_method": "bank_transfer"},
+        headers=headers,
+    )
 
     # Now check revenue aggregate includes this paid invoice
     resp = await client.get("/api/v1/analytics/revenue", headers=headers)

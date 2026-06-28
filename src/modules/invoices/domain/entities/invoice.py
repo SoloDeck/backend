@@ -13,7 +13,7 @@ from src.shared.domain.value_objects.money import Money
 class Invoice:
     id: uuid.UUID
     owner_user_id: uuid.UUID
-    deal_id: uuid.UUID | None       # at least one of deal_id / contract_id required
+    deal_id: uuid.UUID | None  # at least one of deal_id / contract_id required
     contract_id: uuid.UUID | None
     client_id: uuid.UUID
     invoice_number: str
@@ -60,6 +60,7 @@ class Invoice:
             InvalidInvoiceTotalError,
             InvoiceEditForbiddenError,
         )
+
         if self.status != InvoiceStatus.DRAFT:
             raise InvoiceEditForbiddenError(self.status)
         if not self.validate_total():
@@ -72,6 +73,7 @@ class Invoice:
             OverpaymentError,
             TerminalInvoiceError,
         )
+
         if self.is_terminal:
             raise TerminalInvoiceError(self.status)
         new_paid = self.amount_paid.add(amount)
@@ -93,6 +95,7 @@ class Invoice:
 
     def void(self) -> None:
         from src.modules.invoices.domain.exceptions.exceptions import TerminalInvoiceError
+
         if self.status == InvoiceStatus.PAID:
             raise TerminalInvoiceError(self.status)
         self.status = InvoiceStatus.VOID

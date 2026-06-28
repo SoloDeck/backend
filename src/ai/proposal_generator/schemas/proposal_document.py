@@ -1,12 +1,13 @@
+
 from pydantic import BaseModel
-from typing import List, Optional
+
 
 class ProposalDocument(BaseModel):
     freelancer_name: str
 
     client_name: str
 
-    company_name: Optional[str] = None
+    company_name: str | None = None
 
     project_type: str
 
@@ -14,9 +15,9 @@ class ProposalDocument(BaseModel):
 
     project_overview: str
 
-    scope_of_work: List[str]
+    scope_of_work: list[str]
 
-    deliverables: List[str]
+    deliverables: list[str]
 
     timeline: str
 

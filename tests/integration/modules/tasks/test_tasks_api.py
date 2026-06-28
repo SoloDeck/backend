@@ -1,21 +1,22 @@
 """Integration tests for the polymorphic tasks API (real PostgreSQL)."""
 
 import uuid
+from typing import Any
 
 from httpx import AsyncClient
 
 from tests.integration.modules.clients.test_clients_api import _auth_headers, _create_client
 
 
-async def _create_project(http: AsyncClient, headers: dict) -> dict:
+async def _create_project(http: AsyncClient, headers: dict[str, str]) -> dict[str, Any]:
     resp = await http.post(
         "/api/v1/projects", json={"name": f"Project {uuid.uuid4().hex[:6]}"}, headers=headers
     )
     assert resp.status_code == 201, resp.text
-    return resp.json()["data"]
+    return resp.json()["data"]  # type: ignore[no-any-return]
 
 
-async def _create_deal(http: AsyncClient, headers: dict) -> dict:
+async def _create_deal(http: AsyncClient, headers: dict[str, str]) -> dict[str, Any]:
     client_obj = await _create_client(http, headers)
     resp = await http.post(
         "/api/v1/deals",
@@ -23,17 +24,19 @@ async def _create_deal(http: AsyncClient, headers: dict) -> dict:
         headers=headers,
     )
     assert resp.status_code == 201, resp.text
-    return resp.json()["data"]
+    return resp.json()["data"]  # type: ignore[no-any-return]
 
 
-async def _create_task_under_project(http: AsyncClient, headers: dict, project_id: str) -> dict:
+async def _create_task_under_project(
+    http: AsyncClient, headers: dict[str, str], project_id: str
+) -> dict[str, Any]:
     resp = await http.post(
         f"/api/v1/projects/{project_id}/tasks",
         json={"title": f"Task {uuid.uuid4().hex[:6]}"},
         headers=headers,
     )
     assert resp.status_code == 201, resp.text
-    return resp.json()["data"]
+    return resp.json()["data"]  # type: ignore[no-any-return]
 
 
 class TestCreateTask:

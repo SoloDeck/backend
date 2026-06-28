@@ -1,20 +1,23 @@
 """Integration tests for the projects API (real PostgreSQL, rolled back per test)."""
 
 import uuid
+from typing import Any
 
 from httpx import AsyncClient
 
 from tests.integration.modules.clients.test_clients_api import _auth_headers
 
 
-def _project_payload(**overrides: object) -> dict:
+def _project_payload(**overrides: object) -> dict[str, Any]:
     return {"name": f"Project {uuid.uuid4().hex[:6]}", **overrides}
 
 
-async def _create_project(http: AsyncClient, headers: dict, **overrides: object) -> dict:
+async def _create_project(
+    http: AsyncClient, headers: dict[str, str], **overrides: object
+) -> dict[str, Any]:
     resp = await http.post("/api/v1/projects", json=_project_payload(**overrides), headers=headers)
     assert resp.status_code == 201, resp.text
-    return resp.json()["data"]
+    return resp.json()["data"]  # type: ignore[no-any-return]
 
 
 class TestCreateProject:

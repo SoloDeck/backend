@@ -6,21 +6,29 @@ from datetime import UTC, datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.ai.facade import AIFacade
 from src.modules.deals.domain.aggregates.deal_aggregate import DealAggregate
 from src.modules.deals.domain.entities.deal import Deal
 from src.modules.deals.domain.value_objects.ai_confidence import AIConfidence
-from src.modules.deals.domain.value_objects.deal_stage import DealStage, STAGE_TRANSITIONS, TERMINAL_STAGES
+from src.modules.deals.domain.value_objects.deal_stage import (
+    STAGE_TRANSITIONS,
+    TERMINAL_STAGES,
+    DealStage,
+)
 from src.modules.deals.infrastructure.repository import DealsRepository
 from src.modules.deals.schemas.request import DealRequest, DealStageRequest, PublicIntakeRequest
-from src.shared.exceptions.domain import BusinessRuleError, InvalidStateTransitionError, NotFoundError
+from src.shared.exceptions.domain import (
+    BusinessRuleError,
+    InvalidStateTransitionError,
+    NotFoundError,
+)
 from src.shared.rate_limit import FixedWindowRateLimiter
-
-from src.ai.facade import AIFacade
 
 # Basic per-link guard for the public, unauthenticated intake form. Process-local;
 # a generous window so legitimate submissions are unaffected while a flood of
 # automated posts to a single share link is throttled (returns HTTP 429).
 _public_intake_limiter = FixedWindowRateLimiter(max_requests=20, window_seconds=60)
+
 
 @dataclass
 class DealsService:
@@ -39,9 +47,9 @@ class DealsService:
         return deal
 
     async def _get_intake(
-            self,
-            user_id: uuid.UUID,
-            intake_id: uuid.UUID,
+        self,
+        user_id: uuid.UUID,
+        intake_id: uuid.UUID,
     ):
         intake = await self.repo.get_intake_by_id(intake_id, user_id)
 
@@ -111,6 +119,7 @@ class DealsService:
         )
 
         from src.workers.ai_jobs.tasks import qualify_intake_async
+
         qualify_intake_async.delay(str(owner.id), str(intake.id))
 
         return intake
@@ -123,9 +132,13 @@ class DealsService:
         page: int = 1,
         page_size: int = 20,
     ) -> tuple[list, int]:
-        return await self.repo.list_all(user_id, title=title, stage=stage, page=page, page_size=page_size)
+        return await self.repo.list_all(
+            user_id, title=title, stage=stage, page=page, page_size=page_size
+        )
 
-    async def list_intakes(self, user_id: uuid.UUID, page: int = 1, page_size: int = 20) -> tuple[list, int]:
+    async def list_intakes(
+        self, user_id: uuid.UUID, page: int = 1, page_size: int = 20
+    ) -> tuple[list, int]:
         return await self.repo.list_intakes(user_id, page=page, page_size=page_size)
 
     async def get_intake(self, user_id: uuid.UUID, intake_id: uuid.UUID):
@@ -137,8 +150,17 @@ class DealsService:
 
     async def update(self, user_id: uuid.UUID, deal_id: uuid.UUID, payload: DealRequest):  # type: ignore[return]
         deal = await self._get_deal(user_id, deal_id)
-        for field in ("title", "source", "estimated_value", "actual_value", "currency", "notes",
-                      "project_type", "service_category", "pricing_tier"):
+        for field in (
+            "title",
+            "source",
+            "estimated_value",
+            "actual_value",
+            "currency",
+            "notes",
+            "project_type",
+            "service_category",
+            "pricing_tier",
+        ):
             value = getattr(payload, field, None)
             if value is not None:
                 setattr(deal, field, value)
@@ -160,10 +182,16 @@ class DealsService:
             raise BusinessRuleError("Invalid deal stage") from exc
         if target not in STAGE_TRANSITIONS.get(current, frozenset()):
             raise InvalidStateTransitionError("deal", deal.stage, payload.stage)
-        if target == DealStage.ACTIVE and not await self.repo.has_accepted_proposal(deal_id, user_id):
+        if target == DealStage.ACTIVE and not await self.repo.has_accepted_proposal(
+            deal_id, user_id
+        ):
             raise BusinessRuleError("Transitioning to active requires an accepted proposal")
-        if target == DealStage.COMPLETED_AND_BILLED and not await self.repo.has_invoice(deal_id, user_id):
-            raise BusinessRuleError("Transitioning to completed_and_billed requires a linked invoice")
+        if target == DealStage.COMPLETED_AND_BILLED and not await self.repo.has_invoice(
+            deal_id, user_id
+        ):
+            raise BusinessRuleError(
+                "Transitioning to completed_and_billed requires a linked invoice"
+            )
         deal.stage = payload.stage
         if target in TERMINAL_STAGES and hasattr(deal, "closed_at"):
             deal.closed_at = datetime.now(UTC)
@@ -182,9 +210,9 @@ class DealsService:
         return saved
 
     async def qualify_deal_intake(
-            self,
-            user_id: uuid.UUID,
-            intake_id: uuid.UUID,
+        self,
+        user_id: uuid.UUID,
+        intake_id: uuid.UUID,
     ):
         intake = await self._get_intake(user_id, intake_id)
 
@@ -207,7 +235,11 @@ class DealsService:
         )
 
         _score_map = {"HOT": 80, "WARM": 50, "COLD": 20}
-        _confidence_map = {"HOT": AIConfidence.high(), "WARM": AIConfidence.medium(), "COLD": AIConfidence.low()}
+        _confidence_map = {
+            "HOT": AIConfidence.high(),
+            "WARM": AIConfidence.medium(),
+            "COLD": AIConfidence.low(),
+        }
         raw = str(result.get("suggested_lead_score", "")).upper()
         score = _score_map.get(raw, 50)
         confidence = _confidence_map.get(raw, AIConfidence.medium())
@@ -269,5 +301,8 @@ class DealsService:
             await self.repo.save(deal_model)
 
         recommendation = aggregate.deal.ai_recommendation if deal_model else None
-        return {**result, "ai_qualification_score": score, "ai_qualification_recommendation": recommendation}
-
+        return {
+            **result,
+            "ai_qualification_score": score,
+            "ai_qualification_recommendation": recommendation,
+        }

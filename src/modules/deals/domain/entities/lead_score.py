@@ -15,7 +15,7 @@ class LeadScore:
 
     id: uuid.UUID
     deal_id: uuid.UUID
-    score: int                    # 0–100
+    score: int  # 0–100
     confidence: AIConfidence
     reasoning: str
     model_version: str

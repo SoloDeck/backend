@@ -52,9 +52,7 @@ def setup_exception_handlers(app: FastAPI) -> None:
         details = []
         for err in exc.errors():
             field = ".".join(str(loc) for loc in err["loc"] if loc != "body")
-            details.append(
-                ValidationErrorDetail(field=field or "request", message=err["msg"])
-            )
+            details.append(ValidationErrorDetail(field=field or "request", message=err["msg"]))
         return _err(422, ErrorCode.VALIDATION_FAILED, "Request validation failed", details)
 
     @app.exception_handler(StarletteHTTPException)

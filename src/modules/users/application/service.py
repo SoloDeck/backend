@@ -7,7 +7,11 @@ from datetime import UTC, datetime
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.modules.users.infrastructure.repository import UsersRepository
-from src.modules.users.schemas.request import ChangePasswordRequest, FreelancerProfileUpdateRequest, UpdateUserRequest
+from src.modules.users.schemas.request import (
+    ChangePasswordRequest,
+    FreelancerProfileUpdateRequest,
+    UpdateUserRequest,
+)
 from src.shared.exceptions.domain import AuthenticationError, NotFoundError
 from src.shared.security.passwords import hash_password, verify_password
 

@@ -53,7 +53,7 @@ class TaskRepository:
         return task
 
     async def get_by_id(self, task_id: uuid.UUID) -> TaskModel | None:
-        return await self.db.scalar(select(TaskModel).where(TaskModel.id == task_id))
+        return await self.db.scalar(select(TaskModel).where(TaskModel.id == task_id))  # type: ignore[no-any-return]
 
     async def list_by_entity(
         self,
@@ -70,9 +70,7 @@ class TaskRepository:
         if status is not None:
             conditions.append(TaskModel.status == status)
 
-        total = await self.db.scalar(
-            select(func.count()).select_from(TaskModel).where(*conditions)
-        )
+        total = await self.db.scalar(select(func.count()).select_from(TaskModel).where(*conditions))
         result = await self.db.execute(
             select(TaskModel)
             .where(*conditions)
@@ -103,12 +101,13 @@ class TaskRepository:
     async def get_checklist_item(
         self, item_id: uuid.UUID, task_id: uuid.UUID
     ) -> ChecklistItemModel | None:
-        return await self.db.scalar(
+        res = await self.db.scalar(
             select(ChecklistItemModel).where(
                 ChecklistItemModel.id == item_id,
                 ChecklistItemModel.task_id == task_id,
             )
         )
+        return res
 
     async def save_checklist_item(self, item: ChecklistItemModel) -> ChecklistItemModel:
         await self.db.flush()

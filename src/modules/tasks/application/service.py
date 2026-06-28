@@ -27,7 +27,7 @@ _DEFAULT_PRIORITY = "medium"
 @dataclass
 class TaskService:
     db: AsyncSession
-    repo: TaskRepository | None = None
+    repo: TaskRepository = None  # type: ignore[assignment]
 
     def __post_init__(self) -> None:
         if self.repo is None:
@@ -39,9 +39,7 @@ class TaskService:
         if not await self.repo.entity_exists_for_owner(entity_type, entity_id, owner_user_id):
             raise NotFoundError(f"{entity_type.capitalize()} {entity_id} not found")
 
-    async def _get_owned_task(
-        self, task_id: uuid.UUID, owner_user_id: uuid.UUID
-    ) -> TaskModel:
+    async def _get_owned_task(self, task_id: uuid.UUID, owner_user_id: uuid.UUID) -> TaskModel:
         task = await self.repo.get_by_id(task_id)
         if task is None:
             raise NotFoundError(f"Task {task_id} not found")

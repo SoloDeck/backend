@@ -6,13 +6,13 @@ from datetime import UTC, datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.modules.contracts.infrastructure.repository import ContractsRepository
-from src.modules.contracts.schemas.request import ContractRequest
 from src.modules.contracts.domain.value_objects.contract_status import (
     CONTRACT_TRANSITIONS,
     TERMINAL_CONTRACT_STATUSES,
     ContractStatus,
 )
+from src.modules.contracts.infrastructure.repository import ContractsRepository
+from src.modules.contracts.schemas.request import ContractRequest
 from src.shared.exceptions.domain import (
     BusinessRuleError,
     EntitlementError,
@@ -77,7 +77,9 @@ class ContractsService:
         page: int = 1,
         page_size: int = 20,
     ) -> tuple[list, int]:
-        return await self.repo.list_all(user_id, status=status, deal_id=deal_id, page=page, page_size=page_size)
+        return await self.repo.list_all(
+            user_id, status=status, deal_id=deal_id, page=page, page_size=page_size
+        )
 
     async def get_one(self, user_id: uuid.UUID, contract_id: uuid.UUID):  # type: ignore[return]
         return await self._get_contract(user_id, contract_id)
@@ -102,7 +104,7 @@ class ContractsService:
             current = ContractStatus(contract.status)
             target = ContractStatus(target_status)
         except ValueError:
-            raise BusinessRuleError(f"'{target_status}' is not a valid contract status")
+            raise BusinessRuleError(f"'{target_status}' is not a valid contract status") from None
 
         if target not in CONTRACT_TRANSITIONS[current]:
             raise InvalidStateTransitionError("contract", current.value, target.value)
@@ -112,9 +114,7 @@ class ContractsService:
 
         if target == ContractStatus.ACTIVE:
             contract.signed_by_freelancer_at = now
-        elif target == ContractStatus.PENDING_SIGNATURES:
-            pass
-        elif target in TERMINAL_CONTRACT_STATUSES:
+        elif target == ContractStatus.PENDING_SIGNATURES or target in TERMINAL_CONTRACT_STATUSES:
             pass
 
         return await self.repo.save(contract)
@@ -162,8 +162,14 @@ class ContractsService:
         content = await ai_facade.generate_contract(
             deal_data={"title": deal.title if deal else "", "stage": deal.stage if deal else ""},
             proposal_content=proposal.content if proposal else {},
-            client_data={"name": client.name if client else "", "email": client.email if client else ""},
-            user_profile={"name": user.full_name if user else "", "email": user.email if user else ""},
+            client_data={
+                "name": client.name if client else "",
+                "email": client.email if client else "",
+            },
+            user_profile={
+                "name": user.full_name if user else "",
+                "email": user.email if user else "",
+            },
             user_can_use_ai=user_can_use_ai,
         )
         contract.content = content

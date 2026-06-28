@@ -9,7 +9,11 @@ from decimal import Decimal
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.modules.invoices.infrastructure.repository import InvoicesRepository
-from src.modules.invoices.schemas.request import InvoiceRequest, InvoiceUpdateRequest, PaymentRequest
+from src.modules.invoices.schemas.request import (
+    InvoiceRequest,
+    InvoiceUpdateRequest,
+    PaymentRequest,
+)
 from src.shared.exceptions.domain import BusinessRuleError, NotFoundError
 
 
@@ -34,9 +38,15 @@ class InvoicesService:
         client = await self.repo.get_client_by_id(payload.client_id, user_id)
         if client is None:
             raise NotFoundError(f"Client {payload.client_id} not found")
-        if payload.deal_id is not None and await self.repo.get_deal_by_id(payload.deal_id, user_id) is None:
+        if (
+            payload.deal_id is not None
+            and await self.repo.get_deal_by_id(payload.deal_id, user_id) is None
+        ):
             raise NotFoundError(f"Deal {payload.deal_id} not found")
-        if payload.contract_id is not None and await self.repo.get_contract_by_id(payload.contract_id, user_id) is None:
+        if (
+            payload.contract_id is not None
+            and await self.repo.get_contract_by_id(payload.contract_id, user_id) is None
+        ):
             raise NotFoundError(f"Contract {payload.contract_id} not found")
 
         subtotal = payload.subtotal
@@ -71,7 +81,14 @@ class InvoicesService:
             client_snapshot={},
         )
         for item in payload.line_items or []:
-            await self.repo.add_line_item(invoice_id=invoice.id, description=item.description, quantity=item.quantity, unit_price=item.unit_price, amount=item.quantity * item.unit_price, sort_order=item.sort_order)
+            await self.repo.add_line_item(
+                invoice_id=invoice.id,
+                description=item.description,
+                quantity=item.quantity,
+                unit_price=item.unit_price,
+                amount=item.quantity * item.unit_price,
+                sort_order=item.sort_order,
+            )
         return await self.repo.save(invoice)
 
     async def list_all(
@@ -90,7 +107,9 @@ class InvoicesService:
         if invoice.status != "draft":
             raise BusinessRuleError("Only draft invoices can be updated")
         if payload.line_items:
-            payload.subtotal = sum((i.quantity * i.unit_price for i in payload.line_items), Decimal("0"))
+            payload.subtotal = sum(
+                (i.quantity * i.unit_price for i in payload.line_items), Decimal("0")
+            )
             await self.repo.replace_line_items(invoice_id, payload.line_items)
         if payload.subtotal is not None:
             invoice.subtotal = payload.subtotal
@@ -125,7 +144,9 @@ class InvoicesService:
         invoice.voided_at = datetime.now(UTC)
         return await self.repo.save(invoice)
 
-    async def record_payment(self, user_id: uuid.UUID, invoice_id: uuid.UUID, payload: PaymentRequest):
+    async def record_payment(
+        self, user_id: uuid.UUID, invoice_id: uuid.UUID, payload: PaymentRequest
+    ):
         invoice = await self._get_invoice(user_id, invoice_id)
         if payload.amount <= 0:
             raise BusinessRuleError("Payment amount must be greater than zero")
@@ -133,7 +154,13 @@ class InvoicesService:
             raise BusinessRuleError("Cannot record payment for draft or void invoice")
         if invoice.amount_paid + payload.amount > invoice.total:
             raise BusinessRuleError("Payment would exceed invoice total")
-        await self.repo.add_payment(invoice_id=invoice_id, amount=payload.amount, payment_date=payload.payment_date, payment_method=payload.payment_method, reference_note=payload.reference_note)
+        await self.repo.add_payment(
+            invoice_id=invoice_id,
+            amount=payload.amount,
+            payment_date=payload.payment_date,
+            payment_method=payload.payment_method,
+            reference_note=payload.reference_note,
+        )
         invoice.amount_paid += payload.amount
         invoice.status = "paid" if invoice.amount_paid == invoice.total else "partially_paid"
         return await self.repo.save(invoice)

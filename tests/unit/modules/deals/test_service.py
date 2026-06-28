@@ -6,7 +6,11 @@ import pytest
 
 from src.modules.deals.application.service import DealsService
 from src.modules.deals.schemas.request import DealRequest, DealStageRequest, PublicIntakeRequest
-from src.shared.exceptions.domain import BusinessRuleError, InvalidStateTransitionError, NotFoundError
+from src.shared.exceptions.domain import (
+    BusinessRuleError,
+    InvalidStateTransitionError,
+    NotFoundError,
+)
 
 
 @dataclass
@@ -37,7 +41,9 @@ async def test_transition_rejects_backward_stage() -> None:
     service = DealsService(db=AsyncMock(), repo=repo)
 
     with pytest.raises(InvalidStateTransitionError):
-        await service.transition_stage(uuid.uuid4(), uuid.uuid4(), DealStageRequest(target_stage="proposal_sent"))
+        await service.transition_stage(
+            uuid.uuid4(), uuid.uuid4(), DealStageRequest(target_stage="proposal_sent")
+        )
 
 
 async def test_transition_rejects_unknown_stage_as_domain_error() -> None:
@@ -46,7 +52,9 @@ async def test_transition_rejects_unknown_stage_as_domain_error() -> None:
     service = DealsService(db=AsyncMock(), repo=repo)
 
     with pytest.raises(BusinessRuleError):
-        await service.transition_stage(uuid.uuid4(), uuid.uuid4(), DealStageRequest(target_stage="not_a_stage"))
+        await service.transition_stage(
+            uuid.uuid4(), uuid.uuid4(), DealStageRequest(target_stage="not_a_stage")
+        )
 
 
 async def test_transition_to_active_requires_accepted_proposal() -> None:
@@ -56,7 +64,9 @@ async def test_transition_to_active_requires_accepted_proposal() -> None:
     service = DealsService(db=AsyncMock(), repo=repo)
 
     with pytest.raises(BusinessRuleError):
-        await service.transition_stage(uuid.uuid4(), uuid.uuid4(), DealStageRequest(target_stage="active"))
+        await service.transition_stage(
+            uuid.uuid4(), uuid.uuid4(), DealStageRequest(target_stage="active")
+        )
 
 
 async def test_transition_to_completed_requires_invoice() -> None:
@@ -66,7 +76,9 @@ async def test_transition_to_completed_requires_invoice() -> None:
     service = DealsService(db=AsyncMock(), repo=repo)
 
     with pytest.raises(BusinessRuleError):
-        await service.transition_stage(uuid.uuid4(), uuid.uuid4(), DealStageRequest(target_stage="completed_and_billed"))
+        await service.transition_stage(
+            uuid.uuid4(), uuid.uuid4(), DealStageRequest(target_stage="completed_and_billed")
+        )
 
 
 async def test_transition_from_terminal_stage_is_rejected() -> None:
@@ -75,7 +87,9 @@ async def test_transition_from_terminal_stage_is_rejected() -> None:
     service = DealsService(db=AsyncMock(), repo=repo)
 
     with pytest.raises(InvalidStateTransitionError):
-        await service.transition_stage(uuid.uuid4(), uuid.uuid4(), DealStageRequest(target_stage="active"))
+        await service.transition_stage(
+            uuid.uuid4(), uuid.uuid4(), DealStageRequest(target_stage="active")
+        )
 
 
 def _intake_payload(**overrides) -> PublicIntakeRequest:
@@ -203,7 +217,9 @@ async def test_qualify_intake_writes_all_signal_fields_to_deal() -> None:
 
 
 async def test_qualify_intake_hot_score_maps_to_80_and_qualify() -> None:
-    service, intake, deal_model = _make_qualify_service({**_AI_RESULT, "suggested_lead_score": "HOT"})
+    service, intake, deal_model = _make_qualify_service(
+        {**_AI_RESULT, "suggested_lead_score": "HOT"}
+    )
 
     await service.qualify_deal_intake(uuid.uuid4(), intake.id)
 
@@ -212,7 +228,9 @@ async def test_qualify_intake_hot_score_maps_to_80_and_qualify() -> None:
 
 
 async def test_qualify_intake_cold_score_maps_to_20_and_pass() -> None:
-    service, intake, deal_model = _make_qualify_service({**_AI_RESULT, "suggested_lead_score": "COLD"})
+    service, intake, deal_model = _make_qualify_service(
+        {**_AI_RESULT, "suggested_lead_score": "COLD"}
+    )
 
     await service.qualify_deal_intake(uuid.uuid4(), intake.id)
 
@@ -221,7 +239,9 @@ async def test_qualify_intake_cold_score_maps_to_20_and_pass() -> None:
 
 
 async def test_qualify_intake_warm_score_maps_to_50() -> None:
-    service, intake, deal_model = _make_qualify_service({**_AI_RESULT, "suggested_lead_score": "WARM"})
+    service, intake, deal_model = _make_qualify_service(
+        {**_AI_RESULT, "suggested_lead_score": "WARM"}
+    )
 
     await service.qualify_deal_intake(uuid.uuid4(), intake.id)
 

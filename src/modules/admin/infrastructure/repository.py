@@ -12,9 +12,7 @@ class AdminRepository:
     db: AsyncSession
 
     async def list_users(self) -> list:
-        result = await self.db.execute(
-            select(UserModel).where(UserModel.deleted_at.is_(None))
-        )
+        result = await self.db.execute(select(UserModel).where(UserModel.deleted_at.is_(None)))
         return list(result.scalars().all())
 
     async def get_user(self, user_id: uuid.UUID):

@@ -7,10 +7,10 @@ from httpx import AsyncClient
 
 from tests.integration.modules.clients.test_clients_api import _auth_headers, _create_client
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 async def _create_deal(client: AsyncClient, headers: dict, client_id: str) -> str:
     resp = await client.post(
@@ -42,6 +42,7 @@ async def _create_invoice(client: AsyncClient, headers: dict, **overrides) -> di
 # POST /invoices
 # ---------------------------------------------------------------------------
 
+
 class TestCreateInvoice:
     async def test_creates_invoice_returns_201(self, client: AsyncClient) -> None:
         headers = await _auth_headers(client)
@@ -62,7 +63,12 @@ class TestCreateInvoice:
     async def test_unauthenticated_returns_401(self, client: AsyncClient) -> None:
         resp = await client.post(
             "/api/v1/invoices",
-            json={"client_id": str(uuid.uuid4()), "subtotal": "100", "tax_rate": "0", "due_date": "2027-01-01"},
+            json={
+                "client_id": str(uuid.uuid4()),
+                "subtotal": "100",
+                "tax_rate": "0",
+                "due_date": "2027-01-01",
+            },
         )
         assert resp.status_code == 401
 
@@ -70,6 +76,7 @@ class TestCreateInvoice:
 # ---------------------------------------------------------------------------
 # GET /invoices
 # ---------------------------------------------------------------------------
+
 
 class TestListInvoices:
     async def test_returns_own_invoices(self, client: AsyncClient) -> None:
@@ -123,6 +130,7 @@ class TestListInvoices:
 # GET /invoices/{id}
 # ---------------------------------------------------------------------------
 
+
 class TestGetInvoice:
     async def test_returns_invoice(self, client: AsyncClient) -> None:
         headers = await _auth_headers(client)
@@ -151,6 +159,7 @@ class TestGetInvoice:
 # ---------------------------------------------------------------------------
 # PATCH /invoices/{id}
 # ---------------------------------------------------------------------------
+
 
 class TestUpdateInvoice:
     async def test_updates_notes(self, client: AsyncClient) -> None:

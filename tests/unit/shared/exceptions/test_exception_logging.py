@@ -29,17 +29,13 @@ async def client() -> AsyncClient:
 
 
 class TestUnhandledExceptionLogging:
-    async def test_returns_generic_500_without_leaking_detail(
-        self, client: AsyncClient
-    ) -> None:
+    async def test_returns_generic_500_without_leaking_detail(self, client: AsyncClient) -> None:
         resp = await client.get("/boom")
         assert resp.status_code == 500
         body = resp.text
         assert "kaboom" not in body  # stack/detail must not leak to client
 
-    async def test_logs_error_with_request_context(
-        self, client: AsyncClient
-    ) -> None:
+    async def test_logs_error_with_request_context(self, client: AsyncClient) -> None:
         with structlog.testing.capture_logs() as logs:
             await client.get("/boom")
         errors = [e for e in logs if e["event"] == "http.unhandled_exception"]

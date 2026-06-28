@@ -12,7 +12,11 @@ from tests.integration.modules.clients.test_clients_api import _auth_headers, _c
 async def _create_deal(http: AsyncClient, headers: dict, client_id: str) -> dict:
     resp = await http.post(
         "/api/v1/deals",
-        json={"client_id": client_id, "title": f"Deal {uuid.uuid4().hex[:6]}", "estimated_value": "1000"},
+        json={
+            "client_id": client_id,
+            "title": f"Deal {uuid.uuid4().hex[:6]}",
+            "estimated_value": "1000",
+        },
         headers=headers,
     )
     assert resp.status_code == 201, resp.text
@@ -47,7 +51,11 @@ async def test_invoice_send_payment_and_payment_list(client: AsyncClient) -> Non
 
     payment_resp = await client.post(
         f"/api/v1/invoices/{invoice['id']}/payments",
-        json={"amount": "25.00", "payment_date": date(2026, 1, 1).isoformat(), "payment_method": "other"},
+        json={
+            "amount": "25.00",
+            "payment_date": date(2026, 1, 1).isoformat(),
+            "payment_method": "other",
+        },
         headers=headers,
     )
     assert payment_resp.status_code == 201

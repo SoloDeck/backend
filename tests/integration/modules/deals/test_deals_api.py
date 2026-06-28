@@ -7,29 +7,38 @@ from httpx import AsyncClient
 
 from src.shared.dependencies.ai import get_ai_facade
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 async def _auth(client: AsyncClient) -> dict:
     resp = await client.post(
         "/api/v1/auth/register",
-        json={"email": f"u_{uuid.uuid4().hex[:8]}@example.com", "password": "Test@1234!", "full_name": "Test User"},
+        json={
+            "email": f"u_{uuid.uuid4().hex[:8]}@example.com",
+            "password": "Test@1234!",
+            "full_name": "Test User",
+        },
     )
     assert resp.status_code == 201, resp.text
     return {"Authorization": f"Bearer {resp.json()['data']['access_token']}"}
 
 
 async def _create_client(client: AsyncClient, headers: dict, name: str = "Acme") -> str:
-    resp = await client.post("/api/v1/clients", json={"name": name, "status": "prospect"}, headers=headers)
+    resp = await client.post(
+        "/api/v1/clients", json={"name": name, "status": "prospect"}, headers=headers
+    )
     assert resp.status_code == 201, resp.text
     return resp.json()["data"]["id"]
 
 
 async def _create_deal(
-    client: AsyncClient, headers: dict,
-    title: str = "My Deal", stage: str = "new_lead", client_id: str | None = None,
+    client: AsyncClient,
+    headers: dict,
+    title: str = "My Deal",
+    stage: str = "new_lead",
+    client_id: str | None = None,
 ) -> dict:
     if client_id is None:
         client_id = await _create_client(client, headers)
@@ -46,11 +55,14 @@ async def _create_deal(
 # POST /deals
 # ---------------------------------------------------------------------------
 
+
 class TestCreateDeal:
     async def test_creates_deal_returns_201(self, client: AsyncClient) -> None:
         headers = await _auth(client)
         client_id = await _create_client(client, headers)
-        resp = await client.post("/api/v1/deals", json={"client_id": client_id, "title": "Deal A"}, headers=headers)
+        resp = await client.post(
+            "/api/v1/deals", json={"client_id": client_id, "title": "Deal A"}, headers=headers
+        )
         assert resp.status_code == 201
         data = resp.json()["data"]
         assert data["title"] == "Deal A"
@@ -58,7 +70,9 @@ class TestCreateDeal:
 
     async def test_unknown_client_returns_404(self, client: AsyncClient) -> None:
         headers = await _auth(client)
-        resp = await client.post("/api/v1/deals", json={"client_id": str(uuid.uuid4()), "title": "X"}, headers=headers)
+        resp = await client.post(
+            "/api/v1/deals", json={"client_id": str(uuid.uuid4()), "title": "X"}, headers=headers
+        )
         assert resp.status_code == 404
 
     async def test_missing_title_returns_422(self, client: AsyncClient) -> None:
@@ -68,13 +82,16 @@ class TestCreateDeal:
         assert resp.status_code == 422
 
     async def test_unauthenticated_returns_401(self, client: AsyncClient) -> None:
-        resp = await client.post("/api/v1/deals", json={"client_id": str(uuid.uuid4()), "title": "X"})
+        resp = await client.post(
+            "/api/v1/deals", json={"client_id": str(uuid.uuid4()), "title": "X"}
+        )
         assert resp.status_code == 401
 
 
 # ---------------------------------------------------------------------------
 # GET /deals
 # ---------------------------------------------------------------------------
+
 
 class TestListDeals:
     async def test_returns_own_deals(self, client: AsyncClient) -> None:
@@ -139,8 +156,18 @@ class TestListDeals:
         c_id = await _create_client(client, headers)
         for i in range(5):
             await _create_deal(client, headers, f"Paged {i}", client_id=c_id)
-        p1 = [d["id"] for d in (await client.get("/api/v1/deals?page=1&page_size=3", headers=headers)).json()["data"]]
-        p2 = [d["id"] for d in (await client.get("/api/v1/deals?page=2&page_size=3", headers=headers)).json()["data"]]
+        p1 = [
+            d["id"]
+            for d in (await client.get("/api/v1/deals?page=1&page_size=3", headers=headers)).json()[
+                "data"
+            ]
+        ]
+        p2 = [
+            d["id"]
+            for d in (await client.get("/api/v1/deals?page=2&page_size=3", headers=headers)).json()[
+                "data"
+            ]
+        ]
         assert len(p2) == 2
         assert not set(p1) & set(p2)
 
@@ -159,6 +186,7 @@ class TestListDeals:
 # ---------------------------------------------------------------------------
 # GET /deals/{id}
 # ---------------------------------------------------------------------------
+
 
 class TestGetDeal:
     async def test_returns_deal(self, client: AsyncClient) -> None:
@@ -188,6 +216,7 @@ class TestGetDeal:
 # ---------------------------------------------------------------------------
 # PATCH /deals/{id}
 # ---------------------------------------------------------------------------
+
 
 class TestUpdateDeal:
     async def test_updates_title(self, client: AsyncClient) -> None:
@@ -225,13 +254,16 @@ class TestUpdateDeal:
         assert resp.status_code == 404
 
     async def test_unauthenticated_returns_401(self, client: AsyncClient) -> None:
-        resp = await client.patch(f"/api/v1/deals/{uuid.uuid4()}", json={"client_id": str(uuid.uuid4()), "title": "X"})
+        resp = await client.patch(
+            f"/api/v1/deals/{uuid.uuid4()}", json={"client_id": str(uuid.uuid4()), "title": "X"}
+        )
         assert resp.status_code == 401
 
 
 # ---------------------------------------------------------------------------
 # DELETE /deals/{id}
 # ---------------------------------------------------------------------------
+
 
 class TestDeleteDeal:
     async def test_soft_deletes_deal(self, client: AsyncClient) -> None:
@@ -368,6 +400,7 @@ class TestDealAIQualificationFields:
 
         mock_facade = _mock_ai_facade()
         from src.main import app
+
         app.dependency_overrides[get_ai_facade] = lambda: mock_facade
 
         try:
@@ -406,6 +439,7 @@ class TestDealAIQualificationFields:
         mock_facade.qualify_lead.return_value = {**_MOCK_AI_RESULT, "suggested_lead_score": "WARM"}
 
         from src.main import app
+
         app.dependency_overrides[get_ai_facade] = lambda: mock_facade
 
         try:
@@ -423,7 +457,9 @@ class TestDealAIQualificationFields:
         assert qualified["ai_level"] == "warm"
         assert qualified["is_ai_qualified"] is False  # 50 < 60 threshold
 
-    async def test_qualify_cold_score_maps_to_cold_level_and_pass(self, client: AsyncClient) -> None:
+    async def test_qualify_cold_score_maps_to_cold_level_and_pass(
+        self, client: AsyncClient
+    ) -> None:
         headers = await _auth(client)
         intake_id = await _create_intake(client, headers)
 
@@ -431,6 +467,7 @@ class TestDealAIQualificationFields:
         mock_facade.qualify_lead.return_value = {**_MOCK_AI_RESULT, "suggested_lead_score": "COLD"}
 
         from src.main import app
+
         app.dependency_overrides[get_ai_facade] = lambda: mock_facade
 
         try:

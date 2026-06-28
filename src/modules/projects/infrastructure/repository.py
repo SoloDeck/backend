@@ -21,17 +21,18 @@ class ProjectRepository:
     async def get_by_id(
         self, project_id: uuid.UUID, owner_user_id: uuid.UUID
     ) -> ProjectModel | None:
-        return await self.db.scalar(
+        res = await self.db.scalar(
             select(ProjectModel).where(
                 ProjectModel.id == project_id,
                 ProjectModel.owner_id == owner_user_id,
             )
         )
+        return res
 
     async def get_by_deal_id(
         self, deal_id: uuid.UUID, owner_user_id: uuid.UUID
     ) -> ProjectModel | None:
-        return await self.db.scalar(
+        res = await self.db.scalar(
             select(ProjectModel)
             .where(
                 ProjectModel.deal_id == deal_id,
@@ -40,6 +41,7 @@ class ProjectRepository:
             .order_by(ProjectModel.created_at.asc())
             .limit(1)
         )
+        return res
 
     async def list(
         self,

@@ -41,7 +41,7 @@ _PLANS: list[_PlanDef] = [
         max_ai_generations_per_month=50,
         can_use_ai=True,
         can_export_pdf=True,
-        max_clients=None,   # unlimited
+        max_clients=None,  # unlimited
         max_deals=None,
     ),
     _PlanDef(
@@ -57,8 +57,7 @@ _PLANS: list[_PlanDef] = [
     ),
 ]
 
-_UPSERT = text(
-    """
+_UPSERT = text("""
     INSERT INTO subscription_plans (
         name, slug, price_monthly, currency,
         max_ai_generations_per_month, can_use_ai, can_export_pdf,
@@ -78,8 +77,7 @@ _UPSERT = text(
         max_clients                     = EXCLUDED.max_clients,
         max_deals                       = EXCLUDED.max_deals,
         is_active                       = TRUE
-    """
-)
+    """)
 
 
 class PlansSeeder(BaseSeeder):

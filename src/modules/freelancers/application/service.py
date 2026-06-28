@@ -7,15 +7,28 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.modules.freelancers.schemas.response import FreelancerCategoryResponse, FreelancerPublicResponse
+from src.modules.freelancers.schemas.response import (
+    FreelancerCategoryResponse,
+    FreelancerPublicResponse,
+)
 from src.shared.exceptions.domain import NotFoundError
 
 _CATEGORIES: list[FreelancerCategoryResponse] = [
-    FreelancerCategoryResponse(slug="design",      name="Thiết kế",  sub_skills="UI/UX, Logo, Đồ họa, Video"),
-    FreelancerCategoryResponse(slug="programming", name="Lập trình", sub_skills="Web, Mobile, Backend, AI"),
-    FreelancerCategoryResponse(slug="marketing",   name="Marketing", sub_skills="SEO, Ads, Social Media"),
-    FreelancerCategoryResponse(slug="content",     name="Nội dung",  sub_skills="Copywriting, Blog, Kịch bản"),
-    FreelancerCategoryResponse(slug="consulting",  name="Tư vấn",    sub_skills="Kinh doanh, Tài chính, Pháp lý"),
+    FreelancerCategoryResponse(
+        slug="design", name="Thiết kế", sub_skills="UI/UX, Logo, Đồ họa, Video"
+    ),
+    FreelancerCategoryResponse(
+        slug="programming", name="Lập trình", sub_skills="Web, Mobile, Backend, AI"
+    ),
+    FreelancerCategoryResponse(
+        slug="marketing", name="Marketing", sub_skills="SEO, Ads, Social Media"
+    ),
+    FreelancerCategoryResponse(
+        slug="content", name="Nội dung", sub_skills="Copywriting, Blog, Kịch bản"
+    ),
+    FreelancerCategoryResponse(
+        slug="consulting", name="Tư vấn", sub_skills="Kinh doanh, Tài chính, Pháp lý"
+    ),
 ]
 
 _NEW_THRESHOLD_DAYS = 30
@@ -25,8 +38,8 @@ def _to_response(user, project_count: int) -> FreelancerPublicResponse:
     threshold = datetime.now(UTC) - timedelta(days=_NEW_THRESHOLD_DAYS)
     created = user.created_at
     if created.tzinfo is None:
-        from datetime import timezone
-        created = created.replace(tzinfo=timezone.utc)
+
+        created = created.replace(tzinfo=UTC)
     return FreelancerPublicResponse(
         id=user.id,
         full_name=user.full_name,
@@ -76,12 +89,14 @@ class FreelancersService:
         if categories:
             conditions.append(UserModel.service_categories.overlap(categories))
 
-        total = await self.db.scalar(
-            select(func.count()).select_from(UserModel).where(*conditions)
-        ) or 0
+        total = (
+            await self.db.scalar(select(func.count()).select_from(UserModel).where(*conditions))
+            or 0
+        )
         offset = (page - 1) * page_size
         result = await self.db.execute(
-            select(UserModel).where(*conditions)
+            select(UserModel)
+            .where(*conditions)
             .order_by(UserModel.created_at.desc())
             .offset(offset)
             .limit(page_size)
@@ -120,12 +135,15 @@ class FreelancersService:
         if user is None:
             raise NotFoundError(f"Freelancer {freelancer_id} not found")
 
-        project_count = await self.db.scalar(
-            select(func.count(DealModel.id)).where(
-                DealModel.owner_user_id == freelancer_id,
-                DealModel.stage == "completed_and_billed",
-                DealModel.deleted_at.is_(None),
+        project_count = (
+            await self.db.scalar(
+                select(func.count(DealModel.id)).where(
+                    DealModel.owner_user_id == freelancer_id,
+                    DealModel.stage == "completed_and_billed",
+                    DealModel.deleted_at.is_(None),
+                )
             )
-        ) or 0
+            or 0
+        )
 
         return _to_response(user, project_count)
