@@ -147,7 +147,18 @@ class DealsService:
         if target in TERMINAL_STAGES and hasattr(deal, "closed_at"):
             deal.closed_at = datetime.now(UTC)
             await self.repo.cancel_pending_reminders(deal_id, user_id)
-        return await self.repo.save(deal)
+        saved = await self.repo.save(deal)
+        # Design decision #3 (Phase 24): a deal entering `active` auto-provisions a
+        # linked Project. We call ProjectService directly (in the same session /
+        # transaction) and idempotently — re-running a transition never duplicates
+        # the project. Project invariants stay owned by the projects domain.
+        if target == DealStage.ACTIVE:
+            from src.modules.projects.application.service import ProjectService
+
+            await ProjectService(db=self.db).get_or_create_for_deal(
+                deal_id, user_id, name=deal.title
+            )
+        return saved
 
     async def qualify_deal_intake(
             self,

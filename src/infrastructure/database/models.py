@@ -130,6 +130,16 @@ _ai_module_type = PgEnum(
 _ai_generation_status = PgEnum(
     "pending", "completed", "failed", name="ai_generation_status", create_type=False
 )
+_project_status = PgEnum(
+    "planning", "active", "on_hold", "completed", name="project_status", create_type=False
+)
+_task_status = PgEnum(
+    "todo", "in_progress", "review", "done", name="task_status", create_type=False
+)
+_task_priority = PgEnum("low", "medium", "high", name="task_priority", create_type=False)
+_task_entity_type = PgEnum(
+    "project", "deal", "reminder", name="task_entity_type", create_type=False
+)
 
 
 # =============================================================================
@@ -997,3 +1007,100 @@ class AiCostRecordModel(UUIDMixin, Base):
         Index("idx_ai_cost_records_module", "ai_module", "occurred_at"),
         Index("idx_ai_cost_records_time", "occurred_at"),
     )
+
+
+# =============================================================================
+# DOMAIN: Projects & Tasks (polymorphic task binding)
+# =============================================================================
+
+class ProjectModel(UUIDMixin, TimestampMixin, Base):
+    __tablename__ = "projects"
+
+    deal_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("deals.id", ondelete="SET NULL"), nullable=True
+    )
+    owner_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    start_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    end_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    status: Mapped[str] = mapped_column(
+        _project_status, nullable=False, server_default="planning"
+    )
+
+    __table_args__ = (
+        Index("idx_projects_owner", "owner_id"),
+        Index("idx_projects_owner_status", "owner_id", "status"),
+        Index("idx_projects_deal", "deal_id"),
+    )
+
+
+class TaskModel(UUIDMixin, TimestampMixin, Base):
+    __tablename__ = "tasks"
+
+    # Polymorphic binding — no FK on entity_id (referential integrity enforced
+    # at the application layer, mirroring the reminders module).
+    entity_type: Mapped[str] = mapped_column(_task_entity_type, nullable=False)
+    entity_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    title: Mapped[str] = mapped_column(String(500), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    priority: Mapped[str] = mapped_column(
+        _task_priority, nullable=False, server_default="medium"
+    )
+    status: Mapped[str] = mapped_column(_task_status, nullable=False, server_default="todo")
+    deadline: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    checklist_items: Mapped[list["ChecklistItemModel"]] = relationship(
+        "ChecklistItemModel",
+        back_populates="task",
+        cascade="all, delete-orphan",
+        order_by="ChecklistItemModel.position",
+        lazy="selectin",
+    )
+
+    __table_args__ = (
+        Index("idx_tasks_entity", "entity_type", "entity_id"),
+        Index("idx_tasks_entity_status", "entity_type", "entity_id", "status"),
+    )
+
+
+class ChecklistItemModel(UUIDMixin, Base):
+    __tablename__ = "checklist_items"
+
+    task_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tasks.id", ondelete="CASCADE"), nullable=False
+    )
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    is_done: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+    position: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    task: Mapped["TaskModel"] = relationship("TaskModel", back_populates="checklist_items")
+
+    __table_args__ = (Index("idx_checklist_items_task", "task_id"),)
+
+
+# Computed counts for ProjectResponse — defined after TaskModel so both tables exist.
+# Tasks are polymorphic; a project's tasks are rows where entity_type='project'
+# and entity_id == project.id.
+ProjectModel.task_count = column_property(
+    select(func.count(TaskModel.id))
+    .where(TaskModel.entity_type == "project")
+    .where(TaskModel.entity_id == ProjectModel.id)
+    .correlate_except(TaskModel)
+    .scalar_subquery(),
+    deferred=False,
+)
+ProjectModel.done_count = column_property(
+    select(func.count(TaskModel.id))
+    .where(TaskModel.entity_type == "project")
+    .where(TaskModel.entity_id == ProjectModel.id)
+    .where(TaskModel.status == "done")
+    .correlate_except(TaskModel)
+    .scalar_subquery(),
+    deferred=False,
+)
