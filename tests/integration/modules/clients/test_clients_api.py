@@ -471,6 +471,21 @@ class TestDeleteClient:
         resp = await client.delete(f"/api/v1/clients/{created['id']}", headers=headers)
         assert resp.status_code == 409
 
+    async def test_client_with_comm_logs_can_be_deleted(self, client: AsyncClient) -> None:
+        """Communication logs are not transactions — they don't block deletion."""
+        headers = await _auth_headers(client)
+        created = await _create_client(client, headers)
+
+        log_resp = await client.post(
+            f"/api/v1/clients/{created['id']}/comm-logs",
+            json={"channel": "email", "summary": "Intro call", "communicated_at": "2026-06-01T10:00:00Z"},
+            headers=headers,
+        )
+        assert log_resp.status_code == 201, log_resp.text
+
+        resp = await client.delete(f"/api/v1/clients/{created['id']}", headers=headers)
+        assert resp.status_code == 200
+
     async def test_delete_nonexistent_client_returns_404(self, client: AsyncClient) -> None:
         headers = await _auth_headers(client)
         resp = await client.delete(f"/api/v1/clients/{uuid.uuid4()}", headers=headers)
