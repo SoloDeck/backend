@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.modules.clients.infrastructure.repository import ClientsRepository
 from src.modules.clients.schemas.request import ClientRequest, CommLogRequest
-from src.shared.exceptions.domain import NotFoundError
+from src.shared.exceptions.domain import BusinessRuleError, NotFoundError
 
 
 @dataclass
@@ -102,6 +102,10 @@ class ClientsService:
 
     async def delete(self, user_id: uuid.UUID, client_id: uuid.UUID) -> None:
         client = await self._get_client(user_id, client_id)
+        if await self.repo.has_transactions(client_id):
+            raise BusinessRuleError(
+                "Cannot delete a client that has existing deals, invoices, or contracts."
+            )
         client.deleted_at = datetime.now(UTC)
         await self.repo.save(client)
 

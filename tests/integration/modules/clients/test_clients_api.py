@@ -258,6 +258,167 @@ class TestDealCount:
         assert matching[0]["deal_count"] == 1
 
 
+# ---------------------------------------------------------------------------
+# DELETE /clients/{id}
+# ---------------------------------------------------------------------------
+
+
+def _deal_payload(client_id: str, **overrides: object) -> dict:
+    return {"client_id": client_id, "title": "Test Deal", **overrides}
+
+
+def _invoice_payload(client_id: str, **overrides: object) -> dict:
+    return {
+        "client_id": client_id,
+        "due_date": "2026-12-31",
+        "currency": "VND",
+        "subtotal": "1000000",
+        **overrides,
+    }
+
+
+class TestDeleteClient:
+    async def test_clean_client_returns_200(self, client: AsyncClient) -> None:
+        """Client with no transactions can be deleted."""
+        headers = await _auth_headers(client)
+        created = await _create_client(client, headers)
+
+        resp = await client.delete(f"/api/v1/clients/{created['id']}", headers=headers)
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["success"] is True
+        assert body["data"]["detail"] == "Client deleted"
+
+    async def test_deleted_client_returns_404_on_get(self, client: AsyncClient) -> None:
+        """Soft-deleted client is no longer retrievable."""
+        headers = await _auth_headers(client)
+        created = await _create_client(client, headers)
+
+        await client.delete(f"/api/v1/clients/{created['id']}", headers=headers)
+
+        resp = await client.get(f"/api/v1/clients/{created['id']}", headers=headers)
+        assert resp.status_code == 404
+
+    async def test_deleted_client_excluded_from_list(self, client: AsyncClient) -> None:
+        """Soft-deleted client does not appear in GET /clients."""
+        headers = await _auth_headers(client)
+        created = await _create_client(client, headers)
+
+        await client.delete(f"/api/v1/clients/{created['id']}", headers=headers)
+
+        resp = await client.get("/api/v1/clients", headers=headers)
+        assert resp.status_code == 200
+        ids = [c["id"] for c in resp.json()["data"]]
+        assert created["id"] not in ids
+
+    async def test_client_with_deal_returns_409(self, client: AsyncClient) -> None:
+        """Client that has a deal cannot be deleted."""
+        headers = await _auth_headers(client)
+        created = await _create_client(client, headers)
+
+        deal_resp = await client.post(
+            "/api/v1/deals",
+            json=_deal_payload(created["id"]),
+            headers=headers,
+        )
+        assert deal_resp.status_code == 201, deal_resp.text
+
+        resp = await client.delete(f"/api/v1/clients/{created['id']}", headers=headers)
+        assert resp.status_code == 409
+        body = resp.json()
+        assert body["success"] is False
+        assert body["error"]["code"] == "BUSINESS_RULE_VIOLATION"
+
+    async def test_client_with_deal_error_message_is_descriptive(self, client: AsyncClient) -> None:
+        """409 error message clearly explains why deletion was blocked."""
+        headers = await _auth_headers(client)
+        created = await _create_client(client, headers)
+        await client.post(
+            "/api/v1/deals",
+            json=_deal_payload(created["id"]),
+            headers=headers,
+        )
+
+        resp = await client.delete(f"/api/v1/clients/{created['id']}", headers=headers)
+        assert resp.status_code == 409
+        message = resp.json()["error"]["message"]
+        assert "deals" in message.lower() or "invoices" in message.lower() or "contracts" in message.lower()
+
+    async def test_client_with_soft_deleted_deal_still_returns_409(self, client: AsyncClient) -> None:
+        """Soft-deleted deals still count — historical records block deletion."""
+        headers = await _auth_headers(client)
+        created = await _create_client(client, headers)
+
+        deal_resp = await client.post(
+            "/api/v1/deals",
+            json=_deal_payload(created["id"]),
+            headers=headers,
+        )
+        deal_id = deal_resp.json()["data"]["id"]
+
+        # Soft-delete the deal
+        del_resp = await client.delete(f"/api/v1/deals/{deal_id}", headers=headers)
+        assert del_resp.status_code == 200, del_resp.text
+
+        # Client still cannot be deleted
+        resp = await client.delete(f"/api/v1/clients/{created['id']}", headers=headers)
+        assert resp.status_code == 409
+
+    async def test_client_with_invoice_returns_409(self, client: AsyncClient) -> None:
+        """Client that has an invoice cannot be deleted."""
+        headers = await _auth_headers(client)
+        created = await _create_client(client, headers)
+
+        # Invoices require a deal or contract — create the deal first
+        deal_resp = await client.post(
+            "/api/v1/deals",
+            json=_deal_payload(created["id"]),
+            headers=headers,
+        )
+        assert deal_resp.status_code == 201, deal_resp.text
+        deal_id = deal_resp.json()["data"]["id"]
+
+        inv_resp = await client.post(
+            "/api/v1/invoices",
+            json={**_invoice_payload(created["id"]), "deal_id": deal_id},
+            headers=headers,
+        )
+        assert inv_resp.status_code == 201, inv_resp.text
+
+        resp = await client.delete(f"/api/v1/clients/{created['id']}", headers=headers)
+        assert resp.status_code == 409
+        assert resp.json()["error"]["code"] == "BUSINESS_RULE_VIOLATION"
+
+    async def test_delete_nonexistent_client_returns_404(self, client: AsyncClient) -> None:
+        headers = await _auth_headers(client)
+        resp = await client.delete(f"/api/v1/clients/{uuid.uuid4()}", headers=headers)
+        assert resp.status_code == 404
+
+    async def test_delete_other_users_client_returns_404(self, client: AsyncClient) -> None:
+        """User B cannot delete User A's client — gets 404, not 403."""
+        headers_a = await _auth_headers(client)
+        headers_b = await _auth_headers(client)
+        created = await _create_client(client, headers_a)
+
+        resp = await client.delete(f"/api/v1/clients/{created['id']}", headers=headers_b)
+        assert resp.status_code == 404
+
+    async def test_delete_unauthenticated_returns_401(self, client: AsyncClient) -> None:
+        resp = await client.delete(f"/api/v1/clients/{uuid.uuid4()}")
+        assert resp.status_code == 401
+
+    async def test_delete_twice_returns_404_on_second_call(self, client: AsyncClient) -> None:
+        """Deleting an already-deleted client returns 404."""
+        headers = await _auth_headers(client)
+        created = await _create_client(client, headers)
+
+        first = await client.delete(f"/api/v1/clients/{created['id']}", headers=headers)
+        assert first.status_code == 200
+
+        second = await client.delete(f"/api/v1/clients/{created['id']}", headers=headers)
+        assert second.status_code == 404
+
+
 class TestGetClient:
     async def test_success(self, client: AsyncClient) -> None:
         headers = await _auth_headers(client)
