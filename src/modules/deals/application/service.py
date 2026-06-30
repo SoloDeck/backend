@@ -101,7 +101,7 @@ class DealsService:
             phone=payload.phone,
             status="prospect",
         )
-        await self.repo.create(
+        deal = await self.repo.create(
             owner_user_id=owner.id,
             client_id=client.id,
             title=payload.project_name or f"Intake — {payload.name}",
@@ -118,9 +118,9 @@ class DealsService:
             source="inbound",
         )
 
-        from src.workers.ai_jobs.tasks import qualify_intake_async
+        from src.workers.ai_jobs.tasks import qualify_deal_async_by_id
 
-        qualify_intake_async.delay(str(owner.id), str(intake.id))
+        qualify_deal_async_by_id.delay(str(owner.id), str(deal.id))
 
         return intake
 
@@ -284,36 +284,6 @@ class DealsService:
             "ai_qualification_score": score,
             "ai_qualification_recommendation": aggregate.deal.ai_recommendation,
         }
-
-    async def qualify_deal_intake(
-        self,
-        user_id: uuid.UUID,
-        intake_id: uuid.UUID,
-    ):
-        intake = await self._get_intake(user_id, intake_id)
-
-        if not intake.inquiry_text:
-            raise ValueError("Deal intake has no inquiry text")
-
-        if not self.ai_facade:
-            raise RuntimeError("AIFacade not initialized")
-
-        parts = [intake.inquiry_text]
-        if intake.estimated_budget:
-            parts.append(f"Estimated budget: {intake.estimated_budget}")
-        if intake.desired_timeline:
-            parts.append(f"Desired timeline: {intake.desired_timeline}")
-        inquiry_context = "\n".join(parts)
-
-        deal_model = await self.repo.get_deal_by_client_id(intake.client_id, user_id)
-        if deal_model is None:
-            result = await self.ai_facade.qualify_lead(
-                inquiry_text=inquiry_context,
-                user_can_use_ai=True,
-            )
-            return result
-
-        return await self._run_ai_qualification(deal_model, inquiry_context)
 
     async def qualify_deal(
         self,

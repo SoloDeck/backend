@@ -330,17 +330,18 @@ def _mock_ai_facade():
     return facade
 
 
-async def _create_intake(client: AsyncClient, headers: dict) -> str:
-    """Return intake_id via the public intake flow (Celery dispatch suppressed)."""
+async def _create_deal_via_intake(client: AsyncClient, headers: dict) -> str:
+    """Submit a public intake and return the resulting deal_id (Celery suppressed)."""
     me = await client.get("/api/v1/users/me", headers=headers)
     token = me.json()["data"]["intake_share_token"]
-    with patch("src.workers.ai_jobs.tasks.qualify_intake_async.delay"):
+    with patch("src.workers.ai_jobs.tasks.qualify_deal_async_by_id.delay"):
         resp = await client.post(
             f"/api/v1/intake/{token}",
             json={"name": "Test Lead", "inquiry_text": "I need a full e-commerce build."},
         )
     assert resp.status_code == 201, resp.text
-    return resp.json()["data"]["id"]
+    deals = await client.get("/api/v1/deals", headers=headers)
+    return deals.json()["data"][0]["id"]
 
 
 class TestDealAIFieldsPresence:
@@ -396,7 +397,7 @@ class TestDealAIQualificationFields:
 
     async def test_qualify_sets_hot_level_and_all_signals(self, client: AsyncClient) -> None:
         headers = await _auth(client)
-        intake_id = await _create_intake(client, headers)
+        deal_id = await _create_deal_via_intake(client, headers)
 
         mock_facade = _mock_ai_facade()
         from src.main import app
@@ -405,7 +406,7 @@ class TestDealAIQualificationFields:
 
         try:
             resp = await client.post(
-                f"/api/v1/deals/intakes/{intake_id}/qualify",
+                f"/api/v1/deals/{deal_id}/qualify",
                 headers=headers,
             )
         finally:
@@ -433,7 +434,7 @@ class TestDealAIQualificationFields:
 
     async def test_qualify_warm_score_maps_to_warm_level(self, client: AsyncClient) -> None:
         headers = await _auth(client)
-        intake_id = await _create_intake(client, headers)
+        deal_id = await _create_deal_via_intake(client, headers)
 
         mock_facade = AsyncMock()
         mock_facade.qualify_lead.return_value = {**_MOCK_AI_RESULT, "suggested_lead_score": "WARM"}
@@ -443,7 +444,7 @@ class TestDealAIQualificationFields:
         app.dependency_overrides[get_ai_facade] = lambda: mock_facade
 
         try:
-            await client.post(f"/api/v1/deals/intakes/{intake_id}/qualify", headers=headers)
+            await client.post(f"/api/v1/deals/{deal_id}/qualify", headers=headers)
         finally:
             app.dependency_overrides.pop(get_ai_facade, None)
 
@@ -461,7 +462,7 @@ class TestDealAIQualificationFields:
         self, client: AsyncClient
     ) -> None:
         headers = await _auth(client)
-        intake_id = await _create_intake(client, headers)
+        deal_id = await _create_deal_via_intake(client, headers)
 
         mock_facade = AsyncMock()
         mock_facade.qualify_lead.return_value = {**_MOCK_AI_RESULT, "suggested_lead_score": "COLD"}
@@ -471,7 +472,7 @@ class TestDealAIQualificationFields:
         app.dependency_overrides[get_ai_facade] = lambda: mock_facade
 
         try:
-            await client.post(f"/api/v1/deals/intakes/{intake_id}/qualify", headers=headers)
+            await client.post(f"/api/v1/deals/{deal_id}/qualify", headers=headers)
         finally:
             app.dependency_overrides.pop(get_ai_facade, None)
 
