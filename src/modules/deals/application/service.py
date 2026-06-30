@@ -270,6 +270,13 @@ class DealsService:
             red_flags=result.get("red_flags"),
         )
 
+        detected_signals_raw = result.get("detected_signals")
+        detected_signals = (
+            [s if isinstance(s, dict) else s.model_dump() for s in detected_signals_raw]
+            if detected_signals_raw
+            else None
+        )
+
         deal_model.ai_qualification_score = lead_score.score
         deal_model.ai_qualification_confidence = lead_score.confidence.value
         deal_model.ai_qualification_recommendation = aggregate.deal.ai_recommendation
@@ -279,10 +286,16 @@ class DealsService:
         deal_model.ai_qualification_timeline_signal = result.get("timeline_signal")
         deal_model.ai_qualification_urgency_signal = result.get("urgency_signal")
         deal_model.ai_qualification_red_flags = result.get("red_flags")
+        deal_model.ai_qualification_next_step = result.get("next_step")
+        deal_model.ai_qualification_detected_signals = detected_signals
+        deal_model.ai_qualification_suggested_actions = result.get("suggested_actions")
+        deal_model.ai_qualification_price_range_min = result.get("price_range_min") or None
+        deal_model.ai_qualification_price_range_max = result.get("price_range_max") or None
         await self.repo.save(deal_model)
 
         return {
             **result,
+            "detected_signals": detected_signals,
             "ai_qualification_score": score,
             "ai_qualification_recommendation": aggregate.deal.ai_recommendation,
         }

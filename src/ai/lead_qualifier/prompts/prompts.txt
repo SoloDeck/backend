@@ -66,5 +66,23 @@ Schema:
   "urgency_signal": "...",
   "red_flags": [],
   "suggested_lead_score": "HOT|WARM|COLD",
-  "reasoning": "..."
+  "reasoning": "One or two sentences summarising why this score was given.",
+  "next_step": "Single most important action the freelancer should take right now.",
+  "detected_signals": [
+    {"text": "Human-readable signal description", "is_positive": true},
+    {"text": "Missing or negative signal description", "is_positive": false}
+  ],
+  "suggested_actions": [
+    "Concrete next action 1",
+    "Concrete next action 2",
+    "Concrete next action 3"
+  ],
+  "price_range_min": 0,
+  "price_range_max": 0
 }
+
+Rules for new fields:
+- detected_signals: list 3-5 specific signals found (or not found) in the inquiry. Each item MUST have "text" (string) and "is_positive" (boolean).
+- suggested_actions: exactly 3 concrete, actionable next steps the freelancer should take.
+- next_step: the single highest-priority action from suggested_actions, written as a full sentence.
+- price_range_min and price_range_max: estimated price range in the same currency implied by the inquiry. Use 0 for both if budget cannot be estimated at all.
