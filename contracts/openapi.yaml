@@ -1600,6 +1600,34 @@ paths:
         '402':
           $ref: '#/components/responses/PaymentRequired'
 
+  /proposals/generate-from-deal/{deal_id}:
+    parameters:
+      - $ref: '#/components/parameters/DealId'
+    post:
+      tags: [Proposals]
+      summary: Generate a proposal from a deal in one call
+      description: |
+        Auto-fetches the deal, linked client, and authenticated user profile, then
+        calls the AI to produce a fully-drafted proposal saved as `status=draft`.
+        Requires an active AI-enabled subscription (returns 402 otherwise).
+        Returns 404 if the deal does not exist or belongs to another user.
+      responses:
+        '201':
+          description: AI-generated proposal created as draft
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/ProposalResponse'
+        '402':
+          $ref: '#/components/responses/PaymentRequired'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
   # Public — no auth required
   /proposals/public/{share_token}:
     parameters:
