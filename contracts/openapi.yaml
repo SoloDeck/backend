@@ -13,7 +13,7 @@ info:
     task: 'Phase 6 — reconcile openapi.yaml with live routers (6.1) + Package 2 implementation (6.2–6.6)'
     lint_status: 'PASS'
     fixes_applied:
-      - 'Renamed /deals/{deal_id}/qualify -> /deals/intakes/{intake_id}/qualify to match qualify_deal_intake endpoint.'
+      - 'Qualification endpoint is POST /deals/{deal_id}/qualify — triggers AI scoring directly by deal ID.'
       - 'Added POST /users/me/change-password (implemented in api but missing from spec).'
       - '6.5: /invoices/public/{share_token} implemented; InvoiceResponse exposes share_token.'
       - '6.6: POST /intake/{share_token} implemented (201/404/422/429); UserResponse exposes intake_share_token; added PublicIntakeRequest/PublicIntakeResponse.'
@@ -1321,24 +1321,21 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
 
-  /deals/intakes/{intake_id}/qualify:
+  /deals/{deal_id}/qualify:
     parameters:
-      - name: intake_id
-        in: path
-        required: true
-        schema:
-          type: string
-          format: uuid
+      - $ref: '#/components/parameters/DealId'
     post:
       tags: [Deals]
-      summary: Trigger AI lead qualification for a deal intake
+      summary: Trigger AI lead qualification for a deal
       description: |
-        Runs AI lead qualification against a submitted deal intake identified by
-        intake_id. Requires an active AI-enabled subscription (returns 402 otherwise).
+        Runs AI lead qualification for the deal. Builds inquiry context from the
+        linked intake if one exists, otherwise falls back to the deal title and notes.
+        Saves the score, confidence, recommendation, and signal fields back to the deal.
+        Requires an active AI-enabled subscription (returns 402 otherwise).
         The result is informational — it does not trigger an automatic stage change.
       responses:
         '200':
-          description: Qualification result for the intake
+          description: Qualification result
           content:
             application/json:
               schema:
