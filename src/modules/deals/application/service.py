@@ -72,6 +72,7 @@ class DealsService:
             actual_value=payload.actual_value,
             currency=payload.currency,
             notes=payload.notes,
+            desired_timeline=payload.desired_timeline,
             project_type=payload.project_type,
             service_category=payload.service_category,
             pricing_tier=payload.pricing_tier,
@@ -157,6 +158,7 @@ class DealsService:
             "actual_value",
             "currency",
             "notes",
+            "desired_timeline",
             "project_type",
             "service_category",
             "pricing_tier",
@@ -309,6 +311,8 @@ class DealsService:
                 parts.append(deal_model.notes)
             if deal_model.estimated_value:
                 parts.append(f"Estimated value: {deal_model.estimated_value} {deal_model.currency}")
+            if deal_model.desired_timeline:
+                parts.append(f"Desired timeline: {deal_model.desired_timeline}")
         inquiry_context = "\n".join(parts)
 
         return await self._run_ai_qualification(deal_model, inquiry_context)
