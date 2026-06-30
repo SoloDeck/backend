@@ -1572,6 +1572,34 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
+  /proposals/{proposal_id}/pdf:
+    parameters:
+      - $ref: '#/components/parameters/ProposalId'
+    get:
+      tags: [Proposals]
+      summary: Download proposal as PDF
+      description: |
+        Renders the proposal content as an A4 PDF using WeasyPrint and returns it as a
+        binary download. The PDF is generated on the fly — no file is stored server-side.
+        Requires the proposal to belong to the authenticated user.
+      responses:
+        '200':
+          description: PDF file stream
+          content:
+            application/pdf:
+              schema:
+                type: string
+                format: binary
+          headers:
+            Content-Disposition:
+              schema:
+                type: string
+              example: 'attachment; filename="proposal-<id>.pdf"'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
   /proposals/{proposal_id}/generate:
     parameters:
       - $ref: '#/components/parameters/ProposalId'
