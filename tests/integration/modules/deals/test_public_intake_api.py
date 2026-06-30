@@ -117,6 +117,26 @@ async def test_different_phone_creates_new_client(client: AsyncClient) -> None:
     assert len(client_ids) == 2, "Different phones should create distinct clients"
 
 
+async def test_duplicate_intake_client_deal_count_is_two(client: AsyncClient) -> None:
+    """After two intakes from the same client, GET /clients shows deal_count == 2."""
+    headers, token = await _owner_intake_token(client)
+
+    payload = {"name": "Pham Thi D", "phone": "0933333333", "inquiry_text": "Project"}
+
+    with patch("src.workers.ai_jobs.tasks.qualify_deal_async_by_id.delay"):
+        await client.post(f"/api/v1/intake/{token}", json=payload)
+        await client.post(
+            f"/api/v1/intake/{token}",
+            json={**payload, "inquiry_text": "Second project"},
+        )
+
+    clients_resp = await client.get("/api/v1/clients", headers=headers)
+    assert clients_resp.status_code == 200
+    items = clients_resp.json()["data"]
+    assert len(items) == 1, "Only one deduplicated client should exist"
+    assert items[0]["deal_count"] == 2, f"Expected deal_count=2, got {items[0]['deal_count']}"
+
+
 async def test_no_phone_always_creates_new_client(client: AsyncClient) -> None:
     """No phone provided → always create a new client (cannot deduplicate safely)."""
     headers, token = await _owner_intake_token(client)
