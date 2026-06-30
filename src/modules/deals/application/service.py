@@ -94,14 +94,21 @@ class DealsService:
         if owner is None:
             raise NotFoundError("Intake form not found or link is invalid")
 
-        client = await self.repo.create_client(
-            owner_user_id=owner.id,
-            type="individual",
-            name=payload.name,
-            email=payload.email,
-            phone=payload.phone,
-            status="prospect",
-        )
+        # Deduplicate: reuse an existing client when both name and phone match.
+        client = None
+        if payload.phone:
+            client = await self.repo.find_client_by_name_and_phone(
+                owner.id, payload.name, payload.phone
+            )
+        if client is None:
+            client = await self.repo.create_client(
+                owner_user_id=owner.id,
+                type="individual",
+                name=payload.name,
+                email=payload.email,
+                phone=payload.phone,
+                status="prospect",
+            )
         deal = await self.repo.create(
             owner_user_id=owner.id,
             client_id=client.id,

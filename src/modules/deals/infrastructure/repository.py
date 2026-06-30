@@ -38,6 +38,18 @@ class DealsRepository:
             )
         )
 
+    async def find_client_by_name_and_phone(
+        self, owner_user_id: uuid.UUID, name: str, phone: str
+    ):
+        return await self.db.scalar(
+            select(ClientModel).where(
+                ClientModel.owner_user_id == owner_user_id,
+                ClientModel.name == name,
+                ClientModel.phone == phone,
+                ClientModel.deleted_at.is_(None),
+            )
+        )
+
     async def create_client(self, **values):
         client = ClientModel(**values)
         self.db.add(client)
