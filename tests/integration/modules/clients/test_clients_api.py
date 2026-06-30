@@ -516,6 +516,179 @@ class TestDeleteClient:
         assert second.status_code == 404
 
 
+# ---------------------------------------------------------------------------
+# PATCH /clients/{id}
+# ---------------------------------------------------------------------------
+
+
+class TestUpdateClient:
+    async def test_update_name_returns_200(self, client: AsyncClient) -> None:
+        headers = await _auth_headers(client)
+        created = await _create_client(client, headers)
+
+        resp = await client.patch(
+            f"/api/v1/clients/{created['id']}",
+            json={"name": "Updated Name"},
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        assert resp.json()["data"]["name"] == "Updated Name"
+
+    async def test_update_persists_on_get(self, client: AsyncClient) -> None:
+        headers = await _auth_headers(client)
+        created = await _create_client(client, headers)
+
+        await client.patch(
+            f"/api/v1/clients/{created['id']}",
+            json={"name": "Persisted Name"},
+            headers=headers,
+        )
+
+        get_resp = await client.get(f"/api/v1/clients/{created['id']}", headers=headers)
+        assert get_resp.json()["data"]["name"] == "Persisted Name"
+
+    async def test_update_email(self, client: AsyncClient) -> None:
+        headers = await _auth_headers(client)
+        created = await _create_client(client, headers)
+
+        resp = await client.patch(
+            f"/api/v1/clients/{created['id']}",
+            json={"name": created["name"], "email": "new@example.com"},
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        assert resp.json()["data"]["email"] == "new@example.com"
+
+    async def test_update_status(self, client: AsyncClient) -> None:
+        headers = await _auth_headers(client)
+        created = await _create_client(client, headers)
+
+        resp = await client.patch(
+            f"/api/v1/clients/{created['id']}",
+            json={"name": created["name"], "status": "active"},
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        assert resp.json()["data"]["status"] == "active"
+
+    async def test_update_nonexistent_returns_404(self, client: AsyncClient) -> None:
+        headers = await _auth_headers(client)
+        resp = await client.patch(
+            f"/api/v1/clients/{uuid.uuid4()}",
+            json={"name": "Ghost"},
+            headers=headers,
+        )
+        assert resp.status_code == 404
+
+    async def test_update_other_users_client_returns_404(self, client: AsyncClient) -> None:
+        headers_a = await _auth_headers(client)
+        headers_b = await _auth_headers(client)
+        created = await _create_client(client, headers_a)
+
+        resp = await client.patch(
+            f"/api/v1/clients/{created['id']}",
+            json={"name": "Hijack"},
+            headers=headers_b,
+        )
+        assert resp.status_code == 404
+
+    async def test_update_unauthenticated_returns_401(self, client: AsyncClient) -> None:
+        resp = await client.patch(
+            f"/api/v1/clients/{uuid.uuid4()}",
+            json={"name": "No Auth"},
+        )
+        assert resp.status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# POST + GET /clients/{id}/comm-logs
+# ---------------------------------------------------------------------------
+
+
+class TestCommLogs:
+    async def test_create_comm_log_returns_201(self, client: AsyncClient) -> None:
+        headers = await _auth_headers(client)
+        created = await _create_client(client, headers)
+
+        resp = await client.post(
+            f"/api/v1/clients/{created['id']}/comm-logs",
+            json={"channel": "email", "summary": "Intro call", "communicated_at": "2026-06-01T10:00:00Z"},
+            headers=headers,
+        )
+        assert resp.status_code == 201
+        data = resp.json()["data"]
+        assert data["channel"] == "email"
+        assert data["summary"] == "Intro call"
+
+    async def test_list_comm_logs_returns_created_entry(self, client: AsyncClient) -> None:
+        headers = await _auth_headers(client)
+        created = await _create_client(client, headers)
+
+        await client.post(
+            f"/api/v1/clients/{created['id']}/comm-logs",
+            json={"channel": "phone", "summary": "Follow-up call", "communicated_at": "2026-06-02T14:00:00Z"},
+            headers=headers,
+        )
+
+        resp = await client.get(f"/api/v1/clients/{created['id']}/comm-logs", headers=headers)
+        assert resp.status_code == 200
+        logs = resp.json()["data"]
+        assert len(logs) == 1
+        assert logs[0]["summary"] == "Follow-up call"
+
+    async def test_multiple_logs_all_returned(self, client: AsyncClient) -> None:
+        headers = await _auth_headers(client)
+        created = await _create_client(client, headers)
+
+        for i in range(3):
+            await client.post(
+                f"/api/v1/clients/{created['id']}/comm-logs",
+                json={"channel": "email", "summary": f"Message {i}", "communicated_at": "2026-06-01T10:00:00Z"},
+                headers=headers,
+            )
+
+        resp = await client.get(f"/api/v1/clients/{created['id']}/comm-logs", headers=headers)
+        assert len(resp.json()["data"]) == 3
+
+    async def test_post_to_unknown_client_returns_404(self, client: AsyncClient) -> None:
+        headers = await _auth_headers(client)
+        resp = await client.post(
+            f"/api/v1/clients/{uuid.uuid4()}/comm-logs",
+            json={"channel": "email", "summary": "Ghost", "communicated_at": "2026-06-01T10:00:00Z"},
+            headers=headers,
+        )
+        assert resp.status_code == 404
+
+    async def test_get_logs_for_unknown_client_returns_404(self, client: AsyncClient) -> None:
+        headers = await _auth_headers(client)
+        resp = await client.get(f"/api/v1/clients/{uuid.uuid4()}/comm-logs", headers=headers)
+        assert resp.status_code == 404
+
+    async def test_cannot_read_other_users_logs(self, client: AsyncClient) -> None:
+        headers_a = await _auth_headers(client)
+        headers_b = await _auth_headers(client)
+        created = await _create_client(client, headers_a)
+        await client.post(
+            f"/api/v1/clients/{created['id']}/comm-logs",
+            json={"channel": "email", "summary": "Private", "communicated_at": "2026-06-01T10:00:00Z"},
+            headers=headers_a,
+        )
+
+        resp = await client.get(f"/api/v1/clients/{created['id']}/comm-logs", headers=headers_b)
+        assert resp.status_code == 404
+
+    async def test_post_unauthenticated_returns_401(self, client: AsyncClient) -> None:
+        resp = await client.post(
+            f"/api/v1/clients/{uuid.uuid4()}/comm-logs",
+            json={"channel": "email", "summary": "No auth", "communicated_at": "2026-06-01T10:00:00Z"},
+        )
+        assert resp.status_code == 401
+
+    async def test_get_unauthenticated_returns_401(self, client: AsyncClient) -> None:
+        resp = await client.get(f"/api/v1/clients/{uuid.uuid4()}/comm-logs")
+        assert resp.status_code == 401
+
+
 class TestGetClient:
     async def test_success(self, client: AsyncClient) -> None:
         headers = await _auth_headers(client)
