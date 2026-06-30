@@ -27,7 +27,7 @@ async def _intake_token(http: AsyncClient, headers: dict) -> str:
 
 async def _submit_intake(http: AsyncClient, token: str, name: str = "Test Lead") -> str:
     """Submit a public intake and return its id."""
-    with patch("src.workers.ai_jobs.tasks.qualify_intake_async.delay"):
+    with patch("src.workers.ai_jobs.tasks.qualify_deal_async_by_id.delay"):
         resp = await http.post(
             f"/api/v1/intake/{token}",
             json={"name": name, "inquiry_text": "Need a website built.", "estimated_budget": "10M VND"},
@@ -145,7 +145,7 @@ class TestGetIntake:
         headers = await _auth(client)
         token = await _intake_token(client, headers)
 
-        with patch("src.workers.ai_jobs.tasks.qualify_intake_async.delay"):
+        with patch("src.workers.ai_jobs.tasks.qualify_deal_async_by_id.delay"):
             resp = await client.post(
                 f"/api/v1/intake/{token}",
                 json={"name": "Lead", "inquiry_text": "Build me a SaaS platform.", "estimated_budget": "50M VND"},
