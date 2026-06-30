@@ -181,6 +181,13 @@ class DealModelStub:
     title: str = "Test Deal"
     stage: str = "new_lead"
     source: str | None = None
+    notes: str | None = None
+    estimated_value: object | None = None
+    currency: str = "VND"
+    desired_timeline: str | None = None
+    project_type: str | None = None
+    service_category: str | None = None
+    pricing_tier: str | None = None
     ai_qualification_score: int | None = None
     ai_qualification_confidence: float | None = None
     ai_qualification_recommendation: str | None = None

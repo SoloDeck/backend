@@ -310,22 +310,32 @@ class DealsService:
         if not self.ai_facade:
             raise RuntimeError("AIFacade not initialized")
 
-        # Prefer inquiry context from the linked intake if available
+        # Build inquiry context from all available deal fields, then layer in intake if present
+        parts = [f"Project: {deal_model.title}"]
+        if deal_model.source:
+            parts.append(f"Source: {deal_model.source}")
+        if deal_model.project_type:
+            parts.append(f"Project type: {deal_model.project_type}")
+        if deal_model.service_category:
+            parts.append(f"Service category: {deal_model.service_category}")
+        if deal_model.pricing_tier:
+            parts.append(f"Pricing tier: {deal_model.pricing_tier}")
+        if deal_model.estimated_value:
+            parts.append(f"Estimated value: {deal_model.estimated_value} {deal_model.currency}")
+        if deal_model.desired_timeline:
+            parts.append(f"Desired timeline: {deal_model.desired_timeline}")
+        if deal_model.notes:
+            parts.append(f"Notes: {deal_model.notes}")
+
         intake = await self.repo.get_intake_by_client_id(deal_model.client_id, user_id)
         if intake is not None:
-            parts = [intake.inquiry_text]
+            if intake.inquiry_text:
+                parts.append(f"Client inquiry: {intake.inquiry_text}")
             if intake.estimated_budget:
-                parts.append(f"Estimated budget: {intake.estimated_budget}")
-            if intake.desired_timeline:
-                parts.append(f"Desired timeline: {intake.desired_timeline}")
-        else:
-            parts = [deal_model.title]
-            if deal_model.notes:
-                parts.append(deal_model.notes)
-            if deal_model.estimated_value:
-                parts.append(f"Estimated value: {deal_model.estimated_value} {deal_model.currency}")
-            if deal_model.desired_timeline:
-                parts.append(f"Desired timeline: {deal_model.desired_timeline}")
+                parts.append(f"Client budget: {intake.estimated_budget}")
+            if intake.desired_timeline and intake.desired_timeline != deal_model.desired_timeline:
+                parts.append(f"Client timeline: {intake.desired_timeline}")
+
         inquiry_context = "\n".join(parts)
 
         return await self._run_ai_qualification(deal_model, inquiry_context)
