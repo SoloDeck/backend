@@ -1,0 +1,126 @@
+============================================================
+  ADMIN ENDPOINTS
+  BASE: http://localhost:8000/api/v1
+  Replace <ADMIN_TOKEN>, <USER_ID>, <PLAN_ID>
+  <ADMIN_TOKEN> = token of a user with role="admin"
+============================================================
+
+--- LIST USERS ---
+GET /admin/users
+
+curl "http://localhost:8000/api/v1/admin/users?page=1&page_size=20" \
+  -H "Authorization: Bearer <ADMIN_TOKEN>"
+
+# With filters:
+curl "http://localhost:8000/api/v1/admin/users?status=active&role=user&search=nguyen&sort_by=created_at&sort_order=desc" \
+  -H "Authorization: Bearer <ADMIN_TOKEN>"
+
+--- GET USER ---
+GET /admin/users/{user_id}
+
+curl http://localhost:8000/api/v1/admin/users/<USER_ID> \
+  -H "Authorization: Bearer <ADMIN_TOKEN>"
+
+--- UPDATE USER ROLE ---
+PATCH /admin/users/{user_id}
+
+curl -X PATCH http://localhost:8000/api/v1/admin/users/<USER_ID> \
+  -H "Authorization: Bearer <ADMIN_TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "role": "admin"
+  }'
+
+--- SUSPEND USER ---
+POST /admin/users/{user_id}/suspend
+
+curl -X POST http://localhost:8000/api/v1/admin/users/<USER_ID>/suspend \
+  -H "Authorization: Bearer <ADMIN_TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "reason": "Vi pham dieu khoan su dung"
+  }'
+
+--- REINSTATE USER ---
+POST /admin/users/{user_id}/reinstate
+
+curl -X POST http://localhost:8000/api/v1/admin/users/<USER_ID>/reinstate \
+  -H "Authorization: Bearer <ADMIN_TOKEN>"
+
+--- REVOKE ALL SESSIONS ---
+DELETE /admin/users/{user_id}/sessions
+
+curl -X DELETE http://localhost:8000/api/v1/admin/users/<USER_ID>/sessions \
+  -H "Authorization: Bearer <ADMIN_TOKEN>"
+
+--- LIST PLANS ---
+GET /admin/plans
+
+curl http://localhost:8000/api/v1/admin/plans \
+  -H "Authorization: Bearer <ADMIN_TOKEN>"
+
+--- CREATE PLAN ---
+POST /admin/plans
+
+curl -X POST http://localhost:8000/api/v1/admin/plans \
+  -H "Authorization: Bearer <ADMIN_TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Pro",
+    "slug": "pro",
+    "price_monthly": 199000,
+    "price_yearly": 1990000,
+    "currency": "VND",
+    "max_clients": 100,
+    "max_deals": 500,
+    "max_ai_calls_per_month": 200,
+    "can_export_pdf": true,
+    "is_active": true
+  }'
+
+--- UPDATE PLAN ---
+PATCH /admin/plans/{plan_id}
+
+curl -X PATCH http://localhost:8000/api/v1/admin/plans/<PLAN_ID> \
+  -H "Authorization: Bearer <ADMIN_TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "price_monthly": 249000,
+    "max_ai_calls_per_month": 300
+  }'
+
+--- LIST SUBSCRIPTIONS ---
+GET /admin/subscriptions
+
+curl "http://localhost:8000/api/v1/admin/subscriptions?page=1&page_size=20" \
+  -H "Authorization: Bearer <ADMIN_TOKEN>"
+
+--- LIST AI COSTS ---
+GET /admin/ai-costs
+
+curl "http://localhost:8000/api/v1/admin/ai-costs?page=1&page_size=20" \
+  -H "Authorization: Bearer <ADMIN_TOKEN>"
+
+--- LIST AUDIT LOGS ---
+GET /admin/audit-logs
+
+curl "http://localhost:8000/api/v1/admin/audit-logs?page=1&page_size=20" \
+  -H "Authorization: Bearer <ADMIN_TOKEN>"
+
+--- LIST TEMPLATES ---
+GET /admin/templates
+
+curl http://localhost:8000/api/v1/admin/templates \
+  -H "Authorization: Bearer <ADMIN_TOKEN>"
+
+--- LIST FEATURE FLAGS ---
+GET /admin/feature-flags
+
+curl http://localhost:8000/api/v1/admin/feature-flags \
+  -H "Authorization: Bearer <ADMIN_TOKEN>"
+
+--- PLATFORM METRICS ---
+GET /admin/platform-metrics
+
+curl http://localhost:8000/api/v1/admin/platform-metrics \
+  -H "Authorization: Bearer <ADMIN_TOKEN>"

@@ -1,0 +1,35 @@
+============================================================
+  USERS ENDPOINTS
+  BASE: http://localhost:8000/api/v1
+  Replace <TOKEN> with access_token from login
+============================================================
+
+--- GET MY PROFILE (also returns intake_share_token) ---
+GET /users/me
+
+curl http://localhost:8000/api/v1/users/me \
+  -H "Authorization: Bearer <TOKEN>"
+
+--- UPDATE PROFILE ---
+PATCH /users/me
+
+curl -X PATCH http://localhost:8000/api/v1/users/me \
+  -H "Authorization: Bearer <TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "full_name": "Nguyen Van A",
+    "skills": ["Web Development", "Mobile App"],
+    "hourly_rate": 50,
+    "currency": "USD"
+  }'
+
+--- CHANGE PASSWORD ---
+PATCH /users/me/password
+
+curl -X PATCH http://localhost:8000/api/v1/users/me/password \
+  -H "Authorization: Bearer <TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "current_password": "Test@1234!",
+    "new_password": "NewPass@5678!"
+  }'
