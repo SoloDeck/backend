@@ -10,7 +10,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.infrastructure.database.session import get_db_session
 from src.modules.proposals.application.service import ProposalsService
-from src.modules.proposals.schemas.request import AiProposalRequest, ProposalRequest, ProposalStatusRequest
+from src.modules.proposals.schemas.request import (
+    AiProposalRequest,
+    ProposalRequest,
+    ProposalStatusRequest,
+)
 from src.modules.proposals.schemas.response import ProposalResponse
 from src.shared.dependencies.ai import AIFacadeDep
 from src.shared.dependencies.auth import CurrentUserId
@@ -32,8 +36,9 @@ async def ai_generate_proposal(
     db: DBSession,
 ) -> ApiResponse[ProposalResponse]:
     from google import genai
+
     from src.ai.proposal_generator.application.service import ProposalGenerationService
-    from src.ai.proposal_generator.schemas.ProposalGenerationInput import ProposalGenerationInput
+    from src.ai.proposal_generator.schemas.proposal_generation_input import ProposalGenerationInput
     from src.config.settings import settings
 
     gen_input = ProposalGenerationInput(
@@ -74,7 +79,9 @@ async def create_proposal(
 async def list_proposals(
     user_id: CurrentUserId,
     db: DBSession,
-    status: str | None = Query(default=None, description="Filter by status: draft, sent, accepted, rejected, expired"),
+    status: str | None = Query(
+        default=None, description="Filter by status: draft, sent, accepted, rejected, expired"
+    ),
     deal_id: uuid.UUID | None = Query(default=None, description="Filter by deal"),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
@@ -84,7 +91,9 @@ async def list_proposals(
     )
     return PaginatedResponse.ok(
         [ProposalResponse.model_validate(p) for p in proposals],
-        total=total, page=page, page_size=page_size,
+        total=total,
+        page=page,
+        page_size=page_size,
     )
 
 

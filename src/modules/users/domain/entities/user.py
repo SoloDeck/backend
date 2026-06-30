@@ -14,7 +14,7 @@ class User:
     full_name: str
     role: UserRole
     status: UserStatus
-    hashed_password: str | None     # None for OAuth-only accounts
+    hashed_password: str | None  # None for OAuth-only accounts
     avatar_url: str | None
     bio: str | None
     phone: str | None
@@ -60,6 +60,7 @@ class User:
         phone: str | None = None,
     ) -> None:
         from src.modules.users.domain.exceptions.exceptions import UserAlreadyDeletedError
+
         if self.is_deleted:
             raise UserAlreadyDeletedError()
         if full_name is not None:
@@ -76,6 +77,7 @@ class User:
 
     def update_professional_profile(self, profile: ProfessionalProfile) -> None:
         from src.modules.users.domain.exceptions.exceptions import UserAlreadyDeletedError
+
         if self.is_deleted:
             raise UserAlreadyDeletedError()
         self.professional_profile = profile
@@ -83,6 +85,7 @@ class User:
 
     def update_preferences(self, preferences: Preferences) -> None:
         from src.modules.users.domain.exceptions.exceptions import UserAlreadyDeletedError
+
         if self.is_deleted:
             raise UserAlreadyDeletedError()
         self.preferences = preferences
@@ -93,6 +96,7 @@ class User:
             InvalidUserStatusTransitionError,
             UserAlreadyDeletedError,
         )
+
         if self.is_deleted:
             raise UserAlreadyDeletedError()
         if not self.is_active:
@@ -105,6 +109,7 @@ class User:
             InvalidUserStatusTransitionError,
             UserAlreadyDeletedError,
         )
+
         if self.is_deleted:
             raise UserAlreadyDeletedError()
         if not self.is_suspended:
@@ -114,6 +119,7 @@ class User:
 
     def soft_delete(self) -> None:
         from src.modules.users.domain.exceptions.exceptions import UserAlreadyDeletedError
+
         if self.is_deleted:
             raise UserAlreadyDeletedError()
         now = datetime.now(UTC)

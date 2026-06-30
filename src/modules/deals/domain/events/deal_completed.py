@@ -8,5 +8,5 @@ from src.shared.domain.base import DomainEvent
 class DealCompletedEvent(DomainEvent):
     """Emitted when a deal reaches a terminal stage (won or lost)."""
 
-    outcome: str        # "won" | "lost"
+    outcome: str  # "won" | "lost"
     closed_at: datetime

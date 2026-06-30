@@ -4,10 +4,8 @@ Uses real PostgreSQL (rolled back per test). The AI chain is mocked so tests
 never call the real Gemini API.
 """
 
-import json
 from unittest.mock import AsyncMock, patch
 
-import pytest
 from httpx import AsyncClient
 
 ENDPOINT = "/api/v1/ai/leads/qualify"
@@ -51,8 +49,15 @@ class TestQualifyLeadSuccess:
             resp = await client.post(ENDPOINT, json={"inquiry_text": "Need a website"})
 
         data = resp.json()["data"]
-        for field in ("project_type", "budget_signal", "timeline_signal",
-                      "urgency_signal", "red_flags", "suggested_lead_score", "reasoning"):
+        for field in (
+            "project_type",
+            "budget_signal",
+            "timeline_signal",
+            "urgency_signal",
+            "red_flags",
+            "suggested_lead_score",
+            "reasoning",
+        ):
             assert field in data, f"Missing field: {field}"
 
     async def test_data_values_match_chain_output(self, client: AsyncClient) -> None:
@@ -67,12 +72,15 @@ class TestQualifyLeadSuccess:
     async def test_with_realistic_vietnamese_inquiry(self, client: AsyncClient) -> None:
         result = {**VALID_CHAIN_RESULT, "suggested_lead_score": "WARM"}
         with _patch_chain(result):
-            resp = await client.post(ENDPOINT, json={
-                "inquiry_text": (
-                    "Tôi cần xây dựng website bán hàng thời trang, "
-                    "tích hợp VNPay, ngân sách 50-80 triệu, deadline 3 tháng."
-                )
-            })
+            resp = await client.post(
+                ENDPOINT,
+                json={
+                    "inquiry_text": (
+                        "Tôi cần xây dựng website bán hàng thời trang, "
+                        "tích hợp VNPay, ngân sách 50-80 triệu, deadline 3 tháng."
+                    )
+                },
+            )
 
         assert resp.status_code == 200
         assert resp.json()["data"]["suggested_lead_score"] == "WARM"
@@ -92,12 +100,17 @@ class TestQualifyLeadValidation:
         assert body["code"] == 422
 
     async def test_empty_body_returns_422(self, client: AsyncClient) -> None:
-        resp = await client.post(ENDPOINT, content=b"", headers={"Content-Type": "application/json"})
+        resp = await client.post(
+            ENDPOINT, content=b"", headers={"Content-Type": "application/json"}
+        )
         assert resp.status_code == 422
 
     async def test_wrong_content_type_returns_422(self, client: AsyncClient) -> None:
-        resp = await client.post(ENDPOINT, content=b"inquiry_text=hello",
-                                 headers={"Content-Type": "application/x-www-form-urlencoded"})
+        resp = await client.post(
+            ENDPOINT,
+            content=b"inquiry_text=hello",
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        )
         assert resp.status_code == 422
 
 

@@ -6,20 +6,25 @@ from datetime import datetime
 from typing import Literal
 
 DealStage = Literal[
-    "new_lead", "qualified", "proposal_sent",
-    "in_negotiation", "active", "completed_and_billed", "lost"
+    "new_lead",
+    "qualified",
+    "proposal_sent",
+    "in_negotiation",
+    "active",
+    "completed_and_billed",
+    "lost",
 ]
 DealSource = Literal["inbound", "referral", "outreach", "platform", "other"]
 DealActivityType = Literal["stage_change", "note_added", "document_attached", "ai_qualification"]
 
 STAGE_TRANSITIONS: dict[str, list[str]] = {
-    "new_lead":             ["qualified", "lost"],
-    "qualified":            ["proposal_sent", "lost"],
-    "proposal_sent":        ["in_negotiation", "lost"],
-    "in_negotiation":       ["active", "lost"],
-    "active":               ["completed_and_billed", "lost"],
+    "new_lead": ["qualified", "lost"],
+    "qualified": ["proposal_sent", "lost"],
+    "proposal_sent": ["in_negotiation", "lost"],
+    "in_negotiation": ["active", "lost"],
+    "active": ["completed_and_billed", "lost"],
     "completed_and_billed": [],
-    "lost":                 [],
+    "lost": [],
 }
 TERMINAL_STAGES = {"completed_and_billed", "lost"}
 

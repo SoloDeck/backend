@@ -9,7 +9,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.modules.proposals.infrastructure.repository import ProposalsRepository
 from src.modules.proposals.schemas.request import ProposalRequest
 from src.shared.events.bus import event_bus
-from src.shared.exceptions.domain import BusinessRuleError, InvalidStateTransitionError, NotFoundError
+from src.shared.exceptions.domain import (
+    BusinessRuleError,
+    InvalidStateTransitionError,
+    NotFoundError,
+)
 
 _VALID_TRANSITIONS: dict[str, frozenset[str]] = {
     "draft": frozenset({"sent"}),
@@ -58,7 +62,9 @@ class ProposalsService:
         page: int = 1,
         page_size: int = 20,
     ) -> tuple[list, int]:
-        return await self.repo.list_all(user_id, status=status, deal_id=deal_id, page=page, page_size=page_size)
+        return await self.repo.list_all(
+            user_id, status=status, deal_id=deal_id, page=page, page_size=page_size
+        )
 
     async def get_one(self, user_id: uuid.UUID, proposal_id: uuid.UUID):  # type: ignore[return]
         return await self._get_proposal(user_id, proposal_id)
@@ -116,7 +122,10 @@ class ProposalsService:
                 "company_name": company_name,
                 "email": client.email if client else "",
             },
-            user_profile={"name": user.full_name if user else "", "email": user.email if user else ""},
+            user_profile={
+                "name": user.full_name if user else "",
+                "email": user.email if user else "",
+            },
             template=None,
             user_can_use_ai=user_can_use_ai,
         )
@@ -150,14 +159,20 @@ class ProposalsService:
         if target_status == "accepted":
             await event_bus.publish(
                 "proposals.proposal_accepted",
-                {"proposal_id": str(proposal_id), "deal_id": str(proposal.deal_id),
-                 "owner_user_id": str(user_id)},
+                {
+                    "proposal_id": str(proposal_id),
+                    "deal_id": str(proposal.deal_id),
+                    "owner_user_id": str(user_id),
+                },
             )
         elif target_status == "sent":
             await event_bus.publish(
                 "proposals.proposal_sent",
-                {"proposal_id": str(proposal_id), "deal_id": str(proposal.deal_id),
-                 "owner_user_id": str(user_id)},
+                {
+                    "proposal_id": str(proposal_id),
+                    "deal_id": str(proposal.deal_id),
+                    "owner_user_id": str(user_id),
+                },
             )
 
         return proposal

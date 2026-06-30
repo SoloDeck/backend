@@ -70,7 +70,7 @@ def qualify_intake_async(self, user_id: str, intake_id: str) -> dict:  # type: i
         return result
     except Exception as exc:
         log.error("qualify_intake.failed", user_id=user_id, intake_id=intake_id, error=str(exc))
-        raise self.retry(exc=exc)
+        raise self.retry(exc=exc) from exc
 
 
 @celery_app.task(name="src.workers.ai_jobs.tasks.generate_proposal_async", bind=True)

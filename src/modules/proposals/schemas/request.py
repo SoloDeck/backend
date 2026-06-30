@@ -1,5 +1,4 @@
 import uuid
-from typing import Optional
 
 from pydantic import BaseModel, Field
 
@@ -17,12 +16,12 @@ class ProposalStatusRequest(BaseModel):
 class AiProposalRequest(BaseModel):
     deal_id: uuid.UUID
     client_name: str
-    company_name: Optional[str] = None
+    company_name: str | None = None
     project_type: str
     project_description: str
-    estimated_scope: Optional[str] = None
-    budget: Optional[str] = None
-    urgency: Optional[str] = None
+    estimated_scope: str | None = None
+    budget: str | None = None
+    urgency: str | None = None
     service_category: str
     pricing_tier: str
     freelancer_name: str

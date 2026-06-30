@@ -25,9 +25,7 @@ class AdminSeeder(BaseSeeder):
     async def run(self) -> None:
         self._log.info("seeder.start", email=ADMIN_EMAIL)
 
-        existing = await self.db.scalar(
-            select(UserModel).where(UserModel.email == ADMIN_EMAIL)
-        )
+        existing = await self.db.scalar(select(UserModel).where(UserModel.email == ADMIN_EMAIL))
         if existing is not None:
             self._log.info("seeder.skip", reason="admin already exists")
             return
@@ -50,9 +48,7 @@ class AdminSeeder(BaseSeeder):
         self.db.add(admin)
         await self.db.flush()
 
-        free_plan = await self.db.scalar(
-            select(PlanModel).where(PlanModel.slug == "free")
-        )
+        free_plan = await self.db.scalar(select(PlanModel).where(PlanModel.slug == "free"))
         if free_plan is not None:
             subscription = SubscriptionModel(
                 user_id=admin_id,

@@ -27,9 +27,14 @@ class ProposalsRepository:
         )
 
     async def count_by_deal(self, deal_id: uuid.UUID) -> int:
-        return await self.db.scalar(
-            select(func.count()).select_from(ProposalModel).where(ProposalModel.deal_id == deal_id)
-        ) or 0
+        return (
+            await self.db.scalar(
+                select(func.count())
+                .select_from(ProposalModel)
+                .where(ProposalModel.deal_id == deal_id)
+            )
+            or 0
+        )
 
     async def create(self, **values):
         proposal = ProposalModel(**values)
@@ -51,9 +56,10 @@ class ProposalsRepository:
             conditions.append(ProposalModel.status == status)
         if deal_id is not None:
             conditions.append(ProposalModel.deal_id == deal_id)
-        total = await self.db.scalar(
-            select(func.count()).select_from(ProposalModel).where(*conditions)
-        ) or 0
+        total = (
+            await self.db.scalar(select(func.count()).select_from(ProposalModel).where(*conditions))
+            or 0
+        )
         offset = (page - 1) * page_size
         result = await self.db.execute(
             select(ProposalModel)

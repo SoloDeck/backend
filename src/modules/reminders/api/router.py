@@ -37,10 +37,16 @@ async def create_reminder(
 async def list_reminders(
     user_id: CurrentUserId,
     db: DBSession,
-    status: str | None = Query(default=None, description="Filter by status: pending, sent, failed, cancelled"),
-    target_type: str | None = Query(default=None, description="Filter by target type: deal, proposal, contract, invoice"),
+    status: str | None = Query(
+        default=None, description="Filter by status: pending, sent, failed, cancelled"
+    ),
+    target_type: str | None = Query(
+        default=None, description="Filter by target type: deal, proposal, contract, invoice"
+    ),
 ) -> ApiResponse[list[ReminderResponse]]:
-    reminders = await RemindersService(db=db).list_all(user_id, status=status, target_type=target_type)
+    reminders = await RemindersService(db=db).list_all(
+        user_id, status=status, target_type=target_type
+    )
     return ApiResponse.ok([ReminderResponse.model_validate(r) for r in reminders])
 
 

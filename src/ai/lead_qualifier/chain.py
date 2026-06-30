@@ -1,4 +1,5 @@
 """LeadQualifier Gemini chain — implementing Gemini 2.0+ SDK."""
+
 import json
 import os
 from typing import Any
@@ -49,7 +50,10 @@ class LeadQualifier(BaseAIChain):
             return json.loads(text)
         except json.JSONDecodeError as exc:
             log.error("ai.lead_qualifier.parse_failed", raw=raw, error=str(exc))
-            raise AIOutputParseError(f"Failed to parse lead qualification output: {exc}", raw_output=raw)
+            raise AIOutputParseError(
+                f"Failed to parse lead qualification output: {exc}",
+                raw_output=raw,
+            ) from exc
 
     async def run(self, **kwargs: Any) -> dict[str, Any]:
         """Override run to use direct Gemini SDK instead of LangChain."""
@@ -59,18 +63,17 @@ class LeadQualifier(BaseAIChain):
 
         client = self._get_client()
 
-        prompt_path = os.path.join(
-            os.path.dirname(__file__),
-            "prompts",
-            "prompts.txt"
-        )
+        prompt_path = os.path.join(os.path.dirname(__file__), "prompts", "prompts.txt")
 
         try:
             with open(prompt_path, encoding="utf-8") as f:
                 prompt_template = f.read()
         except FileNotFoundError:
             # Fallback if prompts.txt is missing during refactor
-            prompt_template = "Qualify the following lead as JSON with keys: score (0-100), qualified (bool), reasoning (str)."
+            prompt_template = (
+                "Qualify the following lead as JSON with keys: "
+                "score (0-100), qualified (bool), reasoning (str)."
+            )
 
         full_prompt = f"""{prompt_template}
 
@@ -81,7 +84,7 @@ Client Inquiry:
         try:
             # Using the Gemini SDK directly (async)
             response = await client.aio.models.generate_content(
-                model="gemma-4-31b-it",
+                model="gemma-4-26b-a4b-it",
                 contents=full_prompt,
             )
 

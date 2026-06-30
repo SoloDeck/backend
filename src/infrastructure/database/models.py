@@ -41,13 +41,20 @@ _notification_channel = PgEnum(
 )
 _theme_preference = PgEnum("light", "dark", name="theme_preference", create_type=False)
 _subscription_status = PgEnum(
-    "active", "past_due", "suspended", "cancelled",
-    name="subscription_status", create_type=False,
+    "active",
+    "past_due",
+    "suspended",
+    "cancelled",
+    name="subscription_status",
+    create_type=False,
 )
 _billing_event_type = PgEnum(
-    "payment_succeeded", "payment_failed",
-    "subscription_renewed", "subscription_cancelled",
-    name="billing_event_type", create_type=False,
+    "payment_succeeded",
+    "payment_failed",
+    "subscription_renewed",
+    "subscription_cancelled",
+    name="billing_event_type",
+    create_type=False,
 )
 _client_type = PgEnum("individual", "company", name="client_type", create_type=False)
 _client_status = PgEnum(
@@ -57,13 +64,24 @@ _comm_channel = PgEnum(
     "email", "phone", "meeting", "message", "zalo", name="comm_channel", create_type=False
 )
 _deal_stage = PgEnum(
-    "new_lead", "qualified", "proposal_sent", "in_negotiation",
-    "active", "completed_and_billed", "lost",
-    name="deal_stage", create_type=False,
+    "new_lead",
+    "qualified",
+    "proposal_sent",
+    "in_negotiation",
+    "active",
+    "completed_and_billed",
+    "lost",
+    name="deal_stage",
+    create_type=False,
 )
 _deal_source = PgEnum(
-    "inbound", "referral", "outreach", "platform", "other",
-    name="deal_source", create_type=False,
+    "inbound",
+    "referral",
+    "outreach",
+    "platform",
+    "other",
+    name="deal_source",
+    create_type=False,
 )
 _deal_activity_type = PgEnum(
     "stage_change",
@@ -97,8 +115,14 @@ _contract_status = PgEnum(
     create_type=False,
 )
 _invoice_status = PgEnum(
-    "draft", "sent", "partially_paid", "paid", "overdue", "void",
-    name="invoice_status", create_type=False,
+    "draft",
+    "sent",
+    "partially_paid",
+    "paid",
+    "overdue",
+    "void",
+    name="invoice_status",
+    create_type=False,
 )
 _payment_method = PgEnum(
     "bank_transfer", "momo", "cash", "online", "other", name="payment_method", create_type=False
@@ -118,24 +142,44 @@ _reminder_type_enum = PgEnum(
     create_type=False,
 )
 _reminder_status = PgEnum(
-    "pending", "sent", "failed", "cancelled", "skipped",
-    name="reminder_status", create_type=False,
+    "pending",
+    "sent",
+    "failed",
+    "cancelled",
+    "skipped",
+    name="reminder_status",
+    create_type=False,
 )
 _reminder_outcome = PgEnum("success", "failure", name="reminder_outcome", create_type=False)
 _period_type = PgEnum("monthly", "quarterly", "yearly", name="period_type", create_type=False)
 _template_type = PgEnum("proposal", "contract", name="template_type", create_type=False)
 _ai_module_type = PgEnum(
-    "lead_qualifier", "proposal_generator", "contract_generator", "followup_generator",
-    name="ai_module_type", create_type=False,
+    "lead_qualifier",
+    "proposal_generator",
+    "contract_generator",
+    "followup_generator",
+    name="ai_module_type",
+    create_type=False,
 )
 _ai_generation_status = PgEnum(
     "pending", "completed", "failed", name="ai_generation_status", create_type=False
+)
+_project_status = PgEnum(
+    "planning", "active", "on_hold", "completed", name="project_status", create_type=False
+)
+_task_status = PgEnum(
+    "todo", "in_progress", "review", "done", name="task_status", create_type=False
+)
+_task_priority = PgEnum("low", "medium", "high", name="task_priority", create_type=False)
+_task_entity_type = PgEnum(
+    "project", "deal", "reminder", name="task_entity_type", create_type=False
 )
 
 
 # =============================================================================
 # DOMAIN: Identity & Access
 # =============================================================================
+
 
 class UserModel(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     __tablename__ = "users"
@@ -247,9 +291,7 @@ class PasswordResetTokenModel(UUIDMixin, Base):
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
 
-    __table_args__ = (
-        Index("idx_password_reset_tokens_user", "user_id", "expires_at"),
-    )
+    __table_args__ = (Index("idx_password_reset_tokens_user", "user_id", "expires_at"),)
 
 
 class TokenBlacklistModel(UUIDMixin, Base):
@@ -270,6 +312,7 @@ class TokenBlacklistModel(UUIDMixin, Base):
 # =============================================================================
 # DOMAIN: Subscriptions
 # =============================================================================
+
 
 class PlanModel(UUIDMixin, TimestampMixin, Base):
     __tablename__ = "subscription_plans"
@@ -307,9 +350,7 @@ class SubscriptionModel(UUIDMixin, TimestampMixin, Base):
     status: Mapped[str] = mapped_column(
         _subscription_status, nullable=False, server_default="active"
     )
-    current_period_start: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False
-    )
+    current_period_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     current_period_end: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     cancel_at_period_end: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default="false"
@@ -345,13 +386,9 @@ class UsageRecordModel(UUIDMixin, TimestampMixin, Base):
     subscription_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("subscriptions.id"), nullable=False
     )
-    billing_period_start: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False
-    )
+    billing_period_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     billing_period_end: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    ai_generations_used: Mapped[int] = mapped_column(
-        Integer, nullable=False, server_default="0"
-    )
+    ai_generations_used: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
 
     __table_args__ = (
         UniqueConstraint("user_id", "billing_period_start", name="uq_usage_records_user_period"),
@@ -387,6 +424,7 @@ class BillingEventModel(UUIDMixin, Base):
 # =============================================================================
 # DOMAIN: Clients
 # =============================================================================
+
 
 class ClientModel(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     __tablename__ = "clients"
@@ -437,6 +475,7 @@ class ClientCommunicationLogModel(UUIDMixin, Base):
 # =============================================================================
 # DOMAIN: Deals
 # =============================================================================
+
 
 class DealModel(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     __tablename__ = "deals"
@@ -541,6 +580,7 @@ class DealIntakeModel(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
         Index("idx_deal_intakes_owner_deleted", "owner_user_id", "deleted_at"),
     )
 
+
 class DealActivityEntryModel(UUIDMixin, Base):
     __tablename__ = "deal_activity_entries"
 
@@ -570,7 +610,9 @@ class IntakeFormConfigModel(UUIDMixin, TimestampMixin, Base):
     owner_user_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id"), nullable=False
     )
-    title: Mapped[str] = mapped_column(String(500), nullable=False, server_default="Gửi yêu cầu dự án")
+    title: Mapped[str] = mapped_column(
+        String(500), nullable=False, server_default="Gửi yêu cầu dự án"
+    )
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
 
@@ -625,47 +667,10 @@ class LeadScoreModel(Base):
     )
 
 
-class ProjectModel(UUIDMixin, TimestampMixin, Base):
-    __tablename__ = "projects"
-
-    deal_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("deals.id"), nullable=False
-    )
-    owner_user_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("users.id"), nullable=False
-    )
-    title: Mapped[str] = mapped_column(String(500), nullable=False)
-    description: Mapped[str | None] = mapped_column(Text, nullable=True)
-
-    __table_args__ = (
-        Index("idx_projects_deal", "deal_id"),
-        Index("idx_projects_owner", "owner_user_id"),
-        Index("idx_projects_owner_deal", "owner_user_id", "deal_id"),
-    )
-
-
-class TaskModel(UUIDMixin, TimestampMixin, Base):
-    __tablename__ = "tasks"
-
-    project_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("projects.id"), nullable=False
-    )
-    owner_user_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("users.id"), nullable=False
-    )
-    title: Mapped[str] = mapped_column(String(500), nullable=False)
-    note: Mapped[str | None] = mapped_column(Text, nullable=True)
-    is_done: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
-
-    __table_args__ = (
-        Index("idx_tasks_project", "project_id"),
-        Index("idx_tasks_owner_project", "owner_user_id", "project_id"),
-    )
-
-
 # =============================================================================
 # DOMAIN: Proposals
 # =============================================================================
+
 
 class ProposalModel(UUIDMixin, TimestampMixin, Base):
     __tablename__ = "proposals"
@@ -694,7 +699,8 @@ class ProposalModel(UUIDMixin, TimestampMixin, Base):
         Index("idx_proposals_owner_status", "owner_user_id", "status"),
         Index("idx_proposals_owner_created", "owner_user_id", "created_at"),
         Index(
-            "idx_proposals_content_gin", "content",
+            "idx_proposals_content_gin",
+            "content",
             postgresql_using="gin",
             postgresql_ops={"content": "jsonb_path_ops"},
         ),
@@ -704,6 +710,7 @@ class ProposalModel(UUIDMixin, TimestampMixin, Base):
 # =============================================================================
 # DOMAIN: Contracts
 # =============================================================================
+
 
 class ContractModel(UUIDMixin, TimestampMixin, Base):
     __tablename__ = "contracts"
@@ -751,7 +758,8 @@ class ContractModel(UUIDMixin, TimestampMixin, Base):
         Index("idx_contracts_client", "client_id"),
         Index("idx_contracts_proposal", "proposal_id"),
         Index(
-            "uq_contracts_one_active_per_deal", "deal_id",
+            "uq_contracts_one_active_per_deal",
+            "deal_id",
             unique=True,
             postgresql_where=text("status IN ('active', 'pending_signatures')"),
         ),
@@ -782,6 +790,7 @@ class ContractPaymentMilestoneModel(UUIDMixin, TimestampMixin, Base):
 # DOMAIN: Invoices
 # =============================================================================
 
+
 class InvoiceModel(UUIDMixin, TimestampMixin, Base):
     __tablename__ = "invoices"
 
@@ -802,17 +811,11 @@ class InvoiceModel(UUIDMixin, TimestampMixin, Base):
     issue_date: Mapped[date] = mapped_column(Date, nullable=False)
     due_date: Mapped[date] = mapped_column(Date, nullable=False)
     currency: Mapped[str] = mapped_column(String(3), nullable=False, server_default="VND")
-    subtotal: Mapped[Decimal] = mapped_column(
-        Numeric(15, 2), nullable=False, server_default="0"
-    )
+    subtotal: Mapped[Decimal] = mapped_column(Numeric(15, 2), nullable=False, server_default="0")
     tax_rate: Mapped[Decimal] = mapped_column(Numeric(5, 4), nullable=False, server_default="0")
-    tax_amount: Mapped[Decimal] = mapped_column(
-        Numeric(15, 2), nullable=False, server_default="0"
-    )
+    tax_amount: Mapped[Decimal] = mapped_column(Numeric(15, 2), nullable=False, server_default="0")
     total: Mapped[Decimal] = mapped_column(Numeric(15, 2), nullable=False, server_default="0")
-    amount_paid: Mapped[Decimal] = mapped_column(
-        Numeric(15, 2), nullable=False, server_default="0"
-    )
+    amount_paid: Mapped[Decimal] = mapped_column(Numeric(15, 2), nullable=False, server_default="0")
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     client_snapshot: Mapped[dict] = mapped_column(
         JSONB, nullable=False, server_default=text("'{}'")
@@ -836,11 +839,13 @@ class InvoiceModel(UUIDMixin, TimestampMixin, Base):
         Index("idx_invoices_owner_issued", "owner_user_id", "issue_date"),
         Index("idx_invoices_client", "client_id"),
         Index(
-            "idx_invoices_contract", "contract_id",
+            "idx_invoices_contract",
+            "contract_id",
             postgresql_where=text("contract_id IS NOT NULL"),
         ),
         Index(
-            "idx_invoices_deal", "deal_id",
+            "idx_invoices_deal",
+            "deal_id",
             postgresql_where=text("deal_id IS NOT NULL"),
         ),
     )
@@ -893,6 +898,7 @@ class InvoicePaymentRecordModel(UUIDMixin, Base):
 # DOMAIN: Reminders
 # =============================================================================
 
+
 class ReminderModel(UUIDMixin, TimestampMixin, Base):
     __tablename__ = "reminders"
 
@@ -905,9 +911,7 @@ class ReminderModel(UUIDMixin, TimestampMixin, Base):
     channel: Mapped[str] = mapped_column(
         _notification_channel, nullable=False, server_default="both"
     )
-    status: Mapped[str] = mapped_column(
-        _reminder_status, nullable=False, server_default="pending"
-    )
+    status: Mapped[str] = mapped_column(_reminder_status, nullable=False, server_default="pending")
     scheduled_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     message_preview: Mapped[str | None] = mapped_column(Text, nullable=True)
     recurrence_rule: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -920,15 +924,19 @@ class ReminderModel(UUIDMixin, TimestampMixin, Base):
         CheckConstraint("retry_count BETWEEN 0 AND 3", name="chk_reminders_retry"),
         Index(
             "idx_reminders_owner_status_scheduled",
-            "owner_user_id", "status", "scheduled_at",
+            "owner_user_id",
+            "status",
+            "scheduled_at",
         ),
         Index("idx_reminders_target", "target_type", "target_id"),
         Index(
-            "idx_reminders_pending_scheduled", "scheduled_at",
+            "idx_reminders_pending_scheduled",
+            "scheduled_at",
             postgresql_where=text("status = 'pending'"),
         ),
         Index(
-            "idx_reminders_parent", "parent_reminder_id",
+            "idx_reminders_parent",
+            "parent_reminder_id",
             postgresql_where=text("parent_reminder_id IS NOT NULL"),
         ),
     )
@@ -955,6 +963,7 @@ class ReminderDeliveryRecordModel(UUIDMixin, Base):
 # =============================================================================
 # DOMAIN: Analytics
 # =============================================================================
+
 
 class RevenueSnapshotModel(UUIDMixin, Base):
     __tablename__ = "revenue_snapshots"
@@ -997,18 +1006,14 @@ class PipelineSnapshotModel(UUIDMixin, Base):
     )
     stage: Mapped[str] = mapped_column(_deal_stage, nullable=False)
     deal_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
-    total_value: Mapped[Decimal] = mapped_column(
-        Numeric(15, 2), nullable=False, server_default="0"
-    )
+    total_value: Mapped[Decimal] = mapped_column(Numeric(15, 2), nullable=False, server_default="0")
     snapshot_date: Mapped[date] = mapped_column(Date, nullable=False)
     computed_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
 
     __table_args__ = (
-        UniqueConstraint(
-            "owner_user_id", "stage", "snapshot_date", name="uq_pipeline_snapshots"
-        ),
+        UniqueConstraint("owner_user_id", "stage", "snapshot_date", name="uq_pipeline_snapshots"),
         Index("idx_pipeline_snapshots_owner", "owner_user_id", "snapshot_date"),
     )
 
@@ -1016,6 +1021,7 @@ class PipelineSnapshotModel(UUIDMixin, Base):
 # =============================================================================
 # DOMAIN: Admin
 # =============================================================================
+
 
 class AuditLogEntryModel(UUIDMixin, Base):
     __tablename__ = "audit_log_entries"
@@ -1076,9 +1082,7 @@ class FeatureFlagModel(UUIDMixin, TimestampMixin, Base):
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     __table_args__ = (
-        CheckConstraint(
-            "rollout_percentage BETWEEN 0 AND 100", name="chk_feature_flags_rollout"
-        ),
+        CheckConstraint("rollout_percentage BETWEEN 0 AND 100", name="chk_feature_flags_rollout"),
     )
 
 
@@ -1112,3 +1116,97 @@ class AiCostRecordModel(UUIDMixin, Base):
         Index("idx_ai_cost_records_module", "ai_module", "occurred_at"),
         Index("idx_ai_cost_records_time", "occurred_at"),
     )
+
+
+# =============================================================================
+# DOMAIN: Projects & Tasks (polymorphic task binding)
+# =============================================================================
+
+
+class ProjectModel(UUIDMixin, TimestampMixin, Base):
+    __tablename__ = "projects"
+
+    deal_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("deals.id", ondelete="SET NULL"), nullable=True
+    )
+    owner_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    start_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    end_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    status: Mapped[str] = mapped_column(_project_status, nullable=False, server_default="planning")
+
+    __table_args__ = (
+        Index("idx_projects_owner", "owner_id"),
+        Index("idx_projects_owner_status", "owner_id", "status"),
+        Index("idx_projects_deal", "deal_id"),
+    )
+
+
+class TaskModel(UUIDMixin, TimestampMixin, Base):
+    __tablename__ = "tasks"
+
+    # Polymorphic binding — no FK on entity_id (referential integrity enforced
+    # at the application layer, mirroring the reminders module).
+    entity_type: Mapped[str] = mapped_column(_task_entity_type, nullable=False)
+    entity_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    title: Mapped[str] = mapped_column(String(500), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    priority: Mapped[str] = mapped_column(_task_priority, nullable=False, server_default="medium")
+    status: Mapped[str] = mapped_column(_task_status, nullable=False, server_default="todo")
+    deadline: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    checklist_items: Mapped[list["ChecklistItemModel"]] = relationship(
+        "ChecklistItemModel",
+        back_populates="task",
+        cascade="all, delete-orphan",
+        order_by="ChecklistItemModel.position",
+        lazy="selectin",
+    )
+
+    __table_args__ = (
+        Index("idx_tasks_entity", "entity_type", "entity_id"),
+        Index("idx_tasks_entity_status", "entity_type", "entity_id", "status"),
+    )
+
+
+class ChecklistItemModel(UUIDMixin, Base):
+    __tablename__ = "checklist_items"
+
+    task_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tasks.id", ondelete="CASCADE"), nullable=False
+    )
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    is_done: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+    position: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    task: Mapped["TaskModel"] = relationship("TaskModel", back_populates="checklist_items")
+
+    __table_args__ = (Index("idx_checklist_items_task", "task_id"),)
+
+
+# Computed counts for ProjectResponse — defined after TaskModel so both tables exist.
+# Tasks are polymorphic; a project's tasks are rows where entity_type='project'
+# and entity_id == project.id.
+ProjectModel.task_count = column_property(
+    select(func.count(TaskModel.id))
+    .where(TaskModel.entity_type == "project")
+    .where(TaskModel.entity_id == ProjectModel.id)
+    .correlate_except(TaskModel)
+    .scalar_subquery(),
+    deferred=False,
+)
+ProjectModel.done_count = column_property(
+    select(func.count(TaskModel.id))
+    .where(TaskModel.entity_type == "project")
+    .where(TaskModel.entity_id == ProjectModel.id)
+    .where(TaskModel.status == "done")
+    .correlate_except(TaskModel)
+    .scalar_subquery(),
+    deferred=False,
+)

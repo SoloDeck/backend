@@ -1,12 +1,13 @@
+
 from pydantic import BaseModel
-from typing import List
+
 
 class ProposalContent(BaseModel):
     project_overview: str
 
-    scope_of_work: List[str]
+    scope_of_work: list[str]
 
-    deliverables: List[str]
+    deliverables: list[str]
 
     timeline: str
 

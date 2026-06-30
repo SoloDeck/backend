@@ -145,8 +145,7 @@ class TestListClients:
             assert resp.status_code == 200
             data = resp.json()["data"]
             assert all(c["status"] == status for c in data), (
-                f"Expected only '{status}' clients, got statuses: "
-                f"{[c['status'] for c in data]}"
+                f"Expected only '{status}' clients, got statuses: " f"{[c['status'] for c in data]}"
             )
 
     async def test_no_filter_returns_all_statuses(self, client: AsyncClient) -> None:

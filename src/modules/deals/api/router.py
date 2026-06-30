@@ -38,13 +38,22 @@ async def create_deal(
 async def list_deals(
     user_id: CurrentUserId,
     db: DBSession,
-    title: str | None = Query(default=None, description="Search by title (case-insensitive, partial match)"),
-    stage: str | None = Query(default=None, description="Filter by stage: new_lead, qualified, proposal_sent, in_negotiation, active, completed_and_billed, lost"),
+    title: str | None = Query(
+        default=None, description="Search by title (case-insensitive, partial match)"
+    ),
+    stage: str | None = Query(
+        default=None,
+        description="Filter by stage: new_lead, qualified, proposal_sent, in_negotiation, active, completed_and_billed, lost",
+    ),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
 ) -> PaginatedResponse[DealResponse]:
-    deals, total = await DealsService(db=db).list_all(user_id, title=title, stage=stage, page=page, page_size=page_size)
-    return PaginatedResponse.ok([DealResponse.model_validate(d) for d in deals], total=total, page=page, page_size=page_size)
+    deals, total = await DealsService(db=db).list_all(
+        user_id, title=title, stage=stage, page=page, page_size=page_size
+    )
+    return PaginatedResponse.ok(
+        [DealResponse.model_validate(d) for d in deals], total=total, page=page, page_size=page_size
+    )
 
 
 @router.get("/intakes", response_model=PaginatedResponse[IntakeResponse])
@@ -55,7 +64,12 @@ async def list_intakes(
     page_size: int = Query(default=20, ge=1, le=100),
 ) -> PaginatedResponse[IntakeResponse]:
     intakes, total = await DealsService(db=db).list_intakes(user_id, page=page, page_size=page_size)
-    return PaginatedResponse.ok([IntakeResponse.model_validate(i) for i in intakes], total=total, page=page, page_size=page_size)
+    return PaginatedResponse.ok(
+        [IntakeResponse.model_validate(i) for i in intakes],
+        total=total,
+        page=page,
+        page_size=page_size,
+    )
 
 
 @router.get("/intakes/{intake_id}", response_model=ApiResponse[IntakeResponse])
@@ -126,18 +140,3 @@ async def transition_stage(
 ) -> ApiResponse[DealResponse]:
     deal = await DealsService(db=db).transition_stage(user_id, deal_id, payload)
     return ApiResponse.ok(DealResponse.model_validate(deal))
-async def qualify_deal_intake(
-    intake_id: uuid.UUID,
-    user_id: CurrentUserId,
-    db: DBSession,
-    ai: AIFacadeDep,
-):
-    result = await DealsService(
-        db=db,
-        ai_facade=ai,
-    ).qualify_deal_intake(
-        user_id,
-        intake_id,
-    )
-
-    return ApiResponse.ok(result)

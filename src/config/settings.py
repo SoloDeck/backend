@@ -20,6 +20,19 @@ class Settings(BaseSettings):
     secret_key: str = "change-me"
 
     # -----------------------------------------------------------------------
+    # Logging
+    # -----------------------------------------------------------------------
+    # Override the per-environment default level (DEBUG in dev, INFO otherwise).
+    # Production is clamped to INFO minimum regardless of this value.
+    log_level: str | None = None
+    # Override the per-environment default format: "console" (pretty) or "json".
+    log_format: str | None = None
+    # Service name stamped on every structured log entry.
+    service_name: str = "solodesk-api"
+    # Debug-only: log request/response bodies. Forced OFF in production.
+    log_request_body: bool = False
+
+    # -----------------------------------------------------------------------
     # Database
     # -----------------------------------------------------------------------
     database_url: PostgresDsn
@@ -88,7 +101,7 @@ class Settings(BaseSettings):
     smtp_password: str = ""
     smtp_from_email: str = "noreply@solodesk.space"
     smtp_from_name: str = "SoloDesk"
-    smtp_tls: bool = False      # True → SMTP_SSL (port 465)
+    smtp_tls: bool = False  # True → SMTP_SSL (port 465)
     smtp_starttls: bool = False  # True → STARTTLS after connect (port 587)
 
     # -----------------------------------------------------------------------
@@ -105,6 +118,7 @@ class Settings(BaseSettings):
             if v.startswith("[") and v.endswith("]"):
                 try:
                     import json
+
                     return json.loads(v)
                 except Exception:
                     pass

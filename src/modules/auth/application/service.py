@@ -141,9 +141,7 @@ class AuthService:
 
         stored_hash = user.hashed_password if user is not None else None
         password_ok = (
-            verify_password(payload.password, stored_hash)
-            if stored_hash is not None
-            else False
+            verify_password(payload.password, stored_hash) if stored_hash is not None else False
         )
 
         if user is None or not password_ok:

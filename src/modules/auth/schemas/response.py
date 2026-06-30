@@ -15,4 +15,3 @@ class MessageResponse(BaseModel):
 class ClientConfigResponse(BaseModel):
     app_env: str
     google_web_client_id: str
-

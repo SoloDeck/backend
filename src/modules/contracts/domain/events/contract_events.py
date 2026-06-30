@@ -21,6 +21,7 @@ class ContractSignedEvent(DomainEvent):
 @dataclass(frozen=True)
 class ContractMilestoneReachedEvent(DomainEvent):
     """Consumed by Invoices to trigger automatic invoice creation."""
+
     milestone_id: uuid.UUID
     deal_id: uuid.UUID
     amount: Money

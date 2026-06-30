@@ -53,6 +53,7 @@ class Client:
             ArchivedClientError,
             InvalidClientStatusTransitionError,
         )
+
         if self.is_archived:
             raise ArchivedClientError()
         if not self.can_transition_to(target):
@@ -70,6 +71,7 @@ class Client:
         website: str | None = None,
     ) -> None:
         from src.modules.clients.domain.exceptions.exceptions import ArchivedClientError
+
         if self.is_archived:
             raise ArchivedClientError()
         if full_name is not None:
@@ -90,6 +92,7 @@ class Client:
 
     def add_tag(self, tag: str) -> None:
         from src.modules.clients.domain.exceptions.exceptions import ArchivedClientError
+
         if self.is_archived:
             raise ArchivedClientError()
         normalized = tag.strip().lower()

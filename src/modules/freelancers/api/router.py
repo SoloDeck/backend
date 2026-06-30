@@ -8,7 +8,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.infrastructure.database.session import get_db_session
 from src.modules.freelancers.application.service import FreelancersService
-from src.modules.freelancers.schemas.response import FreelancerCategoryResponse, FreelancerPublicResponse
+from src.modules.freelancers.schemas.response import (
+    FreelancerCategoryResponse,
+    FreelancerPublicResponse,
+)
 from src.shared.responses.response import ApiResponse, PaginatedResponse
 
 router = APIRouter()
@@ -28,7 +31,10 @@ async def list_categories(
 async def search_freelancers(
     db: DBSession,
     q: str | None = Query(default=None, description="Search by name, title, or bio"),
-    categories: list[str] | None = Query(default=None, description="Filter by category slugs: design, programming, marketing, content, consulting"),
+    categories: list[str] | None = Query(
+        default=None,
+        description="Filter by category slugs: design, programming, marketing, content, consulting",
+    ),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
 ) -> PaginatedResponse[FreelancerPublicResponse]:

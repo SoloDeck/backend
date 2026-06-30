@@ -14,11 +14,11 @@ _bearer = HTTPBearer(auto_error=True)
 
 
 class TokenClaims(BaseModel):
-    sub: str          # user_id (UUID string)
+    sub: str  # user_id (UUID string)
     email: str
-    role: str         # freelancer | admin
+    role: str  # freelancer | admin
     subscription_tier: str  # free | pro | agency
-    jti: str          # JWT ID for blacklist check
+    jti: str  # JWT ID for blacklist check
 
 
 async def get_current_user(

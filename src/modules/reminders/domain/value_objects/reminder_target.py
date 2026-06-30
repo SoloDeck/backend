@@ -16,5 +16,6 @@ class ReminderTarget:
 
     No database FK exists for target_id — integrity enforced at app layer.
     """
+
     target_type: ReminderTargetType
     target_id: uuid.UUID

@@ -4,10 +4,10 @@ from decimal import Decimal
 
 @dataclass(frozen=True)
 class ProfessionalProfile:
-    skills: tuple[str, ...]         # immutable tuple
+    skills: tuple[str, ...]  # immutable tuple
     specialization: str | None
     default_hourly_rate: Decimal | None
-    currency: str                   # ISO 4217
+    currency: str  # ISO 4217
     portfolio_url: str | None
     business_name: str | None
 

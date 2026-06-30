@@ -22,8 +22,8 @@ celery_app.conf.update(
     task_track_started=True,
     task_acks_late=True,
     worker_prefetch_multiplier=1,
-    task_soft_time_limit=300,   # 5 min soft limit
-    task_time_limit=360,        # 6 min hard limit
+    task_soft_time_limit=300,  # 5 min soft limit
+    task_time_limit=360,  # 6 min hard limit
     result_expires=3600,
     beat_schedule={
         "mark-overdue-invoices": {

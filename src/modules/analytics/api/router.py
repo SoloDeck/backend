@@ -1,15 +1,21 @@
 """Analytics API api."""
 
-from typing import Annotated
-
 from datetime import date
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.infrastructure.database.session import get_db_session
 from src.modules.analytics.application.service import AnalyticsService
-from src.modules.analytics.schemas.response import AiUsageResponse, DashboardResponse, PipelineStageResponse, RevenueResponse, TopClientResponse, WinRateResponse
+from src.modules.analytics.schemas.response import (
+    AiUsageResponse,
+    DashboardResponse,
+    PipelineStageResponse,
+    RevenueResponse,
+    TopClientResponse,
+    WinRateResponse,
+)
 from src.shared.dependencies.auth import CurrentUserId
 from src.shared.responses.response import ApiResponse
 
@@ -35,7 +41,9 @@ async def get_revenue(
     from_date: date | None = Query(default=None),
     to_date: date | None = Query(default=None),
 ) -> ApiResponse[RevenueResponse]:
-    return ApiResponse.ok(await AnalyticsService(db=db).get_revenue(user_id, period_type, from_date, to_date))
+    return ApiResponse.ok(
+        await AnalyticsService(db=db).get_revenue(user_id, period_type, from_date, to_date)
+    )
 
 
 @router.get("/pipeline", response_model=ApiResponse[list[PipelineStageResponse]])
@@ -66,7 +74,9 @@ async def get_top_clients(
     to_date: date | None = Query(default=None),
     metric: str = Query(default="total_collected"),
 ) -> ApiResponse[list[TopClientResponse]]:
-    return ApiResponse.ok(await AnalyticsService(db=db).get_top_clients(user_id, limit, from_date, to_date, metric))
+    return ApiResponse.ok(
+        await AnalyticsService(db=db).get_top_clients(user_id, limit, from_date, to_date, metric)
+    )
 
 
 @router.get("/ai-usage", response_model=ApiResponse[AiUsageResponse])

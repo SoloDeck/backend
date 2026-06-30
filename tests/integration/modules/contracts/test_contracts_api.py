@@ -41,9 +41,7 @@ async def _create_deal(http: AsyncClient, headers: dict, client_id: str) -> str:
     return resp.json()["data"]["id"]
 
 
-async def _create_accepted_proposal(
-    http: AsyncClient, headers: dict, deal_id: str
-) -> str:
+async def _create_accepted_proposal(http: AsyncClient, headers: dict, deal_id: str) -> str:
     resp = await http.post(
         "/api/v1/proposals",
         json={"deal_id": deal_id, "content": {"body": "proposal body"}},
@@ -52,9 +50,7 @@ async def _create_accepted_proposal(
     assert resp.status_code == 201, resp.text
     pid = resp.json()["data"]["id"]
 
-    await http.patch(
-        f"/api/v1/proposals/{pid}/status", json={"status": "sent"}, headers=headers
-    )
+    await http.patch(f"/api/v1/proposals/{pid}/status", json={"status": "sent"}, headers=headers)
     r = await http.patch(
         f"/api/v1/proposals/{pid}/status", json={"status": "accepted"}, headers=headers
     )
@@ -83,6 +79,7 @@ async def _create_contract(
 # GET /contracts
 # ---------------------------------------------------------------------------
 
+
 class TestListContracts:
     async def test_returns_paginated(self, client: AsyncClient) -> None:
         headers = await _auth(client)
@@ -100,9 +97,7 @@ class TestListContracts:
         pid = await _create_accepted_proposal(client, headers, did)
         await _create_contract(client, headers, did, pid, cid)
 
-        resp = await client.get(
-            "/api/v1/contracts", params={"status": "draft"}, headers=headers
-        )
+        resp = await client.get("/api/v1/contracts", params={"status": "draft"}, headers=headers)
         assert resp.status_code == 200
         for c in resp.json()["data"]:
             assert c["status"] == "draft"
@@ -114,9 +109,7 @@ class TestListContracts:
         pid = await _create_accepted_proposal(client, headers, did)
         await _create_contract(client, headers, did, pid, cid)
 
-        resp = await client.get(
-            "/api/v1/contracts", params={"deal_id": did}, headers=headers
-        )
+        resp = await client.get("/api/v1/contracts", params={"deal_id": did}, headers=headers)
         assert resp.status_code == 200
         for c in resp.json()["data"]:
             assert c["deal_id"] == did
@@ -129,6 +122,7 @@ class TestListContracts:
 # ---------------------------------------------------------------------------
 # POST /contracts
 # ---------------------------------------------------------------------------
+
 
 class TestCreateContract:
     async def test_creates_from_accepted_proposal(self, client: AsyncClient) -> None:
@@ -186,6 +180,7 @@ class TestCreateContract:
 # ---------------------------------------------------------------------------
 # PATCH /contracts/:id/status
 # ---------------------------------------------------------------------------
+
 
 class TestTransitionContractStatus:
     async def test_draft_to_pending_signatures(self, client: AsyncClient) -> None:
@@ -253,6 +248,7 @@ class TestTransitionContractStatus:
 # GET /contracts/:id/export
 # ---------------------------------------------------------------------------
 
+
 class TestExportContractPdf:
     async def test_unauthenticated_returns_401(self, client: AsyncClient) -> None:
         resp = await client.get(f"/api/v1/contracts/{uuid.uuid4()}/export")
@@ -260,9 +256,7 @@ class TestExportContractPdf:
 
     async def test_not_found_returns_404(self, client: AsyncClient) -> None:
         headers = await _auth(client)
-        resp = await client.get(
-            f"/api/v1/contracts/{uuid.uuid4()}/export", headers=headers
-        )
+        resp = await client.get(f"/api/v1/contracts/{uuid.uuid4()}/export", headers=headers)
         assert resp.status_code == 404
 
     async def test_free_plan_returns_402(self, client: AsyncClient) -> None:
@@ -273,9 +267,7 @@ class TestExportContractPdf:
         contract_id = await _create_contract(client, headers, did, pid, cid)
 
         # Default plan has can_export_pdf=False → expect 402
-        resp = await client.get(
-            f"/api/v1/contracts/{contract_id}/export", headers=headers
-        )
+        resp = await client.get(f"/api/v1/contracts/{contract_id}/export", headers=headers)
         assert resp.status_code == 402, resp.text
 
     async def test_with_pdf_entitlement_returns_pending(self, client: AsyncClient) -> None:
@@ -287,18 +279,14 @@ class TestExportContractPdf:
 
         mock_task = MagicMock(id="test-task-id")
         with (
-            patch(
-                "src.workers.pdf_jobs.tasks.render_contract_pdf"
-            ) as mock_fn,
+            patch("src.workers.pdf_jobs.tasks.render_contract_pdf") as mock_fn,
             patch(
                 "src.modules.contracts.application.service.ContractsService.export_pdf",
                 return_value={"status": "pending", "task_id": "test-task-id", "download_url": None},
             ),
         ):
             mock_fn.delay.return_value = mock_task
-            resp = await client.get(
-                f"/api/v1/contracts/{contract_id}/export", headers=headers
-            )
+            resp = await client.get(f"/api/v1/contracts/{contract_id}/export", headers=headers)
 
         assert resp.status_code == 200, resp.text
         assert resp.json()["data"]["status"] == "pending"
@@ -307,6 +295,7 @@ class TestExportContractPdf:
 # ---------------------------------------------------------------------------
 # DELETE /contracts/:id
 # ---------------------------------------------------------------------------
+
 
 class TestDeleteContract:
     async def test_deletes_draft_returns_200(self, client: AsyncClient) -> None:
@@ -342,9 +331,7 @@ class TestDeleteContract:
 
     async def test_not_found_returns_404(self, client: AsyncClient) -> None:
         headers = await _auth(client)
-        resp = await client.delete(
-            f"/api/v1/contracts/{uuid.uuid4()}", headers=headers
-        )
+        resp = await client.delete(f"/api/v1/contracts/{uuid.uuid4()}", headers=headers)
         assert resp.status_code == 404
 
     async def test_unauthenticated_returns_401(self, client: AsyncClient) -> None:
@@ -359,7 +346,5 @@ class TestDeleteContract:
         pid = await _create_accepted_proposal(client, headers_a, did)
         contract_id = await _create_contract(client, headers_a, did, pid, cid)
 
-        resp = await client.delete(
-            f"/api/v1/contracts/{contract_id}", headers=headers_b
-        )
+        resp = await client.delete(f"/api/v1/contracts/{contract_id}", headers=headers_b)
         assert resp.status_code == 404

@@ -23,6 +23,7 @@ class PaymentMilestone:
         from src.modules.contracts.domain.exceptions.exceptions import (
             MilestoneAlreadyCompletedError,
         )
+
         if self.is_completed:
             raise MilestoneAlreadyCompletedError(self.id)
         self.completed_at = datetime.now(UTC)

@@ -58,6 +58,7 @@ def _make_qualifier(data: dict) -> LeadQualifier:
 class TestGetClient:
     def test_missing_api_key_raises(self, monkeypatch):
         from src.config.settings import settings
+
         monkeypatch.setattr(settings, "gemini_api_key", "")
         q = LeadQualifier()
         # Clear existing cached client if any
@@ -67,6 +68,7 @@ class TestGetClient:
 
     def test_success_returns_client(self, monkeypatch):
         from src.config.settings import settings
+
         monkeypatch.setattr(settings, "gemini_api_key", "fake-key")
         q = LeadQualifier()
         # Clear existing cached client if any
@@ -87,7 +89,7 @@ class TestParseOutput:
 
     def test_markdown_fenced_json(self):
         q = LeadQualifier()
-        raw = "```json\n{\"project_type\": \"Website\"}\n```"
+        raw = '```json\n{"project_type": "Website"}\n```'
         assert q._parse_output(raw) == {"project_type": "Website"}
 
     def test_malformed_raises(self):
@@ -116,8 +118,15 @@ class TestRun:
     async def test_all_fields_present(self):
         q = _make_qualifier(VALID_MOCK_DATA)
         result = await q.run(inquiry_text="Need a website")
-        for field in ("project_type", "budget_signal", "timeline_signal",
-                      "urgency_signal", "red_flags", "suggested_lead_score", "reasoning"):
+        for field in (
+            "project_type",
+            "budget_signal",
+            "timeline_signal",
+            "urgency_signal",
+            "red_flags",
+            "suggested_lead_score",
+            "reasoning",
+        ):
             assert field in result
 
     async def test_missing_inquiry_text_raises(self):

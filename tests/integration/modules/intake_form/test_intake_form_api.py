@@ -30,6 +30,7 @@ async def _get_share_token(client: AsyncClient, headers: dict) -> str:
 # GET /api/v1/intake-form
 # ---------------------------------------------------------------------------
 
+
 async def test_get_form_returns_defaults_when_not_configured(client: AsyncClient):
     headers, _ = await _auth(client)
     resp = await client.get("/api/v1/intake-form", headers=headers)
@@ -61,9 +62,33 @@ async def test_get_form_requires_auth(client: AsyncClient):
 # ---------------------------------------------------------------------------
 
 _SAMPLE_FIELDS = [
-    {"field_key": "name", "label": "Full Name", "placeholder": "John Doe", "field_type": "text", "is_required": True, "is_visible": True, "sort_order": 1},
-    {"field_key": "email", "label": "Email", "placeholder": None, "field_type": "email", "is_required": True, "is_visible": True, "sort_order": 2},
-    {"field_key": "inquiry_text", "label": "Details", "placeholder": "Describe...", "field_type": "textarea", "is_required": True, "is_visible": True, "sort_order": 3},
+    {
+        "field_key": "name",
+        "label": "Full Name",
+        "placeholder": "John Doe",
+        "field_type": "text",
+        "is_required": True,
+        "is_visible": True,
+        "sort_order": 1,
+    },
+    {
+        "field_key": "email",
+        "label": "Email",
+        "placeholder": None,
+        "field_type": "email",
+        "is_required": True,
+        "is_visible": True,
+        "sort_order": 2,
+    },
+    {
+        "field_key": "inquiry_text",
+        "label": "Details",
+        "placeholder": "Describe...",
+        "field_type": "textarea",
+        "is_required": True,
+        "is_visible": True,
+        "sort_order": 3,
+    },
 ]
 
 
@@ -72,7 +97,12 @@ async def test_put_creates_form_config(client: AsyncClient):
     resp = await client.put(
         "/api/v1/intake-form",
         headers=headers,
-        json={"title": "Project Inquiry", "description": "Tell us about your project", "is_active": True, "fields": _SAMPLE_FIELDS},
+        json={
+            "title": "Project Inquiry",
+            "description": "Tell us about your project",
+            "is_active": True,
+            "fields": _SAMPLE_FIELDS,
+        },
     )
     assert resp.status_code == 200
     data = resp.json()["data"]
@@ -103,7 +133,16 @@ async def test_put_replaces_fields_on_second_save(client: AsyncClient):
         headers=headers,
         json={"title": "Form", "is_active": True, "fields": _SAMPLE_FIELDS},
     )
-    new_fields = [{"field_key": "name", "label": "Name", "field_type": "text", "is_required": True, "is_visible": True, "sort_order": 1}]
+    new_fields = [
+        {
+            "field_key": "name",
+            "label": "Name",
+            "field_type": "text",
+            "is_required": True,
+            "is_visible": True,
+            "sort_order": 1,
+        }
+    ]
     resp = await client.put(
         "/api/v1/intake-form",
         headers=headers,
@@ -117,7 +156,8 @@ async def test_put_tenant_isolation(client: AsyncClient):
     headers_a, _ = await _auth(client)
     headers_b, _ = await _auth(client)
     await client.put(
-        "/api/v1/intake-form", headers=headers_a,
+        "/api/v1/intake-form",
+        headers=headers_a,
         json={"title": "User A Form", "is_active": True, "fields": _SAMPLE_FIELDS},
     )
     resp_b = await client.get("/api/v1/intake-form", headers=headers_b)
@@ -136,6 +176,7 @@ async def test_put_requires_auth(client: AsyncClient):
 # GET /api/v1/intake/{share_token}/config
 # ---------------------------------------------------------------------------
 
+
 async def test_public_config_returns_defaults_when_not_configured(client: AsyncClient):
     headers, _ = await _auth(client)
     token = await _get_share_token(client, headers)
@@ -151,8 +192,14 @@ async def test_public_config_returns_saved_config(client: AsyncClient):
     headers, _ = await _auth(client)
     token = await _get_share_token(client, headers)
     await client.put(
-        "/api/v1/intake-form", headers=headers,
-        json={"title": "Custom Form", "description": "Hello", "is_active": True, "fields": _SAMPLE_FIELDS},
+        "/api/v1/intake-form",
+        headers=headers,
+        json={
+            "title": "Custom Form",
+            "description": "Hello",
+            "is_active": True,
+            "fields": _SAMPLE_FIELDS,
+        },
     )
     resp = await client.get(f"/api/v1/intake/{token}/config")
     assert resp.status_code == 200
@@ -166,10 +213,28 @@ async def test_public_config_only_returns_visible_fields(client: AsyncClient):
     headers, _ = await _auth(client)
     token = await _get_share_token(client, headers)
     fields = [
-        {"field_key": "name", "label": "Name", "field_type": "text", "is_required": True, "is_visible": True, "sort_order": 1},
-        {"field_key": "phone", "label": "Phone", "field_type": "phone", "is_required": False, "is_visible": False, "sort_order": 2},
+        {
+            "field_key": "name",
+            "label": "Name",
+            "field_type": "text",
+            "is_required": True,
+            "is_visible": True,
+            "sort_order": 1,
+        },
+        {
+            "field_key": "phone",
+            "label": "Phone",
+            "field_type": "phone",
+            "is_required": False,
+            "is_visible": False,
+            "sort_order": 2,
+        },
     ]
-    await client.put("/api/v1/intake-form", headers=headers, json={"title": "F", "is_active": True, "fields": fields})
+    await client.put(
+        "/api/v1/intake-form",
+        headers=headers,
+        json={"title": "F", "is_active": True, "fields": fields},
+    )
     resp = await client.get(f"/api/v1/intake/{token}/config")
     visible_keys = [f["field_key"] for f in resp.json()["data"]["fields"]]
     assert "name" in visible_keys
@@ -185,15 +250,41 @@ async def test_public_config_invalid_token_returns_404(client: AsyncClient):
 # POST /api/v1/intake/{share_token} — required field validation
 # ---------------------------------------------------------------------------
 
+
 async def test_submit_validates_required_fields(client: AsyncClient):
     headers, _ = await _auth(client)
     token = await _get_share_token(client, headers)
     fields = [
-        {"field_key": "name", "label": "Name", "field_type": "text", "is_required": True, "is_visible": True, "sort_order": 1},
-        {"field_key": "inquiry_text", "label": "Details", "field_type": "textarea", "is_required": True, "is_visible": True, "sort_order": 2},
-        {"field_key": "phone", "label": "Phone", "field_type": "phone", "is_required": True, "is_visible": True, "sort_order": 3},
+        {
+            "field_key": "name",
+            "label": "Name",
+            "field_type": "text",
+            "is_required": True,
+            "is_visible": True,
+            "sort_order": 1,
+        },
+        {
+            "field_key": "inquiry_text",
+            "label": "Details",
+            "field_type": "textarea",
+            "is_required": True,
+            "is_visible": True,
+            "sort_order": 2,
+        },
+        {
+            "field_key": "phone",
+            "label": "Phone",
+            "field_type": "phone",
+            "is_required": True,
+            "is_visible": True,
+            "sort_order": 3,
+        },
     ]
-    await client.put("/api/v1/intake-form", headers=headers, json={"title": "F", "is_active": True, "fields": fields})
+    await client.put(
+        "/api/v1/intake-form",
+        headers=headers,
+        json={"title": "F", "is_active": True, "fields": fields},
+    )
     resp = await client.post(
         f"/api/v1/intake/{token}",
         json={"name": "Alice", "inquiry_text": "I need a website"},
@@ -205,11 +296,36 @@ async def test_submit_uses_project_name_as_deal_title(client: AsyncClient):
     headers, _ = await _auth(client)
     token = await _get_share_token(client, headers)
     fields = [
-        {"field_key": "name", "label": "Name", "field_type": "text", "is_required": True, "is_visible": True, "sort_order": 1},
-        {"field_key": "project_name", "label": "Project", "field_type": "text", "is_required": True, "is_visible": True, "sort_order": 2},
-        {"field_key": "inquiry_text", "label": "Details", "field_type": "textarea", "is_required": False, "is_visible": True, "sort_order": 3},
+        {
+            "field_key": "name",
+            "label": "Name",
+            "field_type": "text",
+            "is_required": True,
+            "is_visible": True,
+            "sort_order": 1,
+        },
+        {
+            "field_key": "project_name",
+            "label": "Project",
+            "field_type": "text",
+            "is_required": True,
+            "is_visible": True,
+            "sort_order": 2,
+        },
+        {
+            "field_key": "inquiry_text",
+            "label": "Details",
+            "field_type": "textarea",
+            "is_required": False,
+            "is_visible": True,
+            "sort_order": 3,
+        },
     ]
-    await client.put("/api/v1/intake-form", headers=headers, json={"title": "F", "is_active": True, "fields": fields})
+    await client.put(
+        "/api/v1/intake-form",
+        headers=headers,
+        json={"title": "F", "is_active": True, "fields": fields},
+    )
     with patch("src.workers.ai_jobs.tasks.qualify_intake_async.delay"):
         resp = await client.post(
             f"/api/v1/intake/{token}",

@@ -1,4 +1,5 @@
 """ContractGenerator LangChain chain — skeleton."""
+
 from typing import Any
 
 from src.ai.shared.base import BaseAIChain

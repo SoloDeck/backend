@@ -14,13 +14,69 @@ from src.modules.intake_form.schemas.response import (
 from src.shared.exceptions.domain import NotFoundError, ValidationError
 
 _DEFAULT_FIELDS = [
-    {"field_key": "name", "label": "Họ tên khách hàng", "placeholder": "Nguyễn Văn A", "field_type": "text", "is_required": True, "is_visible": True, "sort_order": 1},
-    {"field_key": "phone", "label": "Số điện thoại", "placeholder": "09xx xxx xxx", "field_type": "phone", "is_required": True, "is_visible": True, "sort_order": 2},
-    {"field_key": "email", "label": "Email", "placeholder": "email@vidu.vn", "field_type": "email", "is_required": False, "is_visible": True, "sort_order": 3},
-    {"field_key": "project_name", "label": "Tên dự án", "placeholder": "Ví dụ: Thiết kế trang bán hàng", "field_type": "text", "is_required": True, "is_visible": True, "sort_order": 4},
-    {"field_key": "inquiry_text", "label": "Mô tả nhu cầu", "placeholder": "Mô tả chi tiết yêu cầu của bạn...", "field_type": "textarea", "is_required": True, "is_visible": True, "sort_order": 5},
-    {"field_key": "estimated_budget", "label": "Ngân sách dự kiến", "placeholder": "Ví dụ: 5 - 10 triệu", "field_type": "text", "is_required": False, "is_visible": True, "sort_order": 6},
-    {"field_key": "desired_timeline", "label": "Timeline mong muốn", "placeholder": "Ví dụ: 2 tuần", "field_type": "text", "is_required": False, "is_visible": True, "sort_order": 7},
+    {
+        "field_key": "name",
+        "label": "Họ tên khách hàng",
+        "placeholder": "Nguyễn Văn A",
+        "field_type": "text",
+        "is_required": True,
+        "is_visible": True,
+        "sort_order": 1,
+    },
+    {
+        "field_key": "phone",
+        "label": "Số điện thoại",
+        "placeholder": "09xx xxx xxx",
+        "field_type": "phone",
+        "is_required": True,
+        "is_visible": True,
+        "sort_order": 2,
+    },
+    {
+        "field_key": "email",
+        "label": "Email",
+        "placeholder": "email@vidu.vn",
+        "field_type": "email",
+        "is_required": False,
+        "is_visible": True,
+        "sort_order": 3,
+    },
+    {
+        "field_key": "project_name",
+        "label": "Tên dự án",
+        "placeholder": "Ví dụ: Thiết kế trang bán hàng",
+        "field_type": "text",
+        "is_required": True,
+        "is_visible": True,
+        "sort_order": 4,
+    },
+    {
+        "field_key": "inquiry_text",
+        "label": "Mô tả nhu cầu",
+        "placeholder": "Mô tả chi tiết yêu cầu của bạn...",
+        "field_type": "textarea",
+        "is_required": True,
+        "is_visible": True,
+        "sort_order": 5,
+    },
+    {
+        "field_key": "estimated_budget",
+        "label": "Ngân sách dự kiến",
+        "placeholder": "Ví dụ: 5 - 10 triệu",
+        "field_type": "text",
+        "is_required": False,
+        "is_visible": True,
+        "sort_order": 6,
+    },
+    {
+        "field_key": "desired_timeline",
+        "label": "Timeline mong muốn",
+        "placeholder": "Ví dụ: 2 tuần",
+        "field_type": "text",
+        "is_required": False,
+        "is_visible": True,
+        "sort_order": 7,
+    },
 ]
 
 
@@ -64,7 +120,9 @@ class IntakeFormService:
             fields=[IntakeFormFieldResponse.model_validate(f) for f in fields],
         )
 
-    async def save_form_config(self, owner_user_id: uuid.UUID, payload: IntakeFormUpdateRequest) -> IntakeFormResponse:
+    async def save_form_config(
+        self, owner_user_id: uuid.UUID, payload: IntakeFormUpdateRequest
+    ) -> IntakeFormResponse:
         config = await self.repo.get_by_owner(owner_user_id)
         if config is None:
             config = await self.repo.create_config(
@@ -75,7 +133,10 @@ class IntakeFormService:
             )
         else:
             config = await self.repo.update_config(
-                config, title=payload.title, description=payload.description, is_active=payload.is_active
+                config,
+                title=payload.title,
+                description=payload.description,
+                is_active=payload.is_active,
             )
 
         await self.repo.delete_fields(config.id)
@@ -93,8 +154,17 @@ class IntakeFormService:
         freelancer_name = user.full_name or user.email or "Freelancer"
 
         if config is None:
-            fields = [PublicIntakeFormFieldResponse(**{k: v for k, v in f.items() if k in ("field_key", "label", "placeholder", "field_type", "is_required")})
-                      for f in _DEFAULT_FIELDS if f["is_visible"]]
+            fields = [
+                PublicIntakeFormFieldResponse(
+                    **{
+                        k: v
+                        for k, v in f.items()
+                        if k in ("field_key", "label", "placeholder", "field_type", "is_required")
+                    }
+                )
+                for f in _DEFAULT_FIELDS
+                if f["is_visible"]
+            ]
             return PublicIntakeFormConfigResponse(
                 title="Gửi yêu cầu dự án",
                 description=None,

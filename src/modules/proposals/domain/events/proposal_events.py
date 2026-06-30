@@ -21,6 +21,7 @@ class ProposalSentEvent(DomainEvent):
 @dataclass(frozen=True)
 class ProposalAcceptedEvent(DomainEvent):
     """Consumed by Deals to advance the deal stage to Active."""
+
     deal_id: uuid.UUID
     owner_user_id: uuid.UUID
 
