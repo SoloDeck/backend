@@ -162,20 +162,83 @@ class TestAdminListUsers:
 
     async def test_search_by_email(self, client: AsyncClient, db_session: AsyncSession) -> None:
         headers = await _admin_headers(client, db_session)
-        # Register a user with a known unique prefix
         unique = uuid.uuid4().hex[:8]
         await client.post(
             "/api/v1/auth/register",
             json={
-                "email": f"search_{unique}@example.com",
+                "email": f"srchemail_{unique}@example.com",
                 "password": "Test@1234!",
-                "full_name": "Search Target",
+                "full_name": "Email Search Target",
             },
         )
-        resp = await client.get(f"/api/v1/admin/users?search=search_{unique}", headers=headers)
+        resp = await client.get(f"/api/v1/admin/users?search=srchemail_{unique}", headers=headers)
         assert resp.status_code == 200
         results = resp.json()["data"]["data"]
         assert any(unique in u["email"] for u in results)
+
+    async def test_search_by_name(self, client: AsyncClient, db_session: AsyncSession) -> None:
+        headers = await _admin_headers(client, db_session)
+        unique = uuid.uuid4().hex[:8]
+        await client.post(
+            "/api/v1/auth/register",
+            json={
+                "email": f"nmsrch_{unique}@example.com",
+                "password": "Test@1234!",
+                "full_name": f"NameSearch_{unique}",
+            },
+        )
+        resp = await client.get(f"/api/v1/admin/users?search=NameSearch_{unique}", headers=headers)
+        assert resp.status_code == 200
+        results = resp.json()["data"]["data"]
+        assert len(results) == 1, f"Expected 1 result, got {len(results)}"
+        assert results[0]["full_name"] == f"NameSearch_{unique}"
+
+    async def test_search_no_results(self, client: AsyncClient, db_session: AsyncSession) -> None:
+        headers = await _admin_headers(client, db_session)
+        resp = await client.get(
+            "/api/v1/admin/users?search=ZZZNOMATCH_xyzzy_abc123", headers=headers
+        )
+        assert resp.status_code == 200
+        body = resp.json()["data"]
+        assert body["total"] == 0
+        assert body["data"] == []
+
+    async def test_search_is_case_insensitive(self, client: AsyncClient, db_session: AsyncSession) -> None:
+        headers = await _admin_headers(client, db_session)
+        unique = uuid.uuid4().hex[:8]
+        await client.post(
+            "/api/v1/auth/register",
+            json={
+                "email": f"casetest_{unique}@example.com",
+                "password": "Test@1234!",
+                "full_name": f"CaseSensitive_{unique}",
+            },
+        )
+        resp = await client.get(
+            f"/api/v1/admin/users?search=casesensitive_{unique}", headers=headers
+        )
+        assert resp.status_code == 200
+        results = resp.json()["data"]["data"]
+        assert any(f"CaseSensitive_{unique}" == u["full_name"] for u in results)
+
+    async def test_sort_by_email_asc(self, client: AsyncClient, db_session: AsyncSession) -> None:
+        headers = await _admin_headers(client, db_session)
+        resp = await client.get("/api/v1/admin/users?sort_by=email&sort_order=asc", headers=headers)
+        assert resp.status_code == 200
+        emails = [u["email"] for u in resp.json()["data"]["data"]]
+        assert emails == sorted(emails)
+
+    async def test_filter_by_status_and_role_combined(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        headers = await _admin_headers(client, db_session)
+        resp = await client.get(
+            "/api/v1/admin/users?status=active&role=freelancer", headers=headers
+        )
+        assert resp.status_code == 200
+        for u in resp.json()["data"]["data"]:
+            assert u["status"] == "active"
+            assert u["role"] == "freelancer"
 
     async def test_pagination(self, client: AsyncClient, db_session: AsyncSession) -> None:
         headers = await _admin_headers(client, db_session)
