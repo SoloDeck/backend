@@ -2,7 +2,6 @@ from io import BytesIO
 from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader
-from weasyprint import HTML
 
 from ..schemas.proposal_document import ProposalDocument
 
@@ -21,6 +20,7 @@ class ProposalPdfRenderer:
         return template.render(**document.model_dump())
 
     def render_pdf(self, document: ProposalDocument) -> bytes:
+        from weasyprint import HTML  # lazy: requires GTK system libs
 
         html_content = self.render_html(document)
 
