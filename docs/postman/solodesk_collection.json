@@ -1,0 +1,635 @@
+{
+  "info": {
+    "name": "SoloDesk API",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "description": "Full API test collection for SoloDesk backend. Import solodesk_environment.json first, then run 1-Auth/Register and 1-Auth/Login to populate the token variable automatically."
+  },
+  "variable": [],
+  "item": [
+
+    {
+      "name": "1 - Auth",
+      "item": [
+        {
+          "name": "Register",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "const d = pm.response.json().data;",
+            "if (d && d.access_token) pm.environment.set('token', d.access_token);",
+            "if (d && d.user && d.user.id) pm.environment.set('user_id', d.user.id);"
+          ], "type": "text/javascript" } }],
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/auth/register",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"email\": \"test@solodesk.vn\",\n  \"password\": \"Test@1234!\",\n  \"full_name\": \"Nguyen Van Test\"\n}" }
+          }
+        },
+        {
+          "name": "Login",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "const d = pm.response.json().data;",
+            "if (d && d.access_token) pm.environment.set('token', d.access_token);"
+          ], "type": "text/javascript" } }],
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/auth/login",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"email\": \"test@solodesk.vn\",\n  \"password\": \"Test@1234!\"\n}" }
+          }
+        },
+        {
+          "name": "Login (Admin)",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "const d = pm.response.json().data;",
+            "if (d && d.access_token) pm.environment.set('admin_token', d.access_token);"
+          ], "type": "text/javascript" } }],
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/auth/login",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"email\": \"admin@solodesk.vn\",\n  \"password\": \"Admin@1234!\"\n}" }
+          }
+        },
+        {
+          "name": "Logout",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/auth/logout",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }]
+          }
+        },
+        {
+          "name": "Refresh Token",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/auth/refresh",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }]
+          }
+        }
+      ]
+    },
+
+    {
+      "name": "2 - Users",
+      "item": [
+        {
+          "name": "Get Me",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "const d = pm.response.json().data;",
+            "if (d && d.id) pm.environment.set('user_id', d.id);",
+            "if (d && d.intake_share_token) pm.environment.set('intake_token', d.intake_share_token);"
+          ], "type": "text/javascript" } }],
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/users/me",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }]
+          }
+        },
+        {
+          "name": "Update Profile",
+          "request": {
+            "method": "PATCH",
+            "url": "{{base_url}}/users/me",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"full_name\": \"Nguyen Van A\",\n  \"skills\": [\"Web Development\", \"Mobile App\"],\n  \"hourly_rate\": 50,\n  \"currency\": \"USD\"\n}" }
+          }
+        },
+        {
+          "name": "Change Password",
+          "request": {
+            "method": "PATCH",
+            "url": "{{base_url}}/users/me/password",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"current_password\": \"Test@1234!\",\n  \"new_password\": \"NewPass@5678!\"\n}" }
+          }
+        },
+        {
+          "name": "Delete Account",
+          "request": {
+            "method": "DELETE",
+            "url": "{{base_url}}/users/me",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }]
+          }
+        }
+      ]
+    },
+
+    {
+      "name": "3 - Clients",
+      "item": [
+        {
+          "name": "Create Client",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "const d = pm.response.json().data;",
+            "if (d && d.id) pm.environment.set('client_id', d.id);"
+          ], "type": "text/javascript" } }],
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/clients",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"name\": \"Cong ty ABC\",\n  \"email\": \"abc@company.vn\",\n  \"phone\": \"0901234567\",\n  \"type\": \"company\",\n  \"status\": \"prospect\",\n  \"address_city\": \"Ho Chi Minh\",\n  \"address_country\": \"Vietnam\",\n  \"notes\": \"Khach hang tiem nang\"\n}" }
+          }
+        },
+        {
+          "name": "List Clients",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/clients?page=1&page_size=20",
+              "host": ["{{base_url}}"],
+              "path": ["clients"],
+              "query": [
+                { "key": "page", "value": "1" },
+                { "key": "page_size", "value": "20" },
+                { "key": "status", "value": "prospect", "disabled": true },
+                { "key": "name", "value": "ABC", "disabled": true }
+              ]
+            },
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }]
+          }
+        },
+        {
+          "name": "Get Client",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/clients/{{client_id}}",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }]
+          }
+        },
+        {
+          "name": "Update Client",
+          "request": {
+            "method": "PATCH",
+            "url": "{{base_url}}/clients/{{client_id}}",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"name\": \"Cong ty ABC (Updated)\",\n  \"status\": \"active\",\n  \"notes\": \"Da ky hop dong\"\n}" }
+          }
+        },
+        {
+          "name": "Delete Client",
+          "request": {
+            "method": "DELETE",
+            "url": "{{base_url}}/clients/{{client_id}}",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }]
+          }
+        },
+        {
+          "name": "Add Comm Log",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/clients/{{client_id}}/comm-logs",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"channel\": \"email\",\n  \"summary\": \"Da gui bao gia cho khach hang, cho phan hoi trong 3 ngay\",\n  \"communicated_at\": \"2026-06-30T09:00:00Z\"\n}" }
+          }
+        },
+        {
+          "name": "List Comm Logs",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/clients/{{client_id}}/comm-logs",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }]
+          }
+        }
+      ]
+    },
+
+    {
+      "name": "4 - Deals",
+      "item": [
+        {
+          "name": "Create Deal",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "const d = pm.response.json().data;",
+            "if (d && d.id) pm.environment.set('deal_id', d.id);"
+          ], "type": "text/javascript" } }],
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/deals",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"client_id\": \"{{client_id}}\",\n  \"title\": \"Xay dung website thuong mai dien tu\",\n  \"stage\": \"new_lead\",\n  \"source\": \"referral\",\n  \"project_type\": \"E-commerce Website\",\n  \"service_category\": \"Web Development\",\n  \"pricing_tier\": \"standard\",\n  \"estimated_value\": 50000000,\n  \"currency\": \"VND\",\n  \"desired_timeline\": \"2 thang\",\n  \"notes\": \"Khach can website ban hang tich hop thanh toan VNPay va MOMO\"\n}" }
+          }
+        },
+        {
+          "name": "List Deals",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/deals?page=1&page_size=20",
+              "host": ["{{base_url}}"],
+              "path": ["deals"],
+              "query": [
+                { "key": "page", "value": "1" },
+                { "key": "page_size", "value": "20" },
+                { "key": "stage", "value": "new_lead", "disabled": true },
+                { "key": "title", "value": "website", "disabled": true }
+              ]
+            },
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }]
+          }
+        },
+        {
+          "name": "Get Deal",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/deals/{{deal_id}}",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }]
+          }
+        },
+        {
+          "name": "Update Deal",
+          "request": {
+            "method": "PATCH",
+            "url": "{{base_url}}/deals/{{deal_id}}",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"client_id\": \"{{client_id}}\",\n  \"title\": \"Xay dung website thuong mai dien tu (Updated)\",\n  \"estimated_value\": 60000000,\n  \"notes\": \"Khach dong y them tinh nang quan ly kho\"\n}" }
+          }
+        },
+        {
+          "name": "Delete Deal",
+          "request": {
+            "method": "DELETE",
+            "url": "{{base_url}}/deals/{{deal_id}}",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }]
+          }
+        },
+        {
+          "name": "Qualify Deal (AI)",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/deals/{{deal_id}}/qualify",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }]
+          }
+        },
+        {
+          "name": "Transition Stage",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/deals/{{deal_id}}/stage",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"target_stage\": \"proposal_sent\"\n}" }
+          }
+        },
+        {
+          "name": "List Intakes",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "const items = pm.response.json().data;",
+            "if (items && items.length > 0) pm.environment.set('intake_id', items[0].id);"
+          ], "type": "text/javascript" } }],
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/deals/intakes",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }]
+          }
+        },
+        {
+          "name": "Get Intake",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/deals/intakes/{{intake_id}}",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }]
+          }
+        }
+      ]
+    },
+
+    {
+      "name": "5 - Proposals",
+      "item": [
+        {
+          "name": "Create Proposal",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "const d = pm.response.json().data;",
+            "if (d && d.id) pm.environment.set('proposal_id', d.id);"
+          ], "type": "text/javascript" } }],
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/proposals",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"deal_id\": \"{{deal_id}}\",\n  \"content\": {\n    \"project_overview\": \"Xay dung nen tang thuong mai dien tu day du tinh nang cho doanh nghiep vua va nho.\",\n    \"scope_of_work\": [\n      \"Thiet ke giao dien nguoi dung (UI/UX)\",\n      \"Phat trien frontend bang React\",\n      \"Phat trien backend bang FastAPI\",\n      \"Tich hop cong thanh toan VNPay va MOMO\",\n      \"Trien khai len server va cau hinh SSL\"\n    ],\n    \"deliverables\": [\n      \"Ma nguon day du co tai lieu\",\n      \"Huong dan su dung he thong\",\n      \"Ho tro 1 thang sau khi ban giao\"\n    ],\n    \"timeline\": \"8 tuan ke tu khi ky hop dong\",\n    \"pricing\": \"50,000,000 VND\",\n    \"payment_terms\": \"50% khi ky hop dong, 50% khi ban giao\",\n    \"assumptions\": \"Khach hang cung cap logo, anh san pham va noi dung van ban truoc ngay 7\"\n  }\n}" }
+          }
+        },
+        {
+          "name": "List Proposals",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/proposals?page=1&page_size=20",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }]
+          }
+        },
+        {
+          "name": "Get Proposal",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/proposals/{{proposal_id}}",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }]
+          }
+        },
+        {
+          "name": "Update Proposal",
+          "request": {
+            "method": "PATCH",
+            "url": "{{base_url}}/proposals/{{proposal_id}}",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"deal_id\": \"{{deal_id}}\",\n  \"content\": {\n    \"project_overview\": \"Xay dung nen tang thuong mai dien tu day du tinh nang (da cap nhat).\",\n    \"scope_of_work\": [\"UI/UX\", \"Frontend\", \"Backend\", \"Thanh toan\", \"Trien khai\"],\n    \"deliverables\": [\"Ma nguon\", \"Tai lieu\", \"Ho tro 3 thang\"],\n    \"timeline\": \"10 tuan\",\n    \"pricing\": \"65,000,000 VND\",\n    \"payment_terms\": \"30% - 40% - 30%\",\n    \"assumptions\": \"Khach hang cung cap noi dung truoc ngay 7\"\n  }\n}" }
+          }
+        },
+        {
+          "name": "Generate Content (AI)",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/proposals/{{proposal_id}}/generate",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }]
+          }
+        },
+        {
+          "name": "Generate from Deal (AI)",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "const d = pm.response.json().data;",
+            "if (d && d.id) pm.environment.set('proposal_id', d.id);"
+          ], "type": "text/javascript" } }],
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/proposals/generate-from-deal/{{deal_id}}",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }]
+          }
+        },
+        {
+          "name": "Download PDF",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/proposals/{{proposal_id}}/pdf",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }]
+          }
+        },
+        {
+          "name": "Send to Client",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/proposals/{{proposal_id}}/send",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }]
+          }
+        },
+        {
+          "name": "Update Status",
+          "request": {
+            "method": "PATCH",
+            "url": "{{base_url}}/proposals/{{proposal_id}}/status",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"status\": \"accepted\"\n}" }
+          }
+        },
+        {
+          "name": "Delete Proposal",
+          "request": {
+            "method": "DELETE",
+            "url": "{{base_url}}/proposals/{{proposal_id}}",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }]
+          }
+        }
+      ]
+    },
+
+    {
+      "name": "6 - Intake Form (Public)",
+      "item": [
+        {
+          "name": "Get Form Config (Owner)",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/intake-form",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }]
+          }
+        },
+        {
+          "name": "Update Form Config",
+          "request": {
+            "method": "PUT",
+            "url": "{{base_url}}/intake-form",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"title\": \"Gui yeu cau du an\",\n  \"description\": \"Hay dien thong tin de chung toi lien he voi ban\",\n  \"is_active\": true,\n  \"fields\": [\n    { \"field_key\": \"name\",           \"label\": \"Ho ten\",          \"field_type\": \"text\",     \"is_required\": true,  \"is_visible\": true, \"sort_order\": 1 },\n    { \"field_key\": \"phone\",          \"label\": \"So dien thoai\",   \"field_type\": \"phone\",    \"is_required\": true,  \"is_visible\": true, \"sort_order\": 2 },\n    { \"field_key\": \"email\",          \"label\": \"Email\",           \"field_type\": \"email\",    \"is_required\": false, \"is_visible\": true, \"sort_order\": 3 },\n    { \"field_key\": \"project_name\",   \"label\": \"Ten du an\",       \"field_type\": \"text\",     \"is_required\": false, \"is_visible\": true, \"sort_order\": 4 },\n    { \"field_key\": \"inquiry_text\",   \"label\": \"Mo ta yeu cau\",   \"field_type\": \"textarea\", \"is_required\": true,  \"is_visible\": true, \"sort_order\": 5 },\n    { \"field_key\": \"estimated_budget\",\"label\": \"Ngan sach du kien\",\"field_type\": \"text\",   \"is_required\": false, \"is_visible\": true, \"sort_order\": 6 },\n    { \"field_key\": \"desired_timeline\",\"label\": \"Thoi gian mong muon\",\"field_type\": \"text\", \"is_required\": false, \"is_visible\": true, \"sort_order\": 7 }\n  ]\n}" }
+          }
+        },
+        {
+          "name": "Get Public Form Config",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/intake/{{intake_token}}/config"
+          }
+        },
+        {
+          "name": "Submit Public Intake (New Client)",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/intake/{{intake_token}}",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"name\": \"Tran Thi Khach\",\n  \"phone\": \"0909999888\",\n  \"email\": \"khach@example.vn\",\n  \"project_name\": \"App dat hang online\",\n  \"inquiry_text\": \"Toi can xay dung mot ung dung di dong cho phep khach hang dat mon an va theo doi don hang theo thoi gian thuc.\",\n  \"estimated_budget\": \"30,000,000 - 50,000,000 VND\",\n  \"desired_timeline\": \"3 thang\"\n}" }
+          }
+        },
+        {
+          "name": "Submit Public Intake (Duplicate - same name+phone)",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/intake/{{intake_token}}",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"name\": \"Tran Thi Khach\",\n  \"phone\": \"0909999888\",\n  \"inquiry_text\": \"Du an thu 2 cua khach hang nay - should reuse same client\",\n  \"project_name\": \"Website ban hang\"\n}" }
+          }
+        }
+      ]
+    },
+
+    {
+      "name": "7 - Admin",
+      "item": [
+        {
+          "name": "List Users",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/admin/users?page=1&page_size=20",
+              "host": ["{{base_url}}"],
+              "path": ["admin", "users"],
+              "query": [
+                { "key": "page", "value": "1" },
+                { "key": "page_size", "value": "20" },
+                { "key": "status", "value": "active", "disabled": true },
+                { "key": "role", "value": "user", "disabled": true },
+                { "key": "search", "value": "nguyen", "disabled": true },
+                { "key": "sort_by", "value": "created_at", "disabled": true },
+                { "key": "sort_order", "value": "desc", "disabled": true }
+              ]
+            },
+            "header": [{ "key": "Authorization", "value": "Bearer {{admin_token}}" }]
+          }
+        },
+        {
+          "name": "Get User",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/admin/users/{{user_id}}",
+            "header": [{ "key": "Authorization", "value": "Bearer {{admin_token}}" }]
+          }
+        },
+        {
+          "name": "Update User Role",
+          "request": {
+            "method": "PATCH",
+            "url": "{{base_url}}/admin/users/{{user_id}}",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{admin_token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"role\": \"admin\"\n}" }
+          }
+        },
+        {
+          "name": "Suspend User",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/admin/users/{{user_id}}/suspend",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{admin_token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"reason\": \"Vi pham dieu khoan su dung\"\n}" }
+          }
+        },
+        {
+          "name": "Reinstate User",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/admin/users/{{user_id}}/reinstate",
+            "header": [{ "key": "Authorization", "value": "Bearer {{admin_token}}" }]
+          }
+        },
+        {
+          "name": "Revoke Sessions",
+          "request": {
+            "method": "DELETE",
+            "url": "{{base_url}}/admin/users/{{user_id}}/sessions",
+            "header": [{ "key": "Authorization", "value": "Bearer {{admin_token}}" }]
+          }
+        },
+        {
+          "name": "List Plans",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "const items = pm.response.json().data;",
+            "if (items && items.length > 0) pm.environment.set('plan_id', items[0].id);"
+          ], "type": "text/javascript" } }],
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/admin/plans",
+            "header": [{ "key": "Authorization", "value": "Bearer {{admin_token}}" }]
+          }
+        },
+        {
+          "name": "Create Plan",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/admin/plans",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{admin_token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"name\": \"Pro\",\n  \"slug\": \"pro\",\n  \"price_monthly\": 199000,\n  \"price_yearly\": 1990000,\n  \"currency\": \"VND\",\n  \"max_clients\": 100,\n  \"max_deals\": 500,\n  \"max_ai_calls_per_month\": 200,\n  \"can_export_pdf\": true,\n  \"is_active\": true\n}" }
+          }
+        },
+        {
+          "name": "Update Plan",
+          "request": {
+            "method": "PATCH",
+            "url": "{{base_url}}/admin/plans/{{plan_id}}",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{admin_token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"price_monthly\": 249000,\n  \"max_ai_calls_per_month\": 300\n}" }
+          }
+        },
+        {
+          "name": "List Subscriptions",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/admin/subscriptions?page=1&page_size=20",
+            "header": [{ "key": "Authorization", "value": "Bearer {{admin_token}}" }]
+          }
+        },
+        {
+          "name": "List AI Costs",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/admin/ai-costs?page=1&page_size=20",
+            "header": [{ "key": "Authorization", "value": "Bearer {{admin_token}}" }]
+          }
+        },
+        {
+          "name": "List Audit Logs",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/admin/audit-logs?page=1&page_size=20",
+            "header": [{ "key": "Authorization", "value": "Bearer {{admin_token}}" }]
+          }
+        },
+        {
+          "name": "List Templates",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/admin/templates",
+            "header": [{ "key": "Authorization", "value": "Bearer {{admin_token}}" }]
+          }
+        },
+        {
+          "name": "List Feature Flags",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/admin/feature-flags",
+            "header": [{ "key": "Authorization", "value": "Bearer {{admin_token}}" }]
+          }
+        },
+        {
+          "name": "Platform Metrics",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/admin/platform-metrics",
+            "header": [{ "key": "Authorization", "value": "Bearer {{admin_token}}" }]
+          }
+        }
+      ]
+    }
+  ]
+}
