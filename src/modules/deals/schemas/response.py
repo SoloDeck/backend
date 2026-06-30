@@ -18,6 +18,7 @@ class DealResponse(BaseModel):
     actual_value: Decimal | None
     currency: str
     notes: str | None
+    desired_timeline: str | None
     project_type: str | None
     service_category: str | None
     pricing_tier: str | None

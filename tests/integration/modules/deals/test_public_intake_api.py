@@ -25,7 +25,7 @@ async def _owner_intake_token(client: AsyncClient) -> tuple[dict, str]:
 async def test_public_intake_creates_lead_and_appears_in_owner_deals(client: AsyncClient) -> None:
     headers, token = await _owner_intake_token(client)
 
-    with patch("src.workers.ai_jobs.tasks.qualify_intake_async.delay"):
+    with patch("src.workers.ai_jobs.tasks.qualify_deal_async_by_id.delay"):
         resp = await client.post(
             f"/api/v1/intake/{token}",
             json={

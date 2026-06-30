@@ -133,6 +133,59 @@ class ProposalsService:
         proposal.ai_generated = True
         return await self.repo.save(proposal)
 
+    async def generate_from_deal(self, user_id: uuid.UUID, deal_id: uuid.UUID, ai_facade):  # type: ignore[return]
+        deal = await self.repo.get_deal(deal_id)
+        if deal is None or deal.owner_user_id != user_id:
+            raise NotFoundError(f"Deal {deal_id} not found")
+
+        sub = await self.repo.get_subscription(user_id)
+        plan = await self.repo.get_plan(sub.plan_id) if sub else None
+        user_can_use_ai = bool(plan and plan.can_use_ai)
+
+        client = await self.repo.get_client(deal.client_id) if deal.client_id else None
+        user = await self.repo.get_user(user_id)
+
+        budget = None
+        if deal.estimated_value is not None:
+            budget = f"{deal.estimated_value} {deal.currency or 'VND'}"
+
+        company_name = None
+        if client and getattr(client, "type", None) == "company":
+            company_name = client.name
+
+        content = await ai_facade.generate_proposal(
+            deal_data={
+                "title": deal.title,
+                "stage": deal.stage,
+                "notes": deal.notes,
+                "project_type": deal.project_type,
+                "service_category": deal.service_category,
+                "pricing_tier": deal.pricing_tier,
+                "budget": budget,
+            },
+            client_data={
+                "name": client.name if client else "",
+                "company_name": company_name,
+                "email": client.email if client else "",
+            },
+            user_profile={
+                "name": user.full_name if user else "",
+                "email": user.email if user else "",
+            },
+            template=None,
+            user_can_use_ai=user_can_use_ai,
+        )
+
+        version_number = await self.repo.count_by_deal(deal_id) + 1
+        return await self.repo.create(
+            deal_id=deal_id,
+            owner_user_id=user_id,
+            version_number=version_number,
+            status="draft",
+            content=content,
+            ai_generated=True,
+        )
+
     async def transition_status(
         self, user_id: uuid.UUID, proposal_id: uuid.UUID, target_status: str
     ):  # type: ignore[return]

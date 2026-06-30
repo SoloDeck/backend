@@ -1,10 +1,16 @@
 import uuid
 from dataclasses import dataclass
 
-from sqlalchemy import select
+from sqlalchemy import exists, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.infrastructure.database.models import ClientCommunicationLogModel, ClientModel
+from src.infrastructure.database.models import (
+    ClientCommunicationLogModel,
+    ClientModel,
+    ContractModel,
+    DealModel,
+    InvoiceModel,
+)
 
 
 @dataclass
@@ -59,6 +65,16 @@ class ClientsRepository:
             )
         )
         return list(result.scalars().all())
+
+    async def has_transactions(self, client_id: uuid.UUID) -> bool:
+        """Return True if the client has any deals, invoices, or contracts."""
+        for Model in (DealModel, InvoiceModel, ContractModel):
+            found = await self.db.scalar(
+                select(exists().where(Model.client_id == client_id))
+            )
+            if found:
+                return True
+        return False
 
     async def save(self, obj):
         await self.db.flush()
