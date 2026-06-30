@@ -277,6 +277,35 @@ def _invoice_payload(client_id: str, **overrides: object) -> dict:
     }
 
 
+async def _create_contract(http, headers: dict, client_id: str) -> dict:
+    """Create the minimal dependency chain (deal → proposal → contract) and return contract data."""
+    deal = await http.post("/api/v1/deals", json=_deal_payload(client_id), headers=headers)
+    assert deal.status_code == 201, deal.text
+    deal_id = deal.json()["data"]["id"]
+
+    proposal = await http.post(
+        "/api/v1/proposals",
+        json={"deal_id": deal_id, "content": {"body": "test"}},
+        headers=headers,
+    )
+    assert proposal.status_code == 201, proposal.text
+    proposal_id = proposal.json()["data"]["id"]
+
+    # Contract requires an accepted proposal: draft → sent → accepted
+    r = await http.patch(f"/api/v1/proposals/{proposal_id}/status", json={"status": "sent"}, headers=headers)
+    assert r.status_code == 200, r.text
+    r = await http.patch(f"/api/v1/proposals/{proposal_id}/status", json={"status": "accepted"}, headers=headers)
+    assert r.status_code == 200, r.text
+
+    contract = await http.post(
+        "/api/v1/contracts",
+        json={"deal_id": deal_id, "proposal_id": proposal_id, "client_id": client_id, "content": {}},
+        headers=headers,
+    )
+    assert contract.status_code == 201, contract.text
+    return contract.json()["data"]
+
+
 class TestDeleteClient:
     async def test_clean_client_returns_200(self, client: AsyncClient) -> None:
         """Client with no transactions can be deleted."""
@@ -388,6 +417,59 @@ class TestDeleteClient:
         resp = await client.delete(f"/api/v1/clients/{created['id']}", headers=headers)
         assert resp.status_code == 409
         assert resp.json()["error"]["code"] == "BUSINESS_RULE_VIOLATION"
+
+    async def test_client_with_soft_deleted_invoice_still_returns_409(self, client: AsyncClient) -> None:
+        """Soft-deleted invoices still count — historical records block deletion."""
+        headers = await _auth_headers(client)
+        created = await _create_client(client, headers)
+
+        deal_resp = await client.post(
+            "/api/v1/deals",
+            json=_deal_payload(created["id"]),
+            headers=headers,
+        )
+        deal_id = deal_resp.json()["data"]["id"]
+
+        inv_resp = await client.post(
+            "/api/v1/invoices",
+            json={**_invoice_payload(created["id"]), "deal_id": deal_id},
+            headers=headers,
+        )
+        invoice_id = inv_resp.json()["data"]["id"]
+
+        # Soft-delete the invoice
+        del_resp = await client.delete(f"/api/v1/invoices/{invoice_id}", headers=headers)
+        assert del_resp.status_code == 200, del_resp.text
+
+        # Client still cannot be deleted
+        resp = await client.delete(f"/api/v1/clients/{created['id']}", headers=headers)
+        assert resp.status_code == 409
+
+    async def test_client_with_contract_returns_409(self, client: AsyncClient) -> None:
+        """Client that has a contract cannot be deleted."""
+        headers = await _auth_headers(client)
+        created = await _create_client(client, headers)
+
+        await _create_contract(client, headers, created["id"])
+
+        resp = await client.delete(f"/api/v1/clients/{created['id']}", headers=headers)
+        assert resp.status_code == 409
+        assert resp.json()["error"]["code"] == "BUSINESS_RULE_VIOLATION"
+
+    async def test_client_with_soft_deleted_contract_still_returns_409(self, client: AsyncClient) -> None:
+        """Soft-deleted contracts still count — historical records block deletion."""
+        headers = await _auth_headers(client)
+        created = await _create_client(client, headers)
+
+        contract = await _create_contract(client, headers, created["id"])
+
+        # Soft-delete the contract
+        del_resp = await client.delete(f"/api/v1/contracts/{contract['id']}", headers=headers)
+        assert del_resp.status_code == 200, del_resp.text
+
+        # Client still cannot be deleted
+        resp = await client.delete(f"/api/v1/clients/{created['id']}", headers=headers)
+        assert resp.status_code == 409
 
     async def test_delete_nonexistent_client_returns_404(self, client: AsyncClient) -> None:
         headers = await _auth_headers(client)
