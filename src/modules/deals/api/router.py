@@ -131,6 +131,17 @@ async def delete_deal(
     return ApiResponse.ok(MsgResp(detail="Deal deleted"))
 
 
+@router.post("/{deal_id}/qualify")
+async def qualify_deal(
+    deal_id: uuid.UUID,
+    user_id: CurrentUserId,
+    db: DBSession,
+    ai: AIFacadeDep,
+):
+    result = await DealsService(db=db, ai_facade=ai).qualify_deal(user_id, deal_id)
+    return ApiResponse.ok(result)
+
+
 @router.post("/{deal_id}/stage", response_model=ApiResponse[DealResponse])
 async def transition_stage(
     deal_id: uuid.UUID,

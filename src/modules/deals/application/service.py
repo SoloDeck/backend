@@ -209,6 +209,82 @@ class DealsService:
             )
         return saved
 
+    async def _run_ai_qualification(self, deal_model, inquiry_context: str) -> dict:
+        """Run AI lead qualification against inquiry_context and persist scores on deal_model."""
+        result = await self.ai_facade.qualify_lead(  # type: ignore[union-attr]
+            inquiry_text=inquiry_context,
+            user_can_use_ai=True,  # TODO: get from subscriptions
+        )
+
+        _score_map = {"HOT": 80, "WARM": 50, "COLD": 20}
+        _confidence_map = {
+            "HOT": AIConfidence.high(),
+            "WARM": AIConfidence.medium(),
+            "COLD": AIConfidence.low(),
+        }
+        raw = str(result.get("suggested_lead_score", "")).upper()
+        score = _score_map.get(raw, 50)
+        confidence = _confidence_map.get(raw, AIConfidence.medium())
+        reasoning = str(result.get("reasoning", ""))
+        model_version = "gemma-4-31b-it"
+
+        deal_domain = Deal(
+            id=deal_model.id,
+            owner_user_id=deal_model.owner_user_id,
+            client_id=deal_model.client_id,
+            title=deal_model.title,
+            stage=DealStage(deal_model.stage),
+            value=None,
+            source=deal_model.source,
+            expected_close_date=None,
+            ai_score=deal_model.ai_qualification_score,
+            ai_confidence=None,
+            ai_recommendation=deal_model.ai_qualification_recommendation,
+            closed_at=deal_model.closed_at,
+            created_at=deal_model.created_at,
+            updated_at=deal_model.updated_at,
+            deleted_at=deal_model.deleted_at,
+        )
+        aggregate = DealAggregate(deal=deal_domain)
+        lead_score = aggregate.score_lead(
+            score=score,
+            confidence=confidence.value,
+            reasoning=reasoning,
+            model_version=model_version,
+        )
+
+        await self.repo.create_lead_score(
+            id=lead_score.id,
+            deal_id=lead_score.deal_id,
+            score=lead_score.score,
+            confidence=lead_score.confidence.value,
+            reasoning=lead_score.reasoning,
+            model_version=lead_score.model_version,
+            generated_at=lead_score.generated_at,
+            project_type=result.get("project_type"),
+            budget_signal=result.get("budget_signal"),
+            timeline_signal=result.get("timeline_signal"),
+            urgency_signal=result.get("urgency_signal"),
+            red_flags=result.get("red_flags"),
+        )
+
+        deal_model.ai_qualification_score = lead_score.score
+        deal_model.ai_qualification_confidence = lead_score.confidence.value
+        deal_model.ai_qualification_recommendation = aggregate.deal.ai_recommendation
+        deal_model.ai_qualification_reasoning = reasoning
+        deal_model.ai_qualification_project_type = result.get("project_type")
+        deal_model.ai_qualification_budget_signal = result.get("budget_signal")
+        deal_model.ai_qualification_timeline_signal = result.get("timeline_signal")
+        deal_model.ai_qualification_urgency_signal = result.get("urgency_signal")
+        deal_model.ai_qualification_red_flags = result.get("red_flags")
+        await self.repo.save(deal_model)
+
+        return {
+            **result,
+            "ai_qualification_score": score,
+            "ai_qualification_recommendation": aggregate.deal.ai_recommendation,
+        }
+
     async def qualify_deal_intake(
         self,
         user_id: uuid.UUID,
@@ -229,80 +305,40 @@ class DealsService:
             parts.append(f"Desired timeline: {intake.desired_timeline}")
         inquiry_context = "\n".join(parts)
 
-        result = await self.ai_facade.qualify_lead(
-            inquiry_text=inquiry_context,
-            user_can_use_ai=True,  # TODO: get from subscriptions
-        )
-
-        _score_map = {"HOT": 80, "WARM": 50, "COLD": 20}
-        _confidence_map = {
-            "HOT": AIConfidence.high(),
-            "WARM": AIConfidence.medium(),
-            "COLD": AIConfidence.low(),
-        }
-        raw = str(result.get("suggested_lead_score", "")).upper()
-        score = _score_map.get(raw, 50)
-        confidence = _confidence_map.get(raw, AIConfidence.medium())
-        reasoning = str(result.get("reasoning", ""))
-        model_version = "gemma-4-31b-it"
-
         deal_model = await self.repo.get_deal_by_client_id(intake.client_id, user_id)
-        if deal_model is not None:
-            # Build a minimal domain Deal so the aggregate can run its logic
-            deal_domain = Deal(
-                id=deal_model.id,
-                owner_user_id=deal_model.owner_user_id,
-                client_id=deal_model.client_id,
-                title=deal_model.title,
-                stage=DealStage(deal_model.stage),
-                value=None,
-                source=deal_model.source,
-                expected_close_date=None,
-                ai_score=deal_model.ai_qualification_score,
-                ai_confidence=None,
-                ai_recommendation=deal_model.ai_qualification_recommendation,
-                closed_at=deal_model.closed_at,
-                created_at=deal_model.created_at,
-                updated_at=deal_model.updated_at,
-                deleted_at=deal_model.deleted_at,
+        if deal_model is None:
+            result = await self.ai_facade.qualify_lead(
+                inquiry_text=inquiry_context,
+                user_can_use_ai=True,
             )
-            aggregate = DealAggregate(deal=deal_domain)
-            lead_score = aggregate.score_lead(
-                score=score,
-                confidence=confidence.value,
-                reasoning=reasoning,
-                model_version=model_version,
-            )
+            return result
 
-            await self.repo.create_lead_score(
-                id=lead_score.id,
-                deal_id=lead_score.deal_id,
-                score=lead_score.score,
-                confidence=lead_score.confidence.value,
-                reasoning=lead_score.reasoning,
-                model_version=lead_score.model_version,
-                generated_at=lead_score.generated_at,
-                project_type=result.get("project_type"),
-                budget_signal=result.get("budget_signal"),
-                timeline_signal=result.get("timeline_signal"),
-                urgency_signal=result.get("urgency_signal"),
-                red_flags=result.get("red_flags"),
-            )
+        return await self._run_ai_qualification(deal_model, inquiry_context)
 
-            deal_model.ai_qualification_score = lead_score.score
-            deal_model.ai_qualification_confidence = lead_score.confidence.value
-            deal_model.ai_qualification_recommendation = aggregate.deal.ai_recommendation
-            deal_model.ai_qualification_reasoning = reasoning
-            deal_model.ai_qualification_project_type = result.get("project_type")
-            deal_model.ai_qualification_budget_signal = result.get("budget_signal")
-            deal_model.ai_qualification_timeline_signal = result.get("timeline_signal")
-            deal_model.ai_qualification_urgency_signal = result.get("urgency_signal")
-            deal_model.ai_qualification_red_flags = result.get("red_flags")
-            await self.repo.save(deal_model)
+    async def qualify_deal(
+        self,
+        user_id: uuid.UUID,
+        deal_id: uuid.UUID,
+    ):
+        deal_model = await self._get_deal(user_id, deal_id)
 
-        recommendation = aggregate.deal.ai_recommendation if deal_model else None
-        return {
-            **result,
-            "ai_qualification_score": score,
-            "ai_qualification_recommendation": recommendation,
-        }
+        if not self.ai_facade:
+            raise RuntimeError("AIFacade not initialized")
+
+        # Prefer inquiry context from the linked intake if available
+        intake = await self.repo.get_intake_by_client_id(deal_model.client_id, user_id)
+        if intake is not None:
+            parts = [intake.inquiry_text]
+            if intake.estimated_budget:
+                parts.append(f"Estimated budget: {intake.estimated_budget}")
+            if intake.desired_timeline:
+                parts.append(f"Desired timeline: {intake.desired_timeline}")
+        else:
+            parts = [deal_model.title]
+            if deal_model.notes:
+                parts.append(deal_model.notes)
+            if deal_model.estimated_value:
+                parts.append(f"Estimated value: {deal_model.estimated_value} {deal_model.currency}")
+        inquiry_context = "\n".join(parts)
+
+        return await self._run_ai_qualification(deal_model, inquiry_context)

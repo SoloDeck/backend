@@ -61,6 +61,17 @@ class DealsRepository:
             )
         )
 
+    async def get_intake_by_client_id(self, client_id: uuid.UUID, owner_user_id: uuid.UUID):
+        return await self.db.scalar(
+            select(DealIntakeModel)
+            .where(
+                DealIntakeModel.client_id == client_id,
+                DealIntakeModel.owner_user_id == owner_user_id,
+                DealIntakeModel.deleted_at.is_(None),
+            )
+            .order_by(DealIntakeModel.created_at.desc())
+        )
+
     async def list_intakes(
         self, owner_user_id: uuid.UUID, page: int = 1, page_size: int = 20
     ) -> tuple[list, int]:
