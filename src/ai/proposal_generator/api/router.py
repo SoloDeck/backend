@@ -3,7 +3,7 @@ from io import BytesIO
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
-from google import genai
+from groq import Groq
 
 from src.config.settings import settings
 
@@ -18,7 +18,7 @@ router = APIRouter(prefix="/proposal", tags=["Proposal Generator"])
 
 def get_proposal_service() -> ProposalGenerationService:
 
-    client = genai.Client(api_key=settings.gemini_api_key)
+    client = Groq(api_key=settings.groq_api_key)
 
     return ProposalGenerationService(client=client)
 
