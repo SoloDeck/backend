@@ -94,6 +94,57 @@ class TestUpdateMe:
 
 
 # ---------------------------------------------------------------------------
+# PATCH /users/me/professional-profile
+# ---------------------------------------------------------------------------
+
+
+class TestUpdateProfessionalProfile:
+    async def test_updates_profile_fields(self, client: AsyncClient) -> None:
+        headers, _ = await _register(client)
+        resp = await client.patch(
+            "/api/v1/users/me/professional-profile",
+            json={
+                "skills": ["Administration", "Programming", "HR"],
+                "specialization": "Java",
+                "default_hourly_rate": 200000,
+                "currency": "VND",
+                "portfolio_url": "https://example.com/",
+                "business_name": "SoloDesk Freelancer",
+            },
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        profile = resp.json()["data"]["professional_profile"]
+        assert profile["skills"] == ["Administration", "Programming", "HR"]
+        assert profile["specialization"] == "Java"
+        assert profile["default_hourly_rate"] == "200000.00"
+        assert profile["portfolio_url"] == "https://example.com/"
+        assert profile["business_name"] == "SoloDesk Freelancer"
+
+    async def test_partial_update_leaves_other_fields(self, client: AsyncClient) -> None:
+        headers, _ = await _register(client)
+        await client.patch(
+            "/api/v1/users/me/professional-profile",
+            json={"specialization": "Java"},
+            headers=headers,
+        )
+        resp = await client.patch(
+            "/api/v1/users/me/professional-profile",
+            json={"business_name": "Solo Studio"},
+            headers=headers,
+        )
+        profile = resp.json()["data"]["professional_profile"]
+        assert profile["specialization"] == "Java"
+        assert profile["business_name"] == "Solo Studio"
+
+    async def test_unauthenticated_returns_401(self, client: AsyncClient) -> None:
+        resp = await client.patch(
+            "/api/v1/users/me/professional-profile", json={"specialization": "Java"}
+        )
+        assert resp.status_code == 401
+
+
+# ---------------------------------------------------------------------------
 # DELETE /users/me
 # ---------------------------------------------------------------------------
 

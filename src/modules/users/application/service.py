@@ -10,6 +10,7 @@ from src.modules.users.infrastructure.repository import UsersRepository
 from src.modules.users.schemas.request import (
     ChangePasswordRequest,
     FreelancerProfileUpdateRequest,
+    UpdateProfessionalProfileRequest,
     UpdateUserRequest,
 )
 from src.shared.exceptions.domain import AuthenticationError, NotFoundError
@@ -53,6 +54,24 @@ class UsersService:
         user = await self.get_me(user_id)
         for field in payload.model_fields_set:
             setattr(user, field, getattr(payload, field))
+        return await self.repo.save(user)
+
+    async def update_professional_profile(
+        self, user_id: uuid.UUID, payload: UpdateProfessionalProfileRequest
+    ):  # type: ignore[return]
+        user = await self.get_me(user_id)
+        if payload.skills is not None:
+            user.skills = payload.skills
+        if payload.specialization is not None:
+            user.specialization = payload.specialization
+        if payload.default_hourly_rate is not None:
+            user.default_hourly_rate = payload.default_hourly_rate
+        if payload.currency is not None:
+            user.currency = payload.currency
+        if payload.portfolio_url is not None:
+            user.portfolio_url = payload.portfolio_url
+        if payload.business_name is not None:
+            user.business_name = payload.business_name
         return await self.repo.save(user)
 
     async def change_password(self, user_id: uuid.UUID, payload: ChangePasswordRequest) -> None:
