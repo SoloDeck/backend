@@ -978,6 +978,26 @@ class TestAdminAuditLogs:
         assert resp.status_code == 200
         assert resp.json()["data"]["total"] >= 1
 
+    async def test_update_user_creates_audit_log(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        headers = await _admin_headers(client, db_session)
+        user_h = await _user_headers(client)
+        user_id = (await client.get("/api/v1/users/me", headers=user_h)).json()["data"]["id"]
+
+        await client.patch(
+            f"/api/v1/admin/users/{user_id}",
+            json={"full_name": "Audited Name"},
+            headers=headers,
+        )
+
+        resp = await client.get(
+            "/api/v1/admin/audit-logs?event_type=user.updated", headers=headers
+        )
+        assert resp.status_code == 200
+        logs = resp.json()["data"]["data"]
+        assert any("full_name=Audited Name" in e["description"] for e in logs)
+
     async def test_filter_by_event_type(
         self, client: AsyncClient, db_session: AsyncSession
     ) -> None:

@@ -64,25 +64,43 @@ class AdminService:
             raise NotFoundError(f"User {user_id} not found")
         return user
 
-    async def update_user(self, user_id: uuid.UUID, payload: AdminUpdateUserRequest) -> UserModel:
+    async def update_user(
+        self, user_id: uuid.UUID, payload: AdminUpdateUserRequest, *, admin_id: uuid.UUID
+    ) -> UserModel:
         user = await self.get_user(user_id)
+        changes: list[str] = []
         if payload.role is not None:
             user.role = payload.role
+            changes.append(f"role={payload.role}")
         if payload.status is not None:
             user.status = payload.status
+            changes.append(f"status={payload.status}")
         if payload.full_name is not None:
             user.full_name = payload.full_name
+            changes.append(f"full_name={payload.full_name}")
         if payload.email is not None:
             existing = await self.repo.get_user_by_email(payload.email, exclude_user_id=user_id)
             if existing is not None:
                 raise AlreadyExistsError(f"Email '{payload.email}' is already in use")
             user.email = payload.email
+            changes.append(f"email={payload.email}")
         if payload.phone is not None:
             existing = await self.repo.get_user_by_phone(payload.phone, exclude_user_id=user_id)
             if existing is not None:
                 raise AlreadyExistsError(f"Phone '{payload.phone}' is already in use")
             user.phone = payload.phone
-        return await self.repo.save(user)
+            changes.append(f"phone={payload.phone}")
+
+        user = await self.repo.save(user)
+        if changes:
+            await self.repo.create_audit_log(
+                event_type="user.updated",
+                actor_user_id=admin_id,
+                target_type="user",
+                target_id=user_id,
+                description=f"Admin updated user {user.email}: {', '.join(changes)}",
+            )
+        return user
 
     async def suspend_user(
         self, user_id: uuid.UUID, *, admin_id: uuid.UUID

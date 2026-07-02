@@ -112,10 +112,12 @@ async def get_user(
 async def update_user(
     user_id: uuid.UUID,
     payload: AdminUpdateUserRequest,
-    _: AdminUser,
+    admin: AdminUser,
     db: DBSession,
 ) -> ApiResponse[AdminUserResponse]:
-    user = await AdminService(db=db).update_user(user_id, payload)
+    user = await AdminService(db=db).update_user(
+        user_id, payload, admin_id=uuid.UUID(admin.sub)
+    )
     return ApiResponse.ok(AdminUserResponse.model_validate(user))
 
 

@@ -3042,7 +3042,7 @@ paths:
       description: |
         Changes `role`, `status`, `full_name`, `email`, or `phone`. Changing `email` or
         `phone` triggers a uniqueness check across all users and returns 409 if already
-        taken by someone else.
+        taken by someone else. Every change is written to the audit log.
       requestBody:
         required: true
         content:
