@@ -14,6 +14,7 @@ from src.modules.admin.schemas.request import (
     AdminPlanRequest,
     AdminSubscriptionOverrideRequest,
     AdminUpdateFeatureFlagRequest,
+    AdminUpdatePlanRequest,
     AdminUpdateTemplateRequest,
     AdminUpdateUserRequest,
 )
@@ -192,7 +193,7 @@ async def create_plan(
 @router.patch("/plans/{plan_id}", response_model=ApiResponse[AdminPlanResponse])
 async def update_plan(
     plan_id: uuid.UUID,
-    payload: AdminPlanRequest,
+    payload: AdminUpdatePlanRequest,
     _: AdminUser,
     db: DBSession,
 ) -> ApiResponse[AdminPlanResponse]:

@@ -3232,6 +3232,8 @@ paths:
                     properties:
                       data:
                         $ref: '#/components/schemas/SubscriptionPlanResponse'
+        '409':
+          $ref: '#/components/responses/Conflict'
 
   /admin/plans/{plan_id}:
     parameters:
@@ -3255,8 +3257,11 @@ paths:
           $ref: '#/components/responses/NotFound'
     patch:
       tags: [Admin]
-      summary: Update a plan (deactivate or change limits; existing subscribers unaffected)
-      description: Deactivating (`is_active=false`) hides the plan from the public catalog but does not cancel existing subscriptions on that plan.
+      summary: Update a plan (partial — name, pricing, limits, or active state)
+      description: |
+        Partial update — only provided fields are changed. Deactivating (`is_active=false`)
+        hides the plan from the public catalog but does not cancel existing subscriptions
+        on that plan. Changing `name` or `slug` returns 409 if already used by another plan.
       requestBody:
         required: true
         content:
@@ -3275,6 +3280,10 @@ paths:
                     properties:
                       data:
                         $ref: '#/components/schemas/SubscriptionPlanResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
 
   /admin/ai-costs:
     get:
@@ -6672,10 +6681,23 @@ components:
         max_deals:
           type: integer
           nullable: true
+        is_active:
+          type: boolean
+          default: true
 
     AdminUpdatePlanRequest:
       type: object
+      description: Partial update — only provided fields are changed. `name`/`slug` are checked for uniqueness against other plans (409 if taken).
       properties:
+        name:
+          type: string
+        slug:
+          type: string
+        price_monthly:
+          type: number
+          format: decimal
+        currency:
+          type: string
         max_ai_generations_per_month:
           type: integer
         can_use_ai:

@@ -771,6 +771,22 @@ class TestAdminCreatePlan:
         resp = await client.post("/api/v1/admin/plans", json=_plan_payload())
         assert resp.status_code == 401
 
+    async def test_duplicate_slug_returns_409(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        headers = await _admin_headers(client, db_session)
+        await client.post(
+            "/api/v1/admin/plans",
+            json=_plan_payload(name="Original", slug="dup-slug"),
+            headers=headers,
+        )
+        resp = await client.post(
+            "/api/v1/admin/plans",
+            json=_plan_payload(name="Different Name", slug="dup-slug"),
+            headers=headers,
+        )
+        assert resp.status_code == 409
+
 
 # ---------------------------------------------------------------------------
 # PATCH /admin/plans/{plan_id}
@@ -789,6 +805,30 @@ class TestAdminUpdatePlan:
         assert data["name"] == "Renamed Plan"
         assert data["slug"] == "renamed-plan"
 
+    async def test_partial_update_only_changes_provided_fields(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        headers = await _admin_headers(client, db_session)
+        created = (
+            await client.post(
+                "/api/v1/admin/plans",
+                json=_plan_payload(name="Stable Name", slug="stable-slug", price_monthly="9.99"),
+                headers=headers,
+            )
+        ).json()["data"]
+
+        resp = await client.patch(
+            f"/api/v1/admin/plans/{created['id']}",
+            json={"price_monthly": 199000, "currency": "VND"},
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        assert data["name"] == "Stable Name"
+        assert data["slug"] == "stable-slug"
+        assert data["price_monthly"] == "199000.00"
+        assert data["currency"] == "VND"
+
     async def test_deactivate_plan(self, client: AsyncClient, db_session: AsyncSession) -> None:
         headers = await _admin_headers(client, db_session)
         plan_id = (await client.post("/api/v1/admin/plans", json=_plan_payload(), headers=headers)).json()["data"]["id"]
@@ -800,6 +840,49 @@ class TestAdminUpdatePlan:
         )
         assert resp.status_code == 200
         assert resp.json()["data"]["is_active"] is False
+
+    async def test_duplicate_slug_returns_409(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        headers = await _admin_headers(client, db_session)
+        await client.post(
+            "/api/v1/admin/plans",
+            json=_plan_payload(name="Plan A", slug="plan-a-slug"),
+            headers=headers,
+        )
+        plan_b = (
+            await client.post(
+                "/api/v1/admin/plans",
+                json=_plan_payload(name="Plan B", slug="plan-b-slug"),
+                headers=headers,
+            )
+        ).json()["data"]
+
+        resp = await client.patch(
+            f"/api/v1/admin/plans/{plan_b['id']}",
+            json={"slug": "plan-a-slug"},
+            headers=headers,
+        )
+        assert resp.status_code == 409
+
+    async def test_reusing_own_slug_is_not_a_conflict(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        headers = await _admin_headers(client, db_session)
+        created = (
+            await client.post(
+                "/api/v1/admin/plans",
+                json=_plan_payload(name="Self Plan", slug="self-plan-slug"),
+                headers=headers,
+            )
+        ).json()["data"]
+
+        resp = await client.patch(
+            f"/api/v1/admin/plans/{created['id']}",
+            json={"slug": "self-plan-slug", "price_monthly": 15.0},
+            headers=headers,
+        )
+        assert resp.status_code == 200
 
     async def test_update_nonexistent_plan_returns_404(self, client: AsyncClient, db_session: AsyncSession) -> None:
         headers = await _admin_headers(client, db_session)

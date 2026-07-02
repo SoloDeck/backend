@@ -27,6 +27,19 @@ class AdminPlanRequest(BaseModel):
     is_active: bool = True
 
 
+class AdminUpdatePlanRequest(BaseModel):
+    name: str | None = None
+    slug: str | None = None
+    price_monthly: Decimal | None = None
+    currency: str | None = None
+    can_use_ai: bool | None = None
+    can_export_pdf: bool | None = None
+    max_clients: int | None = None
+    max_deals: int | None = None
+    max_ai_generations_per_month: int | None = None
+    is_active: bool | None = None
+
+
 class AdminSubscriptionOverrideRequest(BaseModel):
     plan_id: uuid.UUID | None = None
     override_expires_at: datetime | None = None

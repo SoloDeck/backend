@@ -174,6 +174,18 @@ class AdminRepository:
     async def get_plan(self, plan_id: uuid.UUID):
         return await self.db.scalar(select(PlanModel).where(PlanModel.id == plan_id))
 
+    async def get_plan_by_name(self, name: str, *, exclude_plan_id: uuid.UUID | None = None):
+        stmt = select(PlanModel).where(PlanModel.name == name)
+        if exclude_plan_id is not None:
+            stmt = stmt.where(PlanModel.id != exclude_plan_id)
+        return await self.db.scalar(stmt)
+
+    async def get_plan_by_slug(self, slug: str, *, exclude_plan_id: uuid.UUID | None = None):
+        stmt = select(PlanModel).where(PlanModel.slug == slug)
+        if exclude_plan_id is not None:
+            stmt = stmt.where(PlanModel.id != exclude_plan_id)
+        return await self.db.scalar(stmt)
+
     async def create_plan(self, **values):
         plan = PlanModel(**values)
         self.db.add(plan)
