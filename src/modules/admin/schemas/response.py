@@ -1,9 +1,11 @@
 import uuid
 from datetime import datetime
 from decimal import Decimal
-from typing import Generic, TypeVar
+from typing import Any, Generic, TypeVar
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, model_validator
+
+from src.modules.users.schemas.response import UserResponse, build_user_fields
 
 T = TypeVar("T")
 
@@ -15,16 +17,15 @@ class Paginated(BaseModel, Generic[T]):
     page_size: int
 
 
-class AdminUserResponse(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
+class AdminUserResponse(UserResponse):
+    deleted_at: datetime | None = None
 
-    id: uuid.UUID
-    email: str
-    full_name: str
-    role: str
-    status: str
-    phone: str | None
-    created_at: datetime
+    @model_validator(mode="before")
+    @classmethod
+    def _nest_and_add_deleted_at(cls, obj: Any) -> Any:
+        if isinstance(obj, dict):
+            return obj
+        return {**build_user_fields(obj), "deleted_at": obj.deleted_at}
 
 
 class AdminPlanResponse(BaseModel):

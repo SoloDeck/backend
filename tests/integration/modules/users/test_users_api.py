@@ -38,6 +38,16 @@ class TestGetMe:
         resp = await client.get("/api/v1/users/me", headers=headers)
         assert resp.json()["data"]["intake_share_token"] is not None
 
+    async def test_includes_profile_and_preferences(self, client: AsyncClient) -> None:
+        headers, _ = await _register(client)
+        resp = await client.get("/api/v1/users/me", headers=headers)
+        data = resp.json()["data"]
+        assert "updated_at" in data
+        assert "bio" in data
+        assert data["professional_profile"]["currency"] == "VND"
+        assert data["preferences"]["locale"] == "vi"
+        assert data["preferences"]["theme"] == "light"
+
     async def test_unauthenticated_returns_401(self, client: AsyncClient) -> None:
         resp = await client.get("/api/v1/users/me")
         assert resp.status_code == 401

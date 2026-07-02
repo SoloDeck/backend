@@ -1,13 +1,14 @@
 import uuid
 from datetime import datetime
 from decimal import Decimal
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
 
 class AdminUpdateUserRequest(BaseModel):
-    role: str | None = None
-    status: str | None = None
+    role: Literal["freelancer", "admin"] | None = None
+    status: Literal["active", "suspended", "deleted"] | None = None
     full_name: str | None = None
 
 
@@ -31,7 +32,7 @@ class AdminSubscriptionOverrideRequest(BaseModel):
 
 class AdminCreateTemplateRequest(BaseModel):
     name: str
-    template_type: str
+    template_type: Literal["proposal", "contract"]
     content: dict
     plan_tier_required: str | None = None
     is_active: bool = False

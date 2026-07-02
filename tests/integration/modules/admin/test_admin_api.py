@@ -240,6 +240,16 @@ class TestAdminListUsers:
             assert u["status"] == "active"
             assert u["role"] == "freelancer"
 
+    async def test_invalid_role_returns_422(self, client: AsyncClient, db_session: AsyncSession) -> None:
+        headers = await _admin_headers(client, db_session)
+        resp = await client.get("/api/v1/admin/users?role=bogus", headers=headers)
+        assert resp.status_code == 422
+
+    async def test_invalid_status_returns_422(self, client: AsyncClient, db_session: AsyncSession) -> None:
+        headers = await _admin_headers(client, db_session)
+        resp = await client.get("/api/v1/admin/users?status=bogus", headers=headers)
+        assert resp.status_code == 422
+
     async def test_pagination(self, client: AsyncClient, db_session: AsyncSession) -> None:
         headers = await _admin_headers(client, db_session)
         resp = await client.get("/api/v1/admin/users?page=1&page_size=2", headers=headers)
@@ -275,6 +285,22 @@ class TestAdminGetUser:
         resp = await client.get(f"/api/v1/admin/users/{user_id}", headers=headers)
         assert resp.status_code == 200
         assert resp.json()["data"]["id"] == user_id
+
+    async def test_includes_profile_and_preferences(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        headers = await _admin_headers(client, db_session)
+        user_h = await _user_headers(client)
+
+        me = await client.get("/api/v1/users/me", headers=user_h)
+        user_id = me.json()["data"]["id"]
+
+        resp = await client.get(f"/api/v1/admin/users/{user_id}", headers=headers)
+        data = resp.json()["data"]
+        assert "updated_at" in data
+        assert "deleted_at" in data
+        assert data["professional_profile"]["currency"] == "VND"
+        assert data["preferences"]["locale"] == "vi"
 
     async def test_nonexistent_user_returns_404(self, client: AsyncClient, db_session: AsyncSession) -> None:
         headers = await _admin_headers(client, db_session)
@@ -335,6 +361,20 @@ class TestAdminUpdateUser:
         )
         assert resp.status_code == 200
         assert resp.json()["data"]["status"] == "suspended"
+
+    async def test_update_invalid_role_returns_422(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        headers = await _admin_headers(client, db_session)
+        user_h = await _user_headers(client)
+        user_id = (await client.get("/api/v1/users/me", headers=user_h)).json()["data"]["id"]
+
+        resp = await client.patch(
+            f"/api/v1/admin/users/{user_id}",
+            json={"role": "superadmin"},
+            headers=headers,
+        )
+        assert resp.status_code == 422
 
     async def test_update_nonexistent_returns_404(self, client: AsyncClient, db_session: AsyncSession) -> None:
         headers = await _admin_headers(client, db_session)
@@ -639,6 +679,15 @@ class TestAdminListSubscriptions:
         for item in resp.json()["data"]["data"]:
             assert item["status"] == "active"
 
+    async def test_invalid_status_returns_422(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        headers = await _admin_headers(client, db_session)
+        resp = await client.get(
+            "/api/v1/admin/subscriptions?status=bogus", headers=headers
+        )
+        assert resp.status_code == 422
+
     async def test_subscription_has_plan_fields(
         self, client: AsyncClient, db_session: AsyncSession
     ) -> None:
@@ -748,6 +797,13 @@ class TestAdminAiCosts:
         assert "output_tokens" in body["totals"]
         assert "estimated_cost_usd" in body["totals"]
 
+    async def test_invalid_ai_module_returns_422(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        headers = await _admin_headers(client, db_session)
+        resp = await client.get("/api/v1/admin/ai-costs?ai_module=bogus", headers=headers)
+        assert resp.status_code == 422
+
     async def test_non_admin_returns_403(self, client: AsyncClient) -> None:
         headers = await _user_headers(client)
         resp = await client.get("/api/v1/admin/ai-costs", headers=headers)
@@ -821,6 +877,15 @@ class TestAdminListTemplates:
         resp = await client.get("/api/v1/admin/templates", headers=headers)
         assert resp.status_code == 200
         assert isinstance(resp.json()["data"], list)
+
+    async def test_invalid_template_type_returns_422(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        headers = await _admin_headers(client, db_session)
+        resp = await client.get(
+            "/api/v1/admin/templates?template_type=bogus", headers=headers
+        )
+        assert resp.status_code == 422
 
     async def test_non_admin_returns_403(self, client: AsyncClient) -> None:
         headers = await _user_headers(client)
