@@ -4,6 +4,9 @@ import asyncio
 import uuid
 from typing import Annotated
 
+from io import BytesIO
+from fastapi.responses import StreamingResponse
+
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -64,6 +67,38 @@ async def ai_generate_proposal(
     )
     return ApiResponse.created(ProposalResponse.model_validate(proposal))
 
+
+@router.post("/generate-from-deal/{deal_id}", response_model=ApiResponse[ProposalResponse], status_code=201)
+async def generate_proposal_from_deal(
+    deal_id: uuid.UUID,
+    user_id: CurrentUserId,
+    db: DBSession,
+    ai: AIFacadeDep,
+) -> ApiResponse[ProposalResponse]:
+    proposal = await ProposalsService(db=db).generate_from_deal(user_id, deal_id, ai)
+    return ApiResponse.created(ProposalResponse.model_validate(proposal))
+
+
+@router.get("/{proposal_id}/pdf")
+async def generate_proposal_pdf(
+    proposal_id: uuid.UUID,
+    user_id: CurrentUserId,
+    db: DBSession,
+):
+    pdf_bytes = await ProposalsService(db=db).generate_pdf(
+        user_id=user_id,
+        proposal_id=proposal_id,
+    )
+
+    return StreamingResponse(
+        BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="proposal-{proposal_id}.pdf"'
+            )
+        },
+    )
 
 @router.post("", response_model=ApiResponse[ProposalResponse], status_code=201)
 async def create_proposal(

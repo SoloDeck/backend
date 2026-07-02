@@ -251,3 +251,86 @@ class TestDeleteProposal:
     async def test_unauthenticated_returns_401(self, client: AsyncClient) -> None:
         resp = await client.delete(f"/api/v1/proposals/{uuid.uuid4()}")
         assert resp.status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# PATCH /proposals/{id}
+# ---------------------------------------------------------------------------
+
+
+class TestUpdateProposal:
+    async def test_update_content_returns_200(self, client: AsyncClient) -> None:
+        headers = await _auth(client)
+        deal_id = await _make_deal(client, headers)
+        proposal = await _create_proposal(client, headers, deal_id)
+
+        resp = await client.patch(
+            f"/api/v1/proposals/{proposal['id']}",
+            json={"deal_id": deal_id, "content": {"summary": "Updated content"}},
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        assert resp.json()["data"]["content"]["summary"] == "Updated content"
+
+    async def test_update_persists_on_get(self, client: AsyncClient) -> None:
+        headers = await _auth(client)
+        deal_id = await _make_deal(client, headers)
+        proposal = await _create_proposal(client, headers, deal_id)
+
+        await client.patch(
+            f"/api/v1/proposals/{proposal['id']}",
+            json={"deal_id": deal_id, "content": {"body": "Persisted body"}},
+            headers=headers,
+        )
+
+        get_resp = await client.get(f"/api/v1/proposals/{proposal['id']}", headers=headers)
+        assert get_resp.json()["data"]["content"]["body"] == "Persisted body"
+
+    async def test_update_sent_proposal_returns_409(self, client: AsyncClient) -> None:
+        """Only draft proposals can have their content edited."""
+        headers = await _auth(client)
+        deal_id = await _make_deal(client, headers)
+        proposal = await _create_proposal(client, headers, deal_id)
+
+        await client.patch(
+            f"/api/v1/proposals/{proposal['id']}/status",
+            json={"status": "sent"},
+            headers=headers,
+        )
+
+        resp = await client.patch(
+            f"/api/v1/proposals/{proposal['id']}",
+            json={"deal_id": deal_id, "content": {"body": "Too late"}},
+            headers=headers,
+        )
+        assert resp.status_code == 409
+        assert resp.json()["error"]["code"] == "BUSINESS_RULE_VIOLATION"
+
+    async def test_update_nonexistent_returns_404(self, client: AsyncClient) -> None:
+        headers = await _auth(client)
+        resp = await client.patch(
+            f"/api/v1/proposals/{uuid.uuid4()}",
+            json={"deal_id": str(uuid.uuid4()), "content": {}},
+            headers=headers,
+        )
+        assert resp.status_code == 404
+
+    async def test_update_other_users_proposal_returns_404(self, client: AsyncClient) -> None:
+        headers_a = await _auth(client)
+        headers_b = await _auth(client)
+        deal_id = await _make_deal(client, headers_a)
+        proposal = await _create_proposal(client, headers_a, deal_id)
+
+        resp = await client.patch(
+            f"/api/v1/proposals/{proposal['id']}",
+            json={"deal_id": deal_id, "content": {"body": "Hijack"}},
+            headers=headers_b,
+        )
+        assert resp.status_code == 404
+
+    async def test_update_unauthenticated_returns_401(self, client: AsyncClient) -> None:
+        resp = await client.patch(
+            f"/api/v1/proposals/{uuid.uuid4()}",
+            json={"deal_id": str(uuid.uuid4()), "content": {}},
+        )
+        assert resp.status_code == 401

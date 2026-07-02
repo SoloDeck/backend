@@ -311,6 +311,11 @@ _AI_FIELDS = [
     "ai_qualification_timeline_signal",
     "ai_qualification_urgency_signal",
     "ai_qualification_red_flags",
+    "ai_qualification_next_step",
+    "ai_qualification_detected_signals",
+    "ai_qualification_suggested_actions",
+    "ai_qualification_price_range_min",
+    "ai_qualification_price_range_max",
 ]
 
 _MOCK_AI_RESULT = {
@@ -321,6 +326,19 @@ _MOCK_AI_RESULT = {
     "red_flags": ["no mockups provided"],
     "suggested_lead_score": "HOT",
     "reasoning": "Strong budget and clear timeline.",
+    "next_step": "Reply today to confirm scope and move to quoting.",
+    "detected_signals": [
+        {"text": "Budget explicitly stated", "is_positive": True},
+        {"text": "Timeline is clear", "is_positive": True},
+        {"text": "No mockups provided", "is_positive": False},
+    ],
+    "suggested_actions": [
+        "Reply today to confirm scope",
+        "Generate AI quote after scope confirmation",
+        "Set follow-up reminder in 24 hours",
+    ],
+    "price_range_min": 10000000,
+    "price_range_max": 25000000,
 }
 
 
@@ -330,17 +348,18 @@ def _mock_ai_facade():
     return facade
 
 
-async def _create_intake(client: AsyncClient, headers: dict) -> str:
-    """Return intake_id via the public intake flow (Celery dispatch suppressed)."""
+async def _create_deal_via_intake(client: AsyncClient, headers: dict) -> str:
+    """Submit a public intake and return the resulting deal_id (Celery suppressed)."""
     me = await client.get("/api/v1/users/me", headers=headers)
     token = me.json()["data"]["intake_share_token"]
-    with patch("src.workers.ai_jobs.tasks.qualify_intake_async.delay"):
+    with patch("src.workers.ai_jobs.tasks.qualify_deal_async_by_id.delay"):
         resp = await client.post(
             f"/api/v1/intake/{token}",
             json={"name": "Test Lead", "inquiry_text": "I need a full e-commerce build."},
         )
     assert resp.status_code == 201, resp.text
-    return resp.json()["data"]["id"]
+    deals = await client.get("/api/v1/deals", headers=headers)
+    return deals.json()["data"][0]["id"]
 
 
 class TestDealAIFieldsPresence:
@@ -389,6 +408,11 @@ class TestDealAIFieldsPresence:
         assert deal["ai_qualification_recommendation"] is None
         assert deal["ai_qualification_reasoning"] is None
         assert deal["ai_qualification_red_flags"] is None
+        assert deal["ai_qualification_next_step"] is None
+        assert deal["ai_qualification_detected_signals"] is None
+        assert deal["ai_qualification_suggested_actions"] is None
+        assert deal["ai_qualification_price_range_min"] is None
+        assert deal["ai_qualification_price_range_max"] is None
 
 
 class TestDealAIQualificationFields:
@@ -396,7 +420,7 @@ class TestDealAIQualificationFields:
 
     async def test_qualify_sets_hot_level_and_all_signals(self, client: AsyncClient) -> None:
         headers = await _auth(client)
-        intake_id = await _create_intake(client, headers)
+        deal_id = await _create_deal_via_intake(client, headers)
 
         mock_facade = _mock_ai_facade()
         from src.main import app
@@ -405,7 +429,7 @@ class TestDealAIQualificationFields:
 
         try:
             resp = await client.post(
-                f"/api/v1/deals/intakes/{intake_id}/qualify",
+                f"/api/v1/deals/{deal_id}/qualify",
                 headers=headers,
             )
         finally:
@@ -430,10 +454,22 @@ class TestDealAIQualificationFields:
         assert qualified["ai_qualification_timeline_signal"] == "CLEAR"
         assert qualified["ai_qualification_urgency_signal"] == "MODERATE"
         assert qualified["ai_qualification_red_flags"] == ["no mockups provided"]
+        assert qualified["ai_qualification_next_step"] == "Reply today to confirm scope and move to quoting."
+        assert qualified["ai_qualification_suggested_actions"] == [
+            "Reply today to confirm scope",
+            "Generate AI quote after scope confirmation",
+            "Set follow-up reminder in 24 hours",
+        ]
+        assert qualified["ai_qualification_price_range_min"] == 10000000
+        assert qualified["ai_qualification_price_range_max"] == 25000000
+        signals = qualified["ai_qualification_detected_signals"]
+        assert len(signals) == 3
+        assert signals[0] == {"text": "Budget explicitly stated", "is_positive": True}
+        assert signals[2] == {"text": "No mockups provided", "is_positive": False}
 
     async def test_qualify_warm_score_maps_to_warm_level(self, client: AsyncClient) -> None:
         headers = await _auth(client)
-        intake_id = await _create_intake(client, headers)
+        deal_id = await _create_deal_via_intake(client, headers)
 
         mock_facade = AsyncMock()
         mock_facade.qualify_lead.return_value = {**_MOCK_AI_RESULT, "suggested_lead_score": "WARM"}
@@ -443,7 +479,7 @@ class TestDealAIQualificationFields:
         app.dependency_overrides[get_ai_facade] = lambda: mock_facade
 
         try:
-            await client.post(f"/api/v1/deals/intakes/{intake_id}/qualify", headers=headers)
+            await client.post(f"/api/v1/deals/{deal_id}/qualify", headers=headers)
         finally:
             app.dependency_overrides.pop(get_ai_facade, None)
 
@@ -461,7 +497,7 @@ class TestDealAIQualificationFields:
         self, client: AsyncClient
     ) -> None:
         headers = await _auth(client)
-        intake_id = await _create_intake(client, headers)
+        deal_id = await _create_deal_via_intake(client, headers)
 
         mock_facade = AsyncMock()
         mock_facade.qualify_lead.return_value = {**_MOCK_AI_RESULT, "suggested_lead_score": "COLD"}
@@ -471,7 +507,7 @@ class TestDealAIQualificationFields:
         app.dependency_overrides[get_ai_facade] = lambda: mock_facade
 
         try:
-            await client.post(f"/api/v1/deals/intakes/{intake_id}/qualify", headers=headers)
+            await client.post(f"/api/v1/deals/{deal_id}/qualify", headers=headers)
         finally:
             app.dependency_overrides.pop(get_ai_facade, None)
 

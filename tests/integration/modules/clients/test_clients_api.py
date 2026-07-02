@@ -258,6 +258,437 @@ class TestDealCount:
         assert matching[0]["deal_count"] == 1
 
 
+# ---------------------------------------------------------------------------
+# DELETE /clients/{id}
+# ---------------------------------------------------------------------------
+
+
+def _deal_payload(client_id: str, **overrides: object) -> dict:
+    return {"client_id": client_id, "title": "Test Deal", **overrides}
+
+
+def _invoice_payload(client_id: str, **overrides: object) -> dict:
+    return {
+        "client_id": client_id,
+        "due_date": "2026-12-31",
+        "currency": "VND",
+        "subtotal": "1000000",
+        **overrides,
+    }
+
+
+async def _create_contract(http, headers: dict, client_id: str) -> dict:
+    """Create the minimal dependency chain (deal → proposal → contract) and return contract data."""
+    deal = await http.post("/api/v1/deals", json=_deal_payload(client_id), headers=headers)
+    assert deal.status_code == 201, deal.text
+    deal_id = deal.json()["data"]["id"]
+
+    proposal = await http.post(
+        "/api/v1/proposals",
+        json={"deal_id": deal_id, "content": {"body": "test"}},
+        headers=headers,
+    )
+    assert proposal.status_code == 201, proposal.text
+    proposal_id = proposal.json()["data"]["id"]
+
+    # Contract requires an accepted proposal: draft → sent → accepted
+    r = await http.patch(f"/api/v1/proposals/{proposal_id}/status", json={"status": "sent"}, headers=headers)
+    assert r.status_code == 200, r.text
+    r = await http.patch(f"/api/v1/proposals/{proposal_id}/status", json={"status": "accepted"}, headers=headers)
+    assert r.status_code == 200, r.text
+
+    contract = await http.post(
+        "/api/v1/contracts",
+        json={"deal_id": deal_id, "proposal_id": proposal_id, "client_id": client_id, "content": {}},
+        headers=headers,
+    )
+    assert contract.status_code == 201, contract.text
+    return contract.json()["data"]
+
+
+class TestDeleteClient:
+    async def test_clean_client_returns_200(self, client: AsyncClient) -> None:
+        """Client with no transactions can be deleted."""
+        headers = await _auth_headers(client)
+        created = await _create_client(client, headers)
+
+        resp = await client.delete(f"/api/v1/clients/{created['id']}", headers=headers)
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["success"] is True
+        assert body["data"]["detail"] == "Client deleted"
+
+    async def test_deleted_client_returns_404_on_get(self, client: AsyncClient) -> None:
+        """Soft-deleted client is no longer retrievable."""
+        headers = await _auth_headers(client)
+        created = await _create_client(client, headers)
+
+        await client.delete(f"/api/v1/clients/{created['id']}", headers=headers)
+
+        resp = await client.get(f"/api/v1/clients/{created['id']}", headers=headers)
+        assert resp.status_code == 404
+
+    async def test_deleted_client_excluded_from_list(self, client: AsyncClient) -> None:
+        """Soft-deleted client does not appear in GET /clients."""
+        headers = await _auth_headers(client)
+        created = await _create_client(client, headers)
+
+        await client.delete(f"/api/v1/clients/{created['id']}", headers=headers)
+
+        resp = await client.get("/api/v1/clients", headers=headers)
+        assert resp.status_code == 200
+        ids = [c["id"] for c in resp.json()["data"]]
+        assert created["id"] not in ids
+
+    async def test_client_with_deal_returns_409(self, client: AsyncClient) -> None:
+        """Client that has a deal cannot be deleted."""
+        headers = await _auth_headers(client)
+        created = await _create_client(client, headers)
+
+        deal_resp = await client.post(
+            "/api/v1/deals",
+            json=_deal_payload(created["id"]),
+            headers=headers,
+        )
+        assert deal_resp.status_code == 201, deal_resp.text
+
+        resp = await client.delete(f"/api/v1/clients/{created['id']}", headers=headers)
+        assert resp.status_code == 409
+        body = resp.json()
+        assert body["success"] is False
+        assert body["error"]["code"] == "BUSINESS_RULE_VIOLATION"
+
+    async def test_client_with_deal_error_message_is_descriptive(self, client: AsyncClient) -> None:
+        """409 error message clearly explains why deletion was blocked."""
+        headers = await _auth_headers(client)
+        created = await _create_client(client, headers)
+        await client.post(
+            "/api/v1/deals",
+            json=_deal_payload(created["id"]),
+            headers=headers,
+        )
+
+        resp = await client.delete(f"/api/v1/clients/{created['id']}", headers=headers)
+        assert resp.status_code == 409
+        message = resp.json()["error"]["message"]
+        assert "deals" in message.lower() or "invoices" in message.lower() or "contracts" in message.lower()
+
+    async def test_client_with_soft_deleted_deal_still_returns_409(self, client: AsyncClient) -> None:
+        """Soft-deleted deals still count — historical records block deletion."""
+        headers = await _auth_headers(client)
+        created = await _create_client(client, headers)
+
+        deal_resp = await client.post(
+            "/api/v1/deals",
+            json=_deal_payload(created["id"]),
+            headers=headers,
+        )
+        deal_id = deal_resp.json()["data"]["id"]
+
+        # Soft-delete the deal
+        del_resp = await client.delete(f"/api/v1/deals/{deal_id}", headers=headers)
+        assert del_resp.status_code == 200, del_resp.text
+
+        # Client still cannot be deleted
+        resp = await client.delete(f"/api/v1/clients/{created['id']}", headers=headers)
+        assert resp.status_code == 409
+
+    async def test_client_with_invoice_returns_409(self, client: AsyncClient) -> None:
+        """Client that has an invoice cannot be deleted."""
+        headers = await _auth_headers(client)
+        created = await _create_client(client, headers)
+
+        # Invoices require a deal or contract — create the deal first
+        deal_resp = await client.post(
+            "/api/v1/deals",
+            json=_deal_payload(created["id"]),
+            headers=headers,
+        )
+        assert deal_resp.status_code == 201, deal_resp.text
+        deal_id = deal_resp.json()["data"]["id"]
+
+        inv_resp = await client.post(
+            "/api/v1/invoices",
+            json={**_invoice_payload(created["id"]), "deal_id": deal_id},
+            headers=headers,
+        )
+        assert inv_resp.status_code == 201, inv_resp.text
+
+        resp = await client.delete(f"/api/v1/clients/{created['id']}", headers=headers)
+        assert resp.status_code == 409
+        assert resp.json()["error"]["code"] == "BUSINESS_RULE_VIOLATION"
+
+    async def test_client_with_soft_deleted_invoice_still_returns_409(self, client: AsyncClient) -> None:
+        """Soft-deleted invoices still count — historical records block deletion."""
+        headers = await _auth_headers(client)
+        created = await _create_client(client, headers)
+
+        deal_resp = await client.post(
+            "/api/v1/deals",
+            json=_deal_payload(created["id"]),
+            headers=headers,
+        )
+        deal_id = deal_resp.json()["data"]["id"]
+
+        inv_resp = await client.post(
+            "/api/v1/invoices",
+            json={**_invoice_payload(created["id"]), "deal_id": deal_id},
+            headers=headers,
+        )
+        invoice_id = inv_resp.json()["data"]["id"]
+
+        # Soft-delete the invoice
+        del_resp = await client.delete(f"/api/v1/invoices/{invoice_id}", headers=headers)
+        assert del_resp.status_code == 200, del_resp.text
+
+        # Client still cannot be deleted
+        resp = await client.delete(f"/api/v1/clients/{created['id']}", headers=headers)
+        assert resp.status_code == 409
+
+    async def test_client_with_contract_returns_409(self, client: AsyncClient) -> None:
+        """Client that has a contract cannot be deleted."""
+        headers = await _auth_headers(client)
+        created = await _create_client(client, headers)
+
+        await _create_contract(client, headers, created["id"])
+
+        resp = await client.delete(f"/api/v1/clients/{created['id']}", headers=headers)
+        assert resp.status_code == 409
+        assert resp.json()["error"]["code"] == "BUSINESS_RULE_VIOLATION"
+
+    async def test_client_with_soft_deleted_contract_still_returns_409(self, client: AsyncClient) -> None:
+        """Soft-deleted contracts still count — historical records block deletion."""
+        headers = await _auth_headers(client)
+        created = await _create_client(client, headers)
+
+        contract = await _create_contract(client, headers, created["id"])
+
+        # Soft-delete the contract
+        del_resp = await client.delete(f"/api/v1/contracts/{contract['id']}", headers=headers)
+        assert del_resp.status_code == 200, del_resp.text
+
+        # Client still cannot be deleted
+        resp = await client.delete(f"/api/v1/clients/{created['id']}", headers=headers)
+        assert resp.status_code == 409
+
+    async def test_client_with_comm_logs_can_be_deleted(self, client: AsyncClient) -> None:
+        """Communication logs are not transactions — they don't block deletion."""
+        headers = await _auth_headers(client)
+        created = await _create_client(client, headers)
+
+        log_resp = await client.post(
+            f"/api/v1/clients/{created['id']}/comm-logs",
+            json={"channel": "email", "summary": "Intro call", "communicated_at": "2026-06-01T10:00:00Z"},
+            headers=headers,
+        )
+        assert log_resp.status_code == 201, log_resp.text
+
+        resp = await client.delete(f"/api/v1/clients/{created['id']}", headers=headers)
+        assert resp.status_code == 200
+
+    async def test_delete_nonexistent_client_returns_404(self, client: AsyncClient) -> None:
+        headers = await _auth_headers(client)
+        resp = await client.delete(f"/api/v1/clients/{uuid.uuid4()}", headers=headers)
+        assert resp.status_code == 404
+
+    async def test_delete_other_users_client_returns_404(self, client: AsyncClient) -> None:
+        """User B cannot delete User A's client — gets 404, not 403."""
+        headers_a = await _auth_headers(client)
+        headers_b = await _auth_headers(client)
+        created = await _create_client(client, headers_a)
+
+        resp = await client.delete(f"/api/v1/clients/{created['id']}", headers=headers_b)
+        assert resp.status_code == 404
+
+    async def test_delete_unauthenticated_returns_401(self, client: AsyncClient) -> None:
+        resp = await client.delete(f"/api/v1/clients/{uuid.uuid4()}")
+        assert resp.status_code == 401
+
+    async def test_delete_twice_returns_404_on_second_call(self, client: AsyncClient) -> None:
+        """Deleting an already-deleted client returns 404."""
+        headers = await _auth_headers(client)
+        created = await _create_client(client, headers)
+
+        first = await client.delete(f"/api/v1/clients/{created['id']}", headers=headers)
+        assert first.status_code == 200
+
+        second = await client.delete(f"/api/v1/clients/{created['id']}", headers=headers)
+        assert second.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# PATCH /clients/{id}
+# ---------------------------------------------------------------------------
+
+
+class TestUpdateClient:
+    async def test_update_name_returns_200(self, client: AsyncClient) -> None:
+        headers = await _auth_headers(client)
+        created = await _create_client(client, headers)
+
+        resp = await client.patch(
+            f"/api/v1/clients/{created['id']}",
+            json={"name": "Updated Name"},
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        assert resp.json()["data"]["name"] == "Updated Name"
+
+    async def test_update_persists_on_get(self, client: AsyncClient) -> None:
+        headers = await _auth_headers(client)
+        created = await _create_client(client, headers)
+
+        await client.patch(
+            f"/api/v1/clients/{created['id']}",
+            json={"name": "Persisted Name"},
+            headers=headers,
+        )
+
+        get_resp = await client.get(f"/api/v1/clients/{created['id']}", headers=headers)
+        assert get_resp.json()["data"]["name"] == "Persisted Name"
+
+    async def test_update_email(self, client: AsyncClient) -> None:
+        headers = await _auth_headers(client)
+        created = await _create_client(client, headers)
+
+        resp = await client.patch(
+            f"/api/v1/clients/{created['id']}",
+            json={"name": created["name"], "email": "new@example.com"},
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        assert resp.json()["data"]["email"] == "new@example.com"
+
+    async def test_update_status(self, client: AsyncClient) -> None:
+        headers = await _auth_headers(client)
+        created = await _create_client(client, headers)
+
+        resp = await client.patch(
+            f"/api/v1/clients/{created['id']}",
+            json={"name": created["name"], "status": "active"},
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        assert resp.json()["data"]["status"] == "active"
+
+    async def test_update_nonexistent_returns_404(self, client: AsyncClient) -> None:
+        headers = await _auth_headers(client)
+        resp = await client.patch(
+            f"/api/v1/clients/{uuid.uuid4()}",
+            json={"name": "Ghost"},
+            headers=headers,
+        )
+        assert resp.status_code == 404
+
+    async def test_update_other_users_client_returns_404(self, client: AsyncClient) -> None:
+        headers_a = await _auth_headers(client)
+        headers_b = await _auth_headers(client)
+        created = await _create_client(client, headers_a)
+
+        resp = await client.patch(
+            f"/api/v1/clients/{created['id']}",
+            json={"name": "Hijack"},
+            headers=headers_b,
+        )
+        assert resp.status_code == 404
+
+    async def test_update_unauthenticated_returns_401(self, client: AsyncClient) -> None:
+        resp = await client.patch(
+            f"/api/v1/clients/{uuid.uuid4()}",
+            json={"name": "No Auth"},
+        )
+        assert resp.status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# POST + GET /clients/{id}/comm-logs
+# ---------------------------------------------------------------------------
+
+
+class TestCommLogs:
+    async def test_create_comm_log_returns_201(self, client: AsyncClient) -> None:
+        headers = await _auth_headers(client)
+        created = await _create_client(client, headers)
+
+        resp = await client.post(
+            f"/api/v1/clients/{created['id']}/comm-logs",
+            json={"channel": "email", "summary": "Intro call", "communicated_at": "2026-06-01T10:00:00Z"},
+            headers=headers,
+        )
+        assert resp.status_code == 201
+        data = resp.json()["data"]
+        assert data["channel"] == "email"
+        assert data["summary"] == "Intro call"
+
+    async def test_list_comm_logs_returns_created_entry(self, client: AsyncClient) -> None:
+        headers = await _auth_headers(client)
+        created = await _create_client(client, headers)
+
+        await client.post(
+            f"/api/v1/clients/{created['id']}/comm-logs",
+            json={"channel": "phone", "summary": "Follow-up call", "communicated_at": "2026-06-02T14:00:00Z"},
+            headers=headers,
+        )
+
+        resp = await client.get(f"/api/v1/clients/{created['id']}/comm-logs", headers=headers)
+        assert resp.status_code == 200
+        logs = resp.json()["data"]
+        assert len(logs) == 1
+        assert logs[0]["summary"] == "Follow-up call"
+
+    async def test_multiple_logs_all_returned(self, client: AsyncClient) -> None:
+        headers = await _auth_headers(client)
+        created = await _create_client(client, headers)
+
+        for i in range(3):
+            await client.post(
+                f"/api/v1/clients/{created['id']}/comm-logs",
+                json={"channel": "email", "summary": f"Message {i}", "communicated_at": "2026-06-01T10:00:00Z"},
+                headers=headers,
+            )
+
+        resp = await client.get(f"/api/v1/clients/{created['id']}/comm-logs", headers=headers)
+        assert len(resp.json()["data"]) == 3
+
+    async def test_post_to_unknown_client_returns_404(self, client: AsyncClient) -> None:
+        headers = await _auth_headers(client)
+        resp = await client.post(
+            f"/api/v1/clients/{uuid.uuid4()}/comm-logs",
+            json={"channel": "email", "summary": "Ghost", "communicated_at": "2026-06-01T10:00:00Z"},
+            headers=headers,
+        )
+        assert resp.status_code == 404
+
+    async def test_get_logs_for_unknown_client_returns_404(self, client: AsyncClient) -> None:
+        headers = await _auth_headers(client)
+        resp = await client.get(f"/api/v1/clients/{uuid.uuid4()}/comm-logs", headers=headers)
+        assert resp.status_code == 404
+
+    async def test_cannot_read_other_users_logs(self, client: AsyncClient) -> None:
+        headers_a = await _auth_headers(client)
+        headers_b = await _auth_headers(client)
+        created = await _create_client(client, headers_a)
+        await client.post(
+            f"/api/v1/clients/{created['id']}/comm-logs",
+            json={"channel": "email", "summary": "Private", "communicated_at": "2026-06-01T10:00:00Z"},
+            headers=headers_a,
+        )
+
+        resp = await client.get(f"/api/v1/clients/{created['id']}/comm-logs", headers=headers_b)
+        assert resp.status_code == 404
+
+    async def test_post_unauthenticated_returns_401(self, client: AsyncClient) -> None:
+        resp = await client.post(
+            f"/api/v1/clients/{uuid.uuid4()}/comm-logs",
+            json={"channel": "email", "summary": "No auth", "communicated_at": "2026-06-01T10:00:00Z"},
+        )
+        assert resp.status_code == 401
+
+    async def test_get_unauthenticated_returns_401(self, client: AsyncClient) -> None:
+        resp = await client.get(f"/api/v1/clients/{uuid.uuid4()}/comm-logs")
+        assert resp.status_code == 401
+
+
 class TestGetClient:
     async def test_success(self, client: AsyncClient) -> None:
         headers = await _auth_headers(client)

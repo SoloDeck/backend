@@ -1,8 +1,18 @@
 import uuid
 from datetime import datetime
 from decimal import Decimal
+from typing import Generic, TypeVar
 
 from pydantic import BaseModel, ConfigDict
+
+T = TypeVar("T")
+
+
+class Paginated(BaseModel, Generic[T]):
+    data: list[T]
+    total: int
+    page: int
+    page_size: int
 
 
 class AdminUserResponse(BaseModel):
@@ -32,3 +42,99 @@ class AdminPlanResponse(BaseModel):
     max_ai_generations_per_month: int
     is_active: bool
     created_at: datetime
+
+
+class AdminSubscriptionResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    user_id: uuid.UUID
+    plan_id: uuid.UUID
+    plan_name: str
+    plan_slug: str
+    status: str
+    current_period_start: datetime
+    current_period_end: datetime
+    cancel_at_period_end: bool
+    cancelled_at: datetime | None
+    override_expires_at: datetime | None
+    created_at: datetime
+
+
+class AdminAiCostResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    user_id: uuid.UUID
+    ai_module: str
+    model_used: str
+    input_tokens: int
+    output_tokens: int
+    estimated_cost_usd: Decimal
+    status: str
+    occurred_at: datetime
+
+
+class AdminAiCostTotals(BaseModel):
+    input_tokens: int
+    output_tokens: int
+    estimated_cost_usd: Decimal
+
+
+class AdminAiCostPagedResponse(BaseModel):
+    data: list[AdminAiCostResponse]
+    total: int
+    page: int
+    page_size: int
+    totals: AdminAiCostTotals
+
+
+class AdminAuditLogResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    event_type: str
+    actor_user_id: uuid.UUID | None
+    target_type: str | None
+    target_id: uuid.UUID | None
+    description: str
+    occurred_at: datetime
+
+
+class AdminTemplateResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    template_type: str
+    name: str
+    content: dict
+    plan_tier_required: str | None
+    version_number: int
+    is_active: bool
+    created_by_admin_id: uuid.UUID
+    created_at: datetime
+
+
+class AdminFeatureFlagResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    flag_name: str
+    is_enabled: bool
+    rollout_percentage: int
+    target_user_ids: list[uuid.UUID] | None
+    description: str | None
+    created_at: datetime
+
+
+class AdminPlatformMetricsResponse(BaseModel):
+    total_users: int
+    active_users: int
+    suspended_users: int
+    total_subscriptions: int
+    active_subscriptions: int
+    total_plans: int
+    active_plans: int
+    total_deals: int
+    total_clients: int
+    ai_cost_last_30_days: Decimal

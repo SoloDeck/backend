@@ -111,7 +111,7 @@ async def test_create_public_intake_creates_client_deal_and_intake() -> None:
 
     # Unique token per test run so the shared process limiter is never the cause of failure.
     with pytest.MonkeyPatch().context() as mp:
-        mp.setattr("src.workers.ai_jobs.tasks.qualify_intake_async.delay", lambda *a: None)
+        mp.setattr("src.workers.ai_jobs.tasks.qualify_deal_async_by_id.delay", lambda *a: None)
         result = await service.create_public_intake(f"tok-{uuid.uuid4().hex}", _intake_payload())
 
     assert result is intake
@@ -137,7 +137,7 @@ async def test_create_public_intake_rejects_unknown_token() -> None:
 
 
 # ---------------------------------------------------------------------------
-# qualify_deal_intake — signal field mapping
+# qualify_deal — signal field mapping
 # ---------------------------------------------------------------------------
 
 _AI_RESULT = {
@@ -148,6 +148,19 @@ _AI_RESULT = {
     "red_flags": ["no mockups provided"],
     "suggested_lead_score": "HOT",
     "reasoning": "Strong budget and clear timeline.",
+    "next_step": "Reply today to confirm scope and move to quoting.",
+    "detected_signals": [
+        {"text": "Budget explicitly stated", "is_positive": True},
+        {"text": "Timeline is clear", "is_positive": True},
+        {"text": "No mockups provided", "is_positive": False},
+    ],
+    "suggested_actions": [
+        "Reply today to confirm scope",
+        "Generate AI quote after scope confirmation",
+        "Set follow-up reminder in 24 hours",
+    ],
+    "price_range_min": 10000000,
+    "price_range_max": 25000000,
 }
 
 
@@ -168,6 +181,13 @@ class DealModelStub:
     title: str = "Test Deal"
     stage: str = "new_lead"
     source: str | None = None
+    notes: str | None = None
+    estimated_value: object | None = None
+    currency: str = "VND"
+    desired_timeline: str | None = None
+    project_type: str | None = None
+    service_category: str | None = None
+    pricing_tier: str | None = None
     ai_qualification_score: int | None = None
     ai_qualification_confidence: float | None = None
     ai_qualification_recommendation: str | None = None
@@ -177,6 +197,11 @@ class DealModelStub:
     ai_qualification_timeline_signal: str | None = None
     ai_qualification_urgency_signal: str | None = None
     ai_qualification_red_flags: list | None = None
+    ai_qualification_detected_signals: list | None = None
+    ai_qualification_suggested_actions: list | None = None
+    ai_qualification_next_step: str | None = None
+    ai_qualification_price_range_min: int | None = None
+    ai_qualification_price_range_max: int | None = None
     closed_at: object | None = None
     created_at: object | None = None
     updated_at: object | None = None
@@ -191,8 +216,8 @@ def _make_qualify_service(ai_result: dict):
     deal_model = DealModelStub(id=deal_id, owner_user_id=owner_id, client_id=client_id)
 
     repo = AsyncMock()
-    repo.get_intake_by_id.return_value = intake
-    repo.get_deal_by_client_id.return_value = deal_model
+    repo.get_by_id.return_value = deal_model
+    repo.get_intake_by_client_id.return_value = intake
     repo.create_lead_score.return_value = None
     repo.save.return_value = deal_model
 
@@ -203,10 +228,10 @@ def _make_qualify_service(ai_result: dict):
     return service, intake, deal_model
 
 
-async def test_qualify_intake_writes_all_signal_fields_to_deal() -> None:
-    service, intake, deal_model = _make_qualify_service(_AI_RESULT)
+async def test_qualify_deal_writes_all_signal_fields_to_deal() -> None:
+    service, _, deal_model = _make_qualify_service(_AI_RESULT)
 
-    await service.qualify_deal_intake(uuid.uuid4(), intake.id)
+    await service.qualify_deal(deal_model.owner_user_id, deal_model.id)
 
     assert deal_model.ai_qualification_reasoning == "Strong budget and clear timeline."
     assert deal_model.ai_qualification_project_type == "E-commerce website"
@@ -214,56 +239,56 @@ async def test_qualify_intake_writes_all_signal_fields_to_deal() -> None:
     assert deal_model.ai_qualification_timeline_signal == "CLEAR"
     assert deal_model.ai_qualification_urgency_signal == "MODERATE"
     assert deal_model.ai_qualification_red_flags == ["no mockups provided"]
+    assert deal_model.ai_qualification_next_step == "Reply today to confirm scope and move to quoting."
+    assert deal_model.ai_qualification_suggested_actions == [
+        "Reply today to confirm scope",
+        "Generate AI quote after scope confirmation",
+        "Set follow-up reminder in 24 hours",
+    ]
+    assert deal_model.ai_qualification_price_range_min == 10000000
+    assert deal_model.ai_qualification_price_range_max == 25000000
+    assert len(deal_model.ai_qualification_detected_signals) == 3
+    assert deal_model.ai_qualification_detected_signals[0]["is_positive"] is True
+    assert deal_model.ai_qualification_detected_signals[2]["is_positive"] is False
 
 
-async def test_qualify_intake_hot_score_maps_to_80_and_qualify() -> None:
-    service, intake, deal_model = _make_qualify_service(
+async def test_qualify_deal_hot_score_maps_to_80_and_qualify() -> None:
+    service, _, deal_model = _make_qualify_service(
         {**_AI_RESULT, "suggested_lead_score": "HOT"}
     )
 
-    await service.qualify_deal_intake(uuid.uuid4(), intake.id)
+    await service.qualify_deal(deal_model.owner_user_id, deal_model.id)
 
     assert deal_model.ai_qualification_score == 80
     assert deal_model.ai_qualification_recommendation == "qualify"
 
 
-async def test_qualify_intake_cold_score_maps_to_20_and_pass() -> None:
-    service, intake, deal_model = _make_qualify_service(
+async def test_qualify_deal_cold_score_maps_to_20_and_pass() -> None:
+    service, _, deal_model = _make_qualify_service(
         {**_AI_RESULT, "suggested_lead_score": "COLD"}
     )
 
-    await service.qualify_deal_intake(uuid.uuid4(), intake.id)
+    await service.qualify_deal(deal_model.owner_user_id, deal_model.id)
 
     assert deal_model.ai_qualification_score == 20
     assert deal_model.ai_qualification_recommendation == "pass"
 
 
-async def test_qualify_intake_warm_score_maps_to_50() -> None:
-    service, intake, deal_model = _make_qualify_service(
+async def test_qualify_deal_warm_score_maps_to_50() -> None:
+    service, _, deal_model = _make_qualify_service(
         {**_AI_RESULT, "suggested_lead_score": "WARM"}
     )
 
-    await service.qualify_deal_intake(uuid.uuid4(), intake.id)
+    await service.qualify_deal(deal_model.owner_user_id, deal_model.id)
 
     assert deal_model.ai_qualification_score == 50
 
 
-async def test_qualify_intake_missing_ai_facade_raises() -> None:
+async def test_qualify_deal_missing_ai_facade_raises() -> None:
+    deal_model = DealModelStub(id=uuid.uuid4(), owner_user_id=uuid.uuid4(), client_id=uuid.uuid4())
     repo = AsyncMock()
-    intake = IntakeStub(id=uuid.uuid4(), client_id=uuid.uuid4())
-    repo.get_intake_by_id.return_value = intake
+    repo.get_by_id.return_value = deal_model
     service = DealsService(db=AsyncMock(), repo=repo, ai_facade=None)
 
     with pytest.raises(RuntimeError, match="AIFacade not initialized"):
-        await service.qualify_deal_intake(uuid.uuid4(), intake.id)
-
-
-async def test_qualify_intake_empty_inquiry_raises() -> None:
-    repo = AsyncMock()
-    intake = IntakeStub(id=uuid.uuid4(), client_id=uuid.uuid4(), inquiry_text="")
-    repo.get_intake_by_id.return_value = intake
-    ai_facade = AsyncMock()
-    service = DealsService(db=AsyncMock(), repo=repo, ai_facade=ai_facade)
-
-    with pytest.raises(ValueError, match="no inquiry text"):
-        await service.qualify_deal_intake(uuid.uuid4(), intake.id)
+        await service.qualify_deal(deal_model.owner_user_id, deal_model.id)

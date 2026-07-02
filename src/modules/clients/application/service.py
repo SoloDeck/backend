@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.modules.clients.infrastructure.repository import ClientsRepository
 from src.modules.clients.schemas.request import ClientRequest, CommLogRequest
-from src.shared.exceptions.domain import NotFoundError
+from src.shared.exceptions.domain import BusinessRuleError, NotFoundError
 
 
 @dataclass
@@ -66,16 +66,36 @@ class ClientsService:
         if email is not None:
             conditions.append(ClientModel.email.ilike(f"%{email}%"))
 
+        from src.infrastructure.database.models import DealModel
+
         total_result = await self.db.execute(
             select(func.count()).select_from(ClientModel).where(*conditions)
         )
         total = total_result.scalar_one()
 
-        offset = (page - 1) * page_size
-        result = await self.db.execute(
-            select(ClientModel).where(*conditions).offset(offset).limit(page_size)
+        deal_count_subq = (
+            select(func.count(DealModel.id))
+            .where(
+                DealModel.client_id == ClientModel.id,
+                DealModel.deleted_at.is_(None),
+            )
+            .correlate(ClientModel)
+            .scalar_subquery()
         )
-        return list(result.scalars().all()), total
+
+        offset = (page - 1) * page_size
+        rows = await self.db.execute(
+            select(ClientModel, deal_count_subq.label("deal_count"))
+            .where(*conditions)
+            .offset(offset)
+            .limit(page_size)
+        )
+
+        clients = []
+        for client, count in rows.all():
+            client.deal_count = count
+            clients.append(client)
+        return clients, total
 
     async def get_one(self, user_id: uuid.UUID, client_id: uuid.UUID):  # type: ignore[return]
         return await self._get_client(user_id, client_id)
@@ -102,6 +122,10 @@ class ClientsService:
 
     async def delete(self, user_id: uuid.UUID, client_id: uuid.UUID) -> None:
         client = await self._get_client(user_id, client_id)
+        if await self.repo.has_transactions(client_id):
+            raise BusinessRuleError(
+                "Cannot delete a client that has existing deals, invoices, or contracts."
+            )
         client.deleted_at = datetime.now(UTC)
         await self.repo.save(client)
 

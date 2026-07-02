@@ -326,7 +326,7 @@ async def test_submit_uses_project_name_as_deal_title(client: AsyncClient):
         headers=headers,
         json={"title": "F", "is_active": True, "fields": fields},
     )
-    with patch("src.workers.ai_jobs.tasks.qualify_intake_async.delay"):
+    with patch("src.workers.ai_jobs.tasks.qualify_deal_async_by_id.delay"):
         resp = await client.post(
             f"/api/v1/intake/{token}",
             json={"name": "Bob", "project_name": "Online Store"},
@@ -347,7 +347,7 @@ async def test_submit_falls_back_to_default_validation(client: AsyncClient):
 async def test_submit_succeeds_with_all_required_fields_present(client: AsyncClient):
     headers, _ = await _auth(client)
     token = await _get_share_token(client, headers)
-    with patch("src.workers.ai_jobs.tasks.qualify_intake_async.delay"):
+    with patch("src.workers.ai_jobs.tasks.qualify_deal_async_by_id.delay"):
         resp = await client.post(
             f"/api/v1/intake/{token}",
             json={"name": "Dave", "inquiry_text": "Need a logo"},

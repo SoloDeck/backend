@@ -18,6 +18,7 @@ class DealResponse(BaseModel):
     actual_value: Decimal | None
     currency: str
     notes: str | None
+    desired_timeline: str | None
     project_type: str | None
     service_category: str | None
     pricing_tier: str | None
@@ -29,6 +30,11 @@ class DealResponse(BaseModel):
     ai_qualification_timeline_signal: str | None
     ai_qualification_urgency_signal: str | None
     ai_qualification_red_flags: list[str] | None
+    ai_qualification_detected_signals: list[dict] | None
+    ai_qualification_suggested_actions: list[str] | None
+    ai_qualification_next_step: str | None
+    ai_qualification_price_range_min: int | None
+    ai_qualification_price_range_max: int | None
     closed_at: datetime | None
     created_at: datetime
     updated_at: datetime

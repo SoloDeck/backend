@@ -38,6 +38,18 @@ class DealsRepository:
             )
         )
 
+    async def find_client_by_name_and_phone(
+        self, owner_user_id: uuid.UUID, name: str, phone: str
+    ):
+        return await self.db.scalar(
+            select(ClientModel).where(
+                ClientModel.owner_user_id == owner_user_id,
+                ClientModel.name == name,
+                ClientModel.phone == phone,
+                ClientModel.deleted_at.is_(None),
+            )
+        )
+
     async def create_client(self, **values):
         client = ClientModel(**values)
         self.db.add(client)
@@ -59,6 +71,17 @@ class DealsRepository:
                 DealIntakeModel.owner_user_id == owner_user_id,
                 DealIntakeModel.deleted_at.is_(None),
             )
+        )
+
+    async def get_intake_by_client_id(self, client_id: uuid.UUID, owner_user_id: uuid.UUID):
+        return await self.db.scalar(
+            select(DealIntakeModel)
+            .where(
+                DealIntakeModel.client_id == client_id,
+                DealIntakeModel.owner_user_id == owner_user_id,
+                DealIntakeModel.deleted_at.is_(None),
+            )
+            .order_by(DealIntakeModel.created_at.desc())
         )
 
     async def list_intakes(

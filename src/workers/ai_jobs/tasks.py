@@ -18,13 +18,13 @@ def qualify_lead_async(self, deal_id: str, user_id: str) -> dict:  # type: ignor
 
 
 @celery_app.task(
-    name="src.workers.ai_jobs.tasks.qualify_intake_async",
+    name="src.workers.ai_jobs.tasks.qualify_deal_async_by_id",
     bind=True,
     max_retries=3,
     default_retry_delay=15,
 )
-def qualify_intake_async(self, user_id: str, intake_id: str) -> dict:  # type: ignore[misc]
-    """Run AI lead qualification for a DealIntake record.
+def qualify_deal_async_by_id(self, user_id: str, deal_id: str) -> dict:  # type: ignore[misc]
+    """Run AI lead qualification for a Deal.
 
     Dispatched automatically after a public intake submission so the freelancer
     sees a hot/warm/cold score in their pipeline without manual action.
@@ -54,9 +54,9 @@ def qualify_intake_async(self, user_id: str, intake_id: str) -> dict:  # type: i
         try:
             async with factory() as session:
                 service = DealsService(db=session, ai_facade=ai_facade)
-                result = await service.qualify_deal_intake(
+                result = await service.qualify_deal(
                     user_id=_uuid.UUID(user_id),
-                    intake_id=_uuid.UUID(intake_id),
+                    deal_id=_uuid.UUID(deal_id),
                 )
                 await session.commit()
                 return result or {}
@@ -64,12 +64,12 @@ def qualify_intake_async(self, user_id: str, intake_id: str) -> dict:  # type: i
             await engine.dispose()
 
     try:
-        log.info("qualify_intake.start", user_id=user_id, intake_id=intake_id)
+        log.info("qualify_deal.start", user_id=user_id, deal_id=deal_id)
         result = asyncio.run(_run())
-        log.info("qualify_intake.done", user_id=user_id, intake_id=intake_id)
+        log.info("qualify_deal.done", user_id=user_id, deal_id=deal_id)
         return result
     except Exception as exc:
-        log.error("qualify_intake.failed", user_id=user_id, intake_id=intake_id, error=str(exc))
+        log.error("qualify_deal.failed", user_id=user_id, deal_id=deal_id, error=str(exc))
         raise self.retry(exc=exc) from exc
 
 
