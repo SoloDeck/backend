@@ -787,6 +787,18 @@ class TestAdminCreatePlan:
         )
         assert resp.status_code == 409
 
+    async def test_new_plan_is_always_active(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        headers = await _admin_headers(client, db_session)
+        resp = await client.post(
+            "/api/v1/admin/plans",
+            json=_plan_payload(is_active=False),
+            headers=headers,
+        )
+        assert resp.status_code == 201
+        assert resp.json()["data"]["is_active"] is True
+
 
 # ---------------------------------------------------------------------------
 # PATCH /admin/plans/{plan_id}

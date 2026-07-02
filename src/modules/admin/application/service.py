@@ -174,7 +174,6 @@ class AdminService:
             max_clients=payload.max_clients,
             max_deals=payload.max_deals,
             max_ai_generations_per_month=payload.max_ai_generations_per_month,
-            is_active=payload.is_active,
         )
 
     async def update_plan(self, plan_id: uuid.UUID, payload: AdminUpdatePlanRequest):

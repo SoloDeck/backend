@@ -24,7 +24,6 @@ class AdminPlanRequest(BaseModel):
     max_clients: int | None = None
     max_deals: int | None = None
     max_ai_generations_per_month: int = 0
-    is_active: bool = True
 
 
 class AdminUpdatePlanRequest(BaseModel):

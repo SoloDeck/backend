@@ -3213,7 +3213,10 @@ paths:
     post:
       tags: [Admin]
       summary: Create a new subscription plan
-      description: Creates a new plan. Existing subscribers are not affected — they remain on their current plan until they explicitly change it.
+      description: |
+        Creates a new plan, always active. Existing subscribers are not affected — they
+        remain on their current plan until they explicitly change it. To deactivate a plan,
+        use PATCH /admin/plans/{plan_id}.
       requestBody:
         required: true
         content:
@@ -6681,9 +6684,6 @@ components:
         max_deals:
           type: integer
           nullable: true
-        is_active:
-          type: boolean
-          default: true
 
     AdminUpdatePlanRequest:
       type: object
