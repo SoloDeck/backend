@@ -1,0 +1,109 @@
+============================================================
+  PROPOSALS ENDPOINTS
+  BASE: http://localhost:8000/api/v1
+  Replace <TOKEN>, <DEAL_ID>, <PROPOSAL_ID>
+============================================================
+
+--- CREATE PROPOSAL ---
+POST /proposals
+
+curl -X POST http://localhost:8000/api/v1/proposals \
+  -H "Authorization: Bearer <TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "deal_id": "<DEAL_ID>",
+    "content": {
+      "project_overview": "Xay dung nen tang thuong mai dien tu day du tinh nang cho doanh nghiep vua va nho.",
+      "scope_of_work": [
+        "Thiet ke giao dien nguoi dung (UI/UX)",
+        "Phat trien frontend bang React",
+        "Phat trien backend bang FastAPI",
+        "Tich hop cong thanh toan VNPay va MOMO",
+        "Trien khai len server va cau hinh SSL"
+      ],
+      "deliverables": [
+        "Ma nguon day du co tai lieu",
+        "Huong dan su dung he thong",
+        "Ho tro 1 thang sau khi ban giao"
+      ],
+      "timeline": "8 tuan ke tu khi ky hop dong",
+      "pricing": "50,000,000 VND",
+      "payment_terms": "50% khi ky hop dong, 50% khi ban giao",
+      "assumptions": "Khach hang cung cap logo, anh san pham va noi dung van ban truoc ngay 7"
+    }
+  }'
+
+--- LIST PROPOSALS ---
+GET /proposals
+
+curl "http://localhost:8000/api/v1/proposals?page=1&page_size=20" \
+  -H "Authorization: Bearer <TOKEN>"
+
+--- GET PROPOSAL ---
+GET /proposals/{proposal_id}
+
+curl http://localhost:8000/api/v1/proposals/<PROPOSAL_ID> \
+  -H "Authorization: Bearer <TOKEN>"
+
+--- UPDATE PROPOSAL ---
+PATCH /proposals/{proposal_id}
+
+curl -X PATCH http://localhost:8000/api/v1/proposals/<PROPOSAL_ID> \
+  -H "Authorization: Bearer <TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "deal_id": "<DEAL_ID>",
+    "content": {
+      "project_overview": "Xay dung nen tang thuong mai dien tu (da cap nhat).",
+      "scope_of_work": ["UI/UX", "Frontend", "Backend", "Thanh toan", "Trien khai"],
+      "deliverables": ["Ma nguon", "Tai lieu", "Ho tro 3 thang"],
+      "timeline": "10 tuan",
+      "pricing": "65,000,000 VND",
+      "payment_terms": "30% - 40% - 30%",
+      "assumptions": "Khach hang cung cap noi dung truoc ngay 7"
+    }
+  }'
+
+--- GENERATE AI CONTENT (fill proposal with AI) ---
+POST /proposals/{proposal_id}/generate
+
+curl -X POST http://localhost:8000/api/v1/proposals/<PROPOSAL_ID>/generate \
+  -H "Authorization: Bearer <TOKEN>"
+
+--- GENERATE FROM DEAL (create + fill in one step) ---
+POST /proposals/generate-from-deal/{deal_id}
+
+curl -X POST http://localhost:8000/api/v1/proposals/generate-from-deal/<DEAL_ID> \
+  -H "Authorization: Bearer <TOKEN>"
+
+--- DOWNLOAD PDF ---
+GET /proposals/{proposal_id}/pdf
+Note: Returns binary PDF. Use --output to save file.
+
+curl http://localhost:8000/api/v1/proposals/<PROPOSAL_ID>/pdf \
+  -H "Authorization: Bearer <TOKEN>" \
+  --output proposal.pdf
+
+--- SEND TO CLIENT ---
+POST /proposals/{proposal_id}/send
+Note: Transitions status draft -> sent. Locks content.
+
+curl -X POST http://localhost:8000/api/v1/proposals/<PROPOSAL_ID>/send \
+  -H "Authorization: Bearer <TOKEN>"
+
+--- UPDATE STATUS ---
+PATCH /proposals/{proposal_id}/status
+Statuses: accepted | rejected | expired
+
+curl -X PATCH http://localhost:8000/api/v1/proposals/<PROPOSAL_ID>/status \
+  -H "Authorization: Bearer <TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "status": "accepted"
+  }'
+
+--- DELETE PROPOSAL ---
+DELETE /proposals/{proposal_id}
+
+curl -X DELETE http://localhost:8000/api/v1/proposals/<PROPOSAL_ID> \
+  -H "Authorization: Bearer <TOKEN>"

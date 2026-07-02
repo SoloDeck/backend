@@ -1570,6 +1570,34 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
+  /proposals/{proposal_id}/pdf:
+    parameters:
+      - $ref: '#/components/parameters/ProposalId'
+    get:
+      tags: [Proposals]
+      summary: Download proposal as PDF
+      description: |
+        Renders the proposal content as an A4 PDF using WeasyPrint and returns it as a
+        binary download. The PDF is generated on the fly — no file is stored server-side.
+        Requires the proposal to belong to the authenticated user.
+      responses:
+        '200':
+          description: PDF file stream
+          content:
+            application/pdf:
+              schema:
+                type: string
+                format: binary
+          headers:
+            Content-Disposition:
+              schema:
+                type: string
+              example: 'attachment; filename="proposal-<id>.pdf"'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
   /proposals/{proposal_id}/generate:
     parameters:
       - $ref: '#/components/parameters/ProposalId'
@@ -5182,24 +5210,72 @@ components:
         title:
           type: string
           maxLength: 500
+        stage:
+          $ref: '#/components/schemas/DealStage'
         source:
           $ref: '#/components/schemas/DealSource'
+        project_type:
+          type: string
+          maxLength: 200
+          example: "E-commerce Website"
+        service_category:
+          type: string
+          maxLength: 200
+          example: "Web Development"
+        pricing_tier:
+          type: string
+          maxLength: 100
+          example: "standard"
         estimated_value:
+          type: number
+          format: decimal
+          example: 50000000
+        actual_value:
           type: number
           format: decimal
         currency:
           type: string
           default: VND
+        desired_timeline:
+          type: string
+          maxLength: 255
+          description: Estimated project duration (free text, e.g. "2 tháng", "6 tuần")
+          example: "2 tháng"
         notes:
           type: string
+          example: "Khách cần website bán hàng tích hợp thanh toán VNPay và MOMO"
+      example:
+        client_id: "e1f881a5-fe2a-4f62-bcda-c0371077a924"
+        title: "Xây dựng website bán hàng"
+        stage: "new_lead"
+        source: "referral"
+        project_type: "E-commerce Website"
+        service_category: "Web Development"
+        pricing_tier: "standard"
+        estimated_value: 50000000
+        currency: "VND"
+        desired_timeline: "2 tháng"
+        notes: "Khách cần website bán hàng tích hợp thanh toán VNPay và MOMO"
 
     UpdateDealRequest:
       type: object
       properties:
+        client_id:
+          type: string
+          format: uuid
         title:
           type: string
         source:
           $ref: '#/components/schemas/DealSource'
+        project_type:
+          type: string
+          maxLength: 200
+        service_category:
+          type: string
+          maxLength: 200
+        pricing_tier:
+          type: string
+          maxLength: 100
         estimated_value:
           type: number
           format: decimal
@@ -5208,6 +5284,10 @@ components:
           format: decimal
         currency:
           type: string
+        desired_timeline:
+          type: string
+          maxLength: 255
+          description: Estimated project duration (free text, e.g. "2 tháng", "6 tuần")
         notes:
           type: string
 

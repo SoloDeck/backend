@@ -1,0 +1,92 @@
+============================================================
+  DEALS ENDPOINTS
+  BASE: http://localhost:8000/api/v1
+  Replace <TOKEN>, <CLIENT_ID>, <DEAL_ID>
+============================================================
+
+--- CREATE DEAL ---
+POST /deals
+
+curl -X POST http://localhost:8000/api/v1/deals \
+  -H "Authorization: Bearer <TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "client_id": "<CLIENT_ID>",
+    "title": "Xay dung website thuong mai dien tu",
+    "stage": "new_lead",
+    "source": "referral",
+    "project_type": "E-commerce Website",
+    "service_category": "Web Development",
+    "pricing_tier": "standard",
+    "estimated_value": 50000000,
+    "currency": "VND",
+    "desired_timeline": "2 thang",
+    "notes": "Khach can website ban hang tich hop thanh toan VNPay va MOMO"
+  }'
+
+--- LIST DEALS ---
+GET /deals
+
+curl "http://localhost:8000/api/v1/deals?page=1&page_size=20" \
+  -H "Authorization: Bearer <TOKEN>"
+
+# With filters:
+curl "http://localhost:8000/api/v1/deals?stage=new_lead&title=website&page=1&page_size=20" \
+  -H "Authorization: Bearer <TOKEN>"
+
+--- GET DEAL ---
+GET /deals/{deal_id}
+
+curl http://localhost:8000/api/v1/deals/<DEAL_ID> \
+  -H "Authorization: Bearer <TOKEN>"
+
+--- UPDATE DEAL ---
+PATCH /deals/{deal_id}
+
+curl -X PATCH http://localhost:8000/api/v1/deals/<DEAL_ID> \
+  -H "Authorization: Bearer <TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "client_id": "<CLIENT_ID>",
+    "title": "Xay dung website thuong mai dien tu (Updated)",
+    "estimated_value": 60000000,
+    "notes": "Khach dong y them tinh nang quan ly kho"
+  }'
+
+--- DELETE DEAL ---
+DELETE /deals/{deal_id}
+
+curl -X DELETE http://localhost:8000/api/v1/deals/<DEAL_ID> \
+  -H "Authorization: Bearer <TOKEN>"
+
+--- QUALIFY DEAL BY AI ---
+POST /deals/{deal_id}/qualify
+Note: Triggers AI lead qualification. Returns score, level (hot/warm/cold),
+      detected_signals, suggested_actions, next_step, price_range.
+
+curl -X POST http://localhost:8000/api/v1/deals/<DEAL_ID>/qualify \
+  -H "Authorization: Bearer <TOKEN>"
+
+--- TRANSITION STAGE ---
+POST /deals/{deal_id}/stage
+Stages: new_lead -> proposal_sent -> in_negotiation -> active -> completed_and_billed
+        Any stage -> lost
+
+curl -X POST http://localhost:8000/api/v1/deals/<DEAL_ID>/stage \
+  -H "Authorization: Bearer <TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "target_stage": "proposal_sent"
+  }'
+
+--- LIST INTAKES ---
+GET /deals/intakes
+
+curl "http://localhost:8000/api/v1/deals/intakes?page=1&page_size=20" \
+  -H "Authorization: Bearer <TOKEN>"
+
+--- GET INTAKE ---
+GET /deals/intakes/{intake_id}
+
+curl http://localhost:8000/api/v1/deals/intakes/<INTAKE_ID> \
+  -H "Authorization: Bearer <TOKEN>"
