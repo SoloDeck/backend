@@ -63,6 +63,15 @@ class TestUpdateMe:
         assert resp.status_code == 200
         assert resp.json()["data"]["phone"] == "0901234567"
 
+    async def test_updates_avatar_url(self, client: AsyncClient) -> None:
+        headers, _ = await _register(client)
+        new_avatar = "https://cdn.example.com/avatar.jpg"
+        resp = await client.patch(
+            "/api/v1/users/me", json={"avatar_url": new_avatar}, headers=headers
+        )
+        assert resp.status_code == 200
+        assert resp.json()["data"]["avatar_url"] == new_avatar
+
     async def test_partial_update_leaves_name_unchanged(self, client: AsyncClient) -> None:
         headers, _ = await _register(client, "Keep Me")
         await client.patch("/api/v1/users/me", json={"phone": "09x"}, headers=headers)
