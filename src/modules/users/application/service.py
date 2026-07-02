@@ -41,6 +41,8 @@ class UsersService:
             user.phone = payload.phone
         if payload.avatar_url is not None:
             user.avatar_url = payload.avatar_url
+        if payload.bio is not None:
+            user.bio = payload.bio
         return await self.repo.save(user)
 
     async def delete_me(self, user_id: uuid.UUID) -> None:
