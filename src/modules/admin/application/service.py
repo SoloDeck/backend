@@ -152,6 +152,12 @@ class AdminService:
     async def list_plans(self) -> list:
         return await self.repo.list_plans()
 
+    async def get_plan(self, plan_id: uuid.UUID):
+        plan = await self.repo.get_plan(plan_id)
+        if plan is None:
+            raise NotFoundError(f"Plan {plan_id} not found")
+        return plan
+
     async def create_plan(self, payload: AdminPlanRequest):
         return await self.repo.create_plan(
             name=payload.name,

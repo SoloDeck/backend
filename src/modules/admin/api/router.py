@@ -169,6 +169,16 @@ async def list_plans(
     return ApiResponse.ok([AdminPlanResponse.model_validate(p) for p in plans])
 
 
+@router.get("/plans/{plan_id}", response_model=ApiResponse[AdminPlanResponse])
+async def get_plan(
+    plan_id: uuid.UUID,
+    _: AdminUser,
+    db: DBSession,
+) -> ApiResponse[AdminPlanResponse]:
+    plan = await AdminService(db=db).get_plan(plan_id)
+    return ApiResponse.ok(AdminPlanResponse.model_validate(plan))
+
+
 @router.post("/plans", response_model=ApiResponse[AdminPlanResponse], status_code=201)
 async def create_plan(
     payload: AdminPlanRequest,

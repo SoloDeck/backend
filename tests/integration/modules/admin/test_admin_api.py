@@ -694,6 +694,43 @@ class TestAdminListPlans:
 
 
 # ---------------------------------------------------------------------------
+# GET /admin/plans/{plan_id}
+# ---------------------------------------------------------------------------
+
+
+class TestAdminGetPlan:
+    async def test_returns_plan_by_id(self, client: AsyncClient, db_session: AsyncSession) -> None:
+        headers = await _admin_headers(client, db_session)
+        created = (
+            await client.post(
+                "/api/v1/admin/plans",
+                json=_plan_payload(name="Fetchable Plan", slug="fetchable-plan"),
+                headers=headers,
+            )
+        ).json()["data"]
+
+        resp = await client.get(f"/api/v1/admin/plans/{created['id']}", headers=headers)
+        assert resp.status_code == 200
+        assert resp.json()["data"]["slug"] == "fetchable-plan"
+
+    async def test_nonexistent_plan_returns_404(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        headers = await _admin_headers(client, db_session)
+        resp = await client.get(f"/api/v1/admin/plans/{uuid.uuid4()}", headers=headers)
+        assert resp.status_code == 404
+
+    async def test_non_admin_returns_403(self, client: AsyncClient) -> None:
+        headers = await _user_headers(client)
+        resp = await client.get(f"/api/v1/admin/plans/{uuid.uuid4()}", headers=headers)
+        assert resp.status_code == 403
+
+    async def test_unauthenticated_returns_401(self, client: AsyncClient) -> None:
+        resp = await client.get(f"/api/v1/admin/plans/{uuid.uuid4()}")
+        assert resp.status_code == 401
+
+
+# ---------------------------------------------------------------------------
 # POST /admin/plans
 # ---------------------------------------------------------------------------
 

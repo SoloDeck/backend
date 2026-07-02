@@ -3236,6 +3236,23 @@ paths:
   /admin/plans/{plan_id}:
     parameters:
       - $ref: '#/components/parameters/PlanId'
+    get:
+      tags: [Admin]
+      summary: Get a single plan by ID
+      responses:
+        '200':
+          description: Plan detail
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/SubscriptionPlanResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
     patch:
       tags: [Admin]
       summary: Update a plan (deactivate or change limits; existing subscribers unaffected)
