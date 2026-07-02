@@ -16,7 +16,7 @@ from src.modules.admin.schemas.request import (
     AdminUpdateTemplateRequest,
     AdminUpdateUserRequest,
 )
-from src.shared.exceptions.domain import BusinessRuleError, NotFoundError
+from src.shared.exceptions.domain import AlreadyExistsError, BusinessRuleError, NotFoundError
 
 
 @dataclass
@@ -72,6 +72,16 @@ class AdminService:
             user.status = payload.status
         if payload.full_name is not None:
             user.full_name = payload.full_name
+        if payload.email is not None:
+            existing = await self.repo.get_user_by_email(payload.email, exclude_user_id=user_id)
+            if existing is not None:
+                raise AlreadyExistsError(f"Email '{payload.email}' is already in use")
+            user.email = payload.email
+        if payload.phone is not None:
+            existing = await self.repo.get_user_by_phone(payload.phone, exclude_user_id=user_id)
+            if existing is not None:
+                raise AlreadyExistsError(f"Phone '{payload.phone}' is already in use")
+            user.phone = payload.phone
         return await self.repo.save(user)
 
     async def suspend_user(

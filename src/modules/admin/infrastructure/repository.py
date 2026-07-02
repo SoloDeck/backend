@@ -115,6 +115,24 @@ class AdminRepository:
             .options(selectinload(UserModel.subscription).selectinload(SubscriptionModel.plan))
         )
 
+    async def get_user_by_email(self, email: str, *, exclude_user_id: uuid.UUID | None = None):
+        stmt = select(UserModel).where(
+            UserModel.email == email,
+            UserModel.deleted_at.is_(None),
+        )
+        if exclude_user_id is not None:
+            stmt = stmt.where(UserModel.id != exclude_user_id)
+        return await self.db.scalar(stmt)
+
+    async def get_user_by_phone(self, phone: str, *, exclude_user_id: uuid.UUID | None = None):
+        stmt = select(UserModel).where(
+            UserModel.phone == phone,
+            UserModel.deleted_at.is_(None),
+        )
+        if exclude_user_id is not None:
+            stmt = stmt.where(UserModel.id != exclude_user_id)
+        return await self.db.scalar(stmt)
+
     async def count_active_admins(self) -> int:
         return await self.db.scalar(
             select(func.count(UserModel.id)).where(

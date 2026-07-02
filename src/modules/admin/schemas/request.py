@@ -3,13 +3,15 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, EmailStr, Field
 
 
 class AdminUpdateUserRequest(BaseModel):
     role: Literal["freelancer", "admin"] | None = None
     status: Literal["active", "suspended", "deleted"] | None = None
     full_name: str | None = None
+    email: EmailStr | None = None
+    phone: str | None = None
 
 
 class AdminPlanRequest(BaseModel):

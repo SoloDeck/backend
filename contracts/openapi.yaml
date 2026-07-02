@@ -571,8 +571,10 @@ paths:
       tags: [Users]
       summary: Update current user identity fields
       description: |
-        Partial update — only provided fields are changed. Changing `email` triggers a
-        uniqueness check across all users and returns 409 if the address is already taken.
+        Partial update — only provided fields are changed. Email cannot be changed via this
+        endpoint (no re-verification flow exists yet); use an admin action if it must change.
+        Changing `phone` triggers a uniqueness check across all users and returns 409 if the
+        number is already taken.
       requestBody:
         required: true
         content:
@@ -594,11 +596,7 @@ paths:
         '400':
           $ref: '#/components/responses/BadRequest'
         '409':
-          description: Email already in use
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
+          $ref: '#/components/responses/Conflict'
     delete:
       tags: [Users]
       summary: Request soft-deletion of own account
@@ -3040,8 +3038,11 @@ paths:
           $ref: '#/components/responses/NotFound'
     patch:
       tags: [Admin]
-      summary: Update user role or status
-      description: Changes `role` or `status`. Demoting the last admin account is blocked with 409. Every change is written to the audit log.
+      summary: Update user identity, role, or status
+      description: |
+        Changes `role`, `status`, `full_name`, `email`, or `phone`. Changing `email` or
+        `phone` triggers a uniqueness check across all users and returns 409 if already
+        taken by someone else.
       requestBody:
         required: true
         content:
@@ -3060,6 +3061,10 @@ paths:
                     properties:
                       data:
                         $ref: '#/components/schemas/AdminUserResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
 
   /admin/users/{user_id}/suspend:
     parameters:
@@ -4781,9 +4786,6 @@ components:
       properties:
         full_name:
           type: string
-        email:
-          type: string
-          format: email
         avatar_url:
           type: string
           format: uri
@@ -6553,6 +6555,13 @@ components:
           $ref: '#/components/schemas/UserRole'
         status:
           $ref: '#/components/schemas/UserStatus'
+        full_name:
+          type: string
+        email:
+          type: string
+          format: email
+        phone:
+          type: string
 
     AdminSubscriptionPage:
       allOf:

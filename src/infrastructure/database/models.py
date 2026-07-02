@@ -192,7 +192,7 @@ class UserModel(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     hashed_password: Mapped[str | None] = mapped_column(String(255), nullable=True)
     avatar_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     bio: Mapped[str | None] = mapped_column(Text, nullable=True)
-    phone: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    phone: Mapped[str | None] = mapped_column(String(50), nullable=True, unique=True)
 
     # Professional profile
     skills: Mapped[list[str] | None] = mapped_column(ARRAY(Text), nullable=True)

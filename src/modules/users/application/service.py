@@ -14,7 +14,7 @@ from src.modules.users.schemas.request import (
     UpdateProfessionalProfileRequest,
     UpdateUserRequest,
 )
-from src.shared.exceptions.domain import AuthenticationError, NotFoundError
+from src.shared.exceptions.domain import AlreadyExistsError, AuthenticationError, NotFoundError
 from src.shared.security.passwords import hash_password, verify_password
 
 
@@ -38,6 +38,9 @@ class UsersService:
         if payload.full_name is not None:
             user.full_name = payload.full_name
         if payload.phone is not None:
+            existing = await self.repo.get_by_phone(payload.phone, exclude_user_id=user_id)
+            if existing is not None:
+                raise AlreadyExistsError(f"Phone '{payload.phone}' is already in use")
             user.phone = payload.phone
         if payload.avatar_url is not None:
             user.avatar_url = payload.avatar_url

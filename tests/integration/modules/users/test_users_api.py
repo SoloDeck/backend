@@ -96,6 +96,33 @@ class TestUpdateMe:
         resp = await client.get("/api/v1/users/me", headers=headers)
         assert resp.json()["data"]["full_name"] == "Keep Me"
 
+    async def test_email_field_is_ignored(self, client: AsyncClient) -> None:
+        headers, email = await _register(client)
+        resp = await client.patch(
+            "/api/v1/users/me", json={"email": "someone-else@example.com"}, headers=headers
+        )
+        assert resp.status_code == 200
+        assert resp.json()["data"]["email"] == email
+
+    async def test_duplicate_phone_returns_409(self, client: AsyncClient) -> None:
+        headers_a, _ = await _register(client)
+        headers_b, _ = await _register(client)
+        await client.patch("/api/v1/users/me", json={"phone": "0911111111"}, headers=headers_a)
+        resp = await client.patch(
+            "/api/v1/users/me", json={"phone": "0911111111"}, headers=headers_b
+        )
+        assert resp.status_code == 409
+
+    async def test_reusing_own_phone_is_not_a_conflict(self, client: AsyncClient) -> None:
+        headers, _ = await _register(client)
+        await client.patch("/api/v1/users/me", json={"phone": "0922222222"}, headers=headers)
+        resp = await client.patch(
+            "/api/v1/users/me",
+            json={"phone": "0922222222", "full_name": "Renamed"},
+            headers=headers,
+        )
+        assert resp.status_code == 200
+
     async def test_unauthenticated_returns_401(self, client: AsyncClient) -> None:
         resp = await client.patch("/api/v1/users/me", json={"full_name": "X"})
         assert resp.status_code == 401

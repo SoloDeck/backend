@@ -436,6 +436,79 @@ class TestAdminUpdateUser:
         )
         assert resp.status_code == 422
 
+    async def test_update_email(self, client: AsyncClient, db_session: AsyncSession) -> None:
+        headers = await _admin_headers(client, db_session)
+        user_h = await _user_headers(client)
+        user_id = (await client.get("/api/v1/users/me", headers=user_h)).json()["data"]["id"]
+
+        resp = await client.patch(
+            f"/api/v1/admin/users/{user_id}",
+            json={"email": "renamed@example.com"},
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        assert resp.json()["data"]["email"] == "renamed@example.com"
+
+    async def test_update_phone(self, client: AsyncClient, db_session: AsyncSession) -> None:
+        headers = await _admin_headers(client, db_session)
+        user_h = await _user_headers(client)
+        user_id = (await client.get("/api/v1/users/me", headers=user_h)).json()["data"]["id"]
+
+        resp = await client.patch(
+            f"/api/v1/admin/users/{user_id}",
+            json={"phone": "0933333333"},
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        assert resp.json()["data"]["phone"] == "0933333333"
+
+    async def test_duplicate_email_returns_409(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        headers = await _admin_headers(client, db_session)
+        user_a_h = await _user_headers(client)
+        user_b_h = await _user_headers(client)
+        email_a = (await client.get("/api/v1/users/me", headers=user_a_h)).json()["data"]["email"]
+        user_b_id = (await client.get("/api/v1/users/me", headers=user_b_h)).json()["data"]["id"]
+
+        resp = await client.patch(
+            f"/api/v1/admin/users/{user_b_id}",
+            json={"email": email_a},
+            headers=headers,
+        )
+        assert resp.status_code == 409
+
+    async def test_duplicate_phone_returns_409(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        headers = await _admin_headers(client, db_session)
+        user_a_h = await _user_headers(client)
+        user_b_h = await _user_headers(client)
+        user_a_id = (await client.get("/api/v1/users/me", headers=user_a_h)).json()["data"]["id"]
+        user_b_id = (await client.get("/api/v1/users/me", headers=user_b_h)).json()["data"]["id"]
+
+        await client.patch(
+            f"/api/v1/admin/users/{user_a_id}", json={"phone": "0944444444"}, headers=headers
+        )
+        resp = await client.patch(
+            f"/api/v1/admin/users/{user_b_id}", json={"phone": "0944444444"}, headers=headers
+        )
+        assert resp.status_code == 409
+
+    async def test_reusing_own_email_is_not_a_conflict(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        headers = await _admin_headers(client, db_session)
+        user_h = await _user_headers(client)
+        me = (await client.get("/api/v1/users/me", headers=user_h)).json()["data"]
+
+        resp = await client.patch(
+            f"/api/v1/admin/users/{me['id']}",
+            json={"email": me["email"], "full_name": "Renamed"},
+            headers=headers,
+        )
+        assert resp.status_code == 200
+
     async def test_update_nonexistent_returns_404(self, client: AsyncClient, db_session: AsyncSession) -> None:
         headers = await _admin_headers(client, db_session)
         resp = await client.patch(
