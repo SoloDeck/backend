@@ -4370,10 +4370,15 @@ components:
         email:
           type: string
           format: email
+          example: admin@solodesk.dev
         password:
           type: string
           format: password
           minLength: 8
+          example: Admin@SoloDesk2025!
+      example:
+        email: admin@solodesk.dev
+        password: Admin@SoloDesk2025!
 
     RefreshRequest:
       type: object
