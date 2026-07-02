@@ -13,6 +13,7 @@ Test coverage:
 - Default plan slugs: free, pro, agency
 """
 
+from decimal import Decimal
 from unittest.mock import patch
 
 from sqlalchemy import func, select
@@ -101,6 +102,22 @@ class TestPlansSeeder:
         assert pro is not None
         assert pro.max_clients is None
         assert pro.max_deals is None
+
+    async def test_rerun_preserves_admin_customization(self, db_session: AsyncSession) -> None:
+        """Re-running the seeder (e.g. on every deploy) must not clobber admin edits."""
+        await PlansSeeder(db_session).run()
+        pro = await db_session.scalar(select(PlanModel).where(PlanModel.slug == "pro"))
+        assert pro is not None
+        pro.price_monthly = Decimal("199000")
+        pro.currency = "VND"
+        await db_session.commit()
+
+        await PlansSeeder(db_session).run()
+
+        pro = await db_session.scalar(select(PlanModel).where(PlanModel.slug == "pro"))
+        assert pro is not None
+        assert pro.price_monthly == Decimal("199000")
+        assert pro.currency == "VND"
 
 
 # ---------------------------------------------------------------------------
