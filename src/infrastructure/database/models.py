@@ -371,6 +371,7 @@ class SubscriptionModel(UUIDMixin, TimestampMixin, Base):
     user: Mapped["UserModel"] = relationship(
         "UserModel", back_populates="subscription", foreign_keys=[user_id]
     )
+    plan: Mapped["PlanModel"] = relationship("PlanModel", foreign_keys=[plan_id])
 
     __table_args__ = (
         Index("idx_subscriptions_plan_status", "plan_id", "status"),

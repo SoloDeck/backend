@@ -6529,7 +6529,8 @@ components:
         - type: object
           properties:
             subscription:
-              $ref: '#/components/schemas/SubscriptionResponse'
+              $ref: '#/components/schemas/AdminSubscriptionResponse'
+              nullable: true
             deleted_at:
               type: string
               format: date-time
@@ -6561,7 +6562,46 @@ components:
             data:
               type: array
               items:
-                $ref: '#/components/schemas/SubscriptionResponse'
+                $ref: '#/components/schemas/AdminSubscriptionResponse'
+
+    AdminSubscriptionResponse:
+      type: object
+      required: [id, user_id, plan_id, plan_name, plan_slug, status, current_period_start, current_period_end, cancel_at_period_end, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        plan_id:
+          type: string
+          format: uuid
+        plan_name:
+          type: string
+        plan_slug:
+          type: string
+        status:
+          $ref: '#/components/schemas/SubscriptionStatus'
+        current_period_start:
+          type: string
+          format: date-time
+        current_period_end:
+          type: string
+          format: date-time
+        cancel_at_period_end:
+          type: boolean
+        cancelled_at:
+          type: string
+          format: date-time
+          nullable: true
+        override_expires_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
 
     AdminSubscriptionOverrideRequest:
       type: object

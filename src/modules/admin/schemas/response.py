@@ -17,17 +17,6 @@ class Paginated(BaseModel, Generic[T]):
     page_size: int
 
 
-class AdminUserResponse(UserResponse):
-    deleted_at: datetime | None = None
-
-    @model_validator(mode="before")
-    @classmethod
-    def _nest_and_add_deleted_at(cls, obj: Any) -> Any:
-        if isinstance(obj, dict):
-            return obj
-        return {**build_user_fields(obj), "deleted_at": obj.deleted_at}
-
-
 class AdminPlanResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -60,6 +49,40 @@ class AdminSubscriptionResponse(BaseModel):
     cancelled_at: datetime | None
     override_expires_at: datetime | None
     created_at: datetime
+
+
+def _build_subscription_fields(sub: Any) -> dict[str, Any]:
+    return {
+        "id": sub.id,
+        "user_id": sub.user_id,
+        "plan_id": sub.plan_id,
+        "plan_name": sub.plan.name,
+        "plan_slug": sub.plan.slug,
+        "status": sub.status,
+        "current_period_start": sub.current_period_start,
+        "current_period_end": sub.current_period_end,
+        "cancel_at_period_end": sub.cancel_at_period_end,
+        "cancelled_at": sub.cancelled_at,
+        "override_expires_at": sub.override_expires_at,
+        "created_at": sub.created_at,
+    }
+
+
+class AdminUserResponse(UserResponse):
+    deleted_at: datetime | None = None
+    subscription: AdminSubscriptionResponse | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _nest_and_add_deleted_at(cls, obj: Any) -> Any:
+        if isinstance(obj, dict):
+            return obj
+        subscription = _build_subscription_fields(obj.subscription) if obj.subscription else None
+        return {
+            **build_user_fields(obj),
+            "deleted_at": obj.deleted_at,
+            "subscription": subscription,
+        }
 
 
 class AdminAiCostResponse(BaseModel):

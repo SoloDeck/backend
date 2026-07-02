@@ -301,6 +301,66 @@ class TestAdminGetUser:
         assert "deleted_at" in data
         assert data["professional_profile"]["currency"] == "VND"
         assert data["preferences"]["locale"] == "vi"
+        assert data["subscription"] is None
+
+    async def test_includes_subscription_when_present(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        headers = await _admin_headers(client, db_session)
+        plan = (
+            await client.post("/api/v1/admin/plans", json=_plan_payload(), headers=headers)
+        ).json()["data"]
+
+        user_h = await _user_headers(client)
+        user_id = (await client.get("/api/v1/users/me", headers=user_h)).json()["data"]["id"]
+        await _create_subscription(db_session, user_id, plan["id"])
+
+        resp = await client.get(f"/api/v1/admin/users/{user_id}", headers=headers)
+        data = resp.json()["data"]
+        assert data["subscription"]["plan_slug"] == plan["slug"]
+        assert data["subscription"]["status"] == "active"
+
+    async def test_list_includes_subscription(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        headers = await _admin_headers(client, db_session)
+        plan = (
+            await client.post("/api/v1/admin/plans", json=_plan_payload(), headers=headers)
+        ).json()["data"]
+
+        user_h = await _user_headers(client)
+        user_id = (await client.get("/api/v1/users/me", headers=user_h)).json()["data"]["id"]
+        await _create_subscription(db_session, user_id, plan["id"])
+
+        resp = await client.get("/api/v1/admin/users?role=freelancer", headers=headers)
+        users = {u["id"]: u for u in resp.json()["data"]["data"]}
+        assert users[user_id]["subscription"]["plan_slug"] == plan["slug"]
+
+    async def test_suspend_and_update_preserve_subscription(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        headers = await _admin_headers(client, db_session)
+        plan = (
+            await client.post("/api/v1/admin/plans", json=_plan_payload(), headers=headers)
+        ).json()["data"]
+
+        user_h = await _user_headers(client)
+        user_id = (await client.get("/api/v1/users/me", headers=user_h)).json()["data"]["id"]
+        await _create_subscription(db_session, user_id, plan["id"])
+
+        resp = await client.post(f"/api/v1/admin/users/{user_id}/suspend", headers=headers)
+        assert resp.status_code == 200
+        assert resp.json()["data"]["subscription"]["plan_slug"] == plan["slug"]
+
+        resp = await client.post(f"/api/v1/admin/users/{user_id}/reinstate", headers=headers)
+        assert resp.status_code == 200
+        assert resp.json()["data"]["subscription"]["plan_slug"] == plan["slug"]
+
+        resp = await client.patch(
+            f"/api/v1/admin/users/{user_id}", json={"full_name": "X"}, headers=headers
+        )
+        assert resp.status_code == 200
+        assert resp.json()["data"]["subscription"]["plan_slug"] == plan["slug"]
 
     async def test_nonexistent_user_returns_404(self, client: AsyncClient, db_session: AsyncSession) -> None:
         headers = await _admin_headers(client, db_session)
