@@ -20,33 +20,42 @@ VALID_MOCK_DATA = {
 }
 
 
-class MockResponse:
-    def __init__(self, text):
-        self.text = text
+class FakeMessage:
+    def __init__(self, content):
+        self.content = content
 
 
-class FakeModel:
-    def __init__(self, response):
-        self._response = response
-
-    async def generate_content(self, *args, **kwargs):
-        return self._response
+class FakeChoice:
+    def __init__(self, content):
+        self.message = FakeMessage(content)
 
 
-class FakeAio:
-    def __init__(self, response):
-        self.models = FakeModel(response)
+class FakeCompletionResponse:
+    def __init__(self, content):
+        self.choices = [FakeChoice(content)]
+
+
+class FakeCompletions:
+    def __init__(self, content):
+        self._content = content
+
+    def create(self, *args, **kwargs):
+        return FakeCompletionResponse(self._content)
+
+
+class FakeChat:
+    def __init__(self, content):
+        self.completions = FakeCompletions(content)
 
 
 class FakeClient:
-    def __init__(self, response):
-        self.models = FakeModel(response)
-        self.aio = FakeAio(response)
+    def __init__(self, content):
+        self.chat = FakeChat(content)
 
 
 def _make_qualifier(data: dict) -> LeadQualifier:
     q = LeadQualifier()
-    q.set_client_for_tests(FakeClient(MockResponse(json.dumps(data))))
+    q.set_client_for_tests(FakeClient(json.dumps(data)))
     return q
 
 
@@ -59,17 +68,17 @@ class TestGetClient:
     def test_missing_api_key_raises(self, monkeypatch):
         from src.config.settings import settings
 
-        monkeypatch.setattr(settings, "gemini_api_key", "")
+        monkeypatch.setattr(settings, "groq_api_key", "")
         q = LeadQualifier()
         # Clear existing cached client if any
         q._client = None
-        with pytest.raises(RuntimeError, match="GEMINI_API_KEY is not set in settings"):
+        with pytest.raises(RuntimeError, match="GROQ_API_KEY is not set in settings"):
             q._get_client()
 
     def test_success_returns_client(self, monkeypatch):
         from src.config.settings import settings
 
-        monkeypatch.setattr(settings, "gemini_api_key", "fake-key")
+        monkeypatch.setattr(settings, "groq_api_key", "fake-key")
         q = LeadQualifier()
         # Clear existing cached client if any
         q._client = None
@@ -142,13 +151,13 @@ class TestRun:
     async def test_markdown_response_cleaned(self):
         q = LeadQualifier()
         raw_md = f"```json\n{json.dumps(VALID_MOCK_DATA)}\n```"
-        q.set_client_for_tests(FakeClient(MockResponse(raw_md)))
+        q.set_client_for_tests(FakeClient(raw_md))
         result = await q.run(inquiry_text="Need a website")
         assert result["suggested_lead_score"] == "HOT"
 
     async def test_invalid_json_from_model_raises(self):
         q = LeadQualifier()
-        q.set_client_for_tests(FakeClient(MockResponse("not json")))
+        q.set_client_for_tests(FakeClient("not json"))
         with pytest.raises(AIOutputParseError):
             await q.run(inquiry_text="Need a website")
 
