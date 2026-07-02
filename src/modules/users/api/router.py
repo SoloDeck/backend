@@ -10,6 +10,7 @@ from src.modules.users.application.service import UsersService
 from src.modules.users.schemas.request import (
     ChangePasswordRequest,
     FreelancerProfileUpdateRequest,
+    UpdatePreferencesRequest,
     UpdateProfessionalProfileRequest,
     UpdateUserRequest,
 )
@@ -83,6 +84,20 @@ async def update_professional_profile(
     db: DBSession,
 ) -> ApiResponse[UserResponse]:
     user = await UsersService(db=db).update_professional_profile(user_id, payload)
+    return ApiResponse.ok(UserResponse.model_validate(user))
+
+
+@router.patch(
+    "/me/preferences",
+    response_model=ApiResponse[UserResponse],
+    summary="Update notification, locale, and theme preferences",
+)
+async def update_preferences(
+    payload: UpdatePreferencesRequest,
+    user_id: CurrentUserId,
+    db: DBSession,
+) -> ApiResponse[UserResponse]:
+    user = await UsersService(db=db).update_preferences(user_id, payload)
     return ApiResponse.ok(UserResponse.model_validate(user))
 
 

@@ -4114,7 +4114,7 @@ components:
 
     NotificationChannel:
       type: string
-      enum: [email, in_app, both]
+      enum: [email, in_app, both, zalo]
 
     ThemePreference:
       type: string

@@ -10,6 +10,7 @@ from src.modules.users.infrastructure.repository import UsersRepository
 from src.modules.users.schemas.request import (
     ChangePasswordRequest,
     FreelancerProfileUpdateRequest,
+    UpdatePreferencesRequest,
     UpdateProfessionalProfileRequest,
     UpdateUserRequest,
 )
@@ -72,6 +73,20 @@ class UsersService:
             user.portfolio_url = payload.portfolio_url
         if payload.business_name is not None:
             user.business_name = payload.business_name
+        return await self.repo.save(user)
+
+    async def update_preferences(
+        self, user_id: uuid.UUID, payload: UpdatePreferencesRequest
+    ):  # type: ignore[return]
+        user = await self.get_me(user_id)
+        if payload.locale is not None:
+            user.locale = payload.locale
+        if payload.timezone is not None:
+            user.timezone = payload.timezone
+        if payload.notification_channel is not None:
+            user.notification_channel = payload.notification_channel
+        if payload.theme is not None:
+            user.theme = payload.theme
         return await self.repo.save(user)
 
     async def change_password(self, user_id: uuid.UUID, payload: ChangePasswordRequest) -> None:

@@ -1,4 +1,5 @@
 from decimal import Decimal
+from typing import Literal
 
 from pydantic import BaseModel
 
@@ -26,6 +27,13 @@ class UpdateProfessionalProfileRequest(BaseModel):
     currency: str | None = None
     portfolio_url: str | None = None
     business_name: str | None = None
+
+
+class UpdatePreferencesRequest(BaseModel):
+    locale: str | None = None
+    timezone: str | None = None
+    notification_channel: Literal["email", "in_app", "both", "zalo"] | None = None
+    theme: Literal["light", "dark"] | None = None
 
 
 class ChangePasswordRequest(BaseModel):

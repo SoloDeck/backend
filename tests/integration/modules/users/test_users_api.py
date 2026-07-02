@@ -145,6 +145,66 @@ class TestUpdateProfessionalProfile:
 
 
 # ---------------------------------------------------------------------------
+# PATCH /users/me/preferences
+# ---------------------------------------------------------------------------
+
+
+class TestUpdatePreferences:
+    async def test_updates_preference_fields(self, client: AsyncClient) -> None:
+        headers, _ = await _register(client)
+        resp = await client.patch(
+            "/api/v1/users/me/preferences",
+            json={
+                "locale": "en",
+                "timezone": "UTC",
+                "notification_channel": "both",
+                "theme": "dark",
+            },
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        prefs = resp.json()["data"]["preferences"]
+        assert prefs == {
+            "locale": "en",
+            "timezone": "UTC",
+            "notification_channel": "both",
+            "theme": "dark",
+        }
+
+    async def test_partial_update_leaves_other_fields(self, client: AsyncClient) -> None:
+        headers, _ = await _register(client)
+        await client.patch(
+            "/api/v1/users/me/preferences", json={"theme": "dark"}, headers=headers
+        )
+        resp = await client.patch(
+            "/api/v1/users/me/preferences", json={"locale": "en"}, headers=headers
+        )
+        prefs = resp.json()["data"]["preferences"]
+        assert prefs["theme"] == "dark"
+        assert prefs["locale"] == "en"
+
+    async def test_invalid_theme_returns_422(self, client: AsyncClient) -> None:
+        headers, _ = await _register(client)
+        resp = await client.patch(
+            "/api/v1/users/me/preferences", json={"theme": "neon"}, headers=headers
+        )
+        assert resp.status_code == 422
+
+    async def test_invalid_notification_channel_returns_422(self, client: AsyncClient) -> None:
+        headers, _ = await _register(client)
+        resp = await client.patch(
+            "/api/v1/users/me/preferences",
+            json={"notification_channel": "sms"},
+            headers=headers,
+        )
+        assert resp.status_code == 422
+
+    async def test_unauthenticated_returns_401(self, client: AsyncClient) -> None:
+        resp = await client.patch("/api/v1/users/me/preferences", json={"theme": "dark"})
+        assert resp.status_code == 401
+
+
+# ---------------------------------------------------------------------------
 # DELETE /users/me
 # ---------------------------------------------------------------------------
 
