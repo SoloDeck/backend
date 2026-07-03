@@ -165,6 +165,18 @@ _ai_module_type = PgEnum(
 _ai_generation_status = PgEnum(
     "pending", "completed", "failed", name="ai_generation_status", create_type=False
 )
+_ai_job_status = PgEnum(
+    "queued",
+    "running",
+    "succeeded",
+    "failed",
+    "cancelled",
+    name="ai_job_status",
+    create_type=False,
+)
+_ai_job_entity_type = PgEnum(
+    "deal", "proposal", "contract", name="ai_job_entity_type", create_type=False
+)
 _project_status = PgEnum(
     "planning", "active", "on_hold", "completed", name="project_status", create_type=False
 )
@@ -1123,6 +1135,39 @@ class AiCostRecordModel(UUIDMixin, Base):
         Index("idx_ai_cost_records_user", "user_id", "occurred_at"),
         Index("idx_ai_cost_records_module", "ai_module", "occurred_at"),
         Index("idx_ai_cost_records_time", "occurred_at"),
+    )
+
+
+class AiJobModel(UUIDMixin, TimestampMixin, Base):
+    """Tracks a background AI generation run (qualify/proposal/contract) dispatched to Celery.
+
+    Polymorphic binding on entity_type/entity_id — no FK, mirroring TaskModel/
+    reminders — since a job can target a deal, proposal, or contract.
+    """
+
+    __tablename__ = "ai_jobs"
+
+    owner_user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    type: Mapped[str] = mapped_column(_ai_module_type, nullable=False)
+    entity_type: Mapped[str] = mapped_column(_ai_job_entity_type, nullable=False)
+    entity_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    status: Mapped[str] = mapped_column(_ai_job_status, nullable=False, server_default="queued")
+    result: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    error: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    idempotency_key: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+    __table_args__ = (
+        Index("idx_ai_jobs_owner", "owner_user_id"),
+        Index("idx_ai_jobs_entity", "entity_type", "entity_id"),
+        Index(
+            "uq_ai_jobs_owner_idempotency_key",
+            "owner_user_id",
+            "idempotency_key",
+            unique=True,
+            postgresql_where=text("idempotency_key IS NOT NULL"),
+        ),
     )
 
 

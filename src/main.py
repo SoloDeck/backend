@@ -14,6 +14,7 @@ from src.config.settings import settings
 from src.infrastructure.database.session import engine
 from src.infrastructure.redis.client import close_redis_pool
 from src.modules.admin.api.router import router as admin_router
+from src.modules.ai_jobs.api.router import router as ai_jobs_router
 from src.modules.analytics.api.router import router as analytics_router
 
 # Module routers
@@ -137,6 +138,7 @@ app.include_router(freelancers_router, prefix=f"{API_V1}/public/freelancers", ta
 app.include_router(projects_router, prefix=f"{API_V1}/projects", tags=["Projects"])
 app.include_router(admin_router, prefix=f"{API_V1}/admin", tags=["Admin"])
 app.include_router(lead_qualifier_router, prefix=f"{API_V1}/ai")
+app.include_router(ai_jobs_router, prefix=f"{API_V1}/ai/jobs", tags=["AI Jobs"])
 
 
 # ---------------------------------------------------------------------------

@@ -4,6 +4,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
+import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.ai.facade import AIFacade
@@ -24,10 +25,30 @@ from src.shared.exceptions.domain import (
 )
 from src.shared.rate_limit import FixedWindowRateLimiter
 
+log = structlog.get_logger(__name__)
+
 # Basic per-link guard for the public, unauthenticated intake form. Process-local;
 # a generous window so legitimate submissions are unaffected while a flood of
 # automated posts to a single share link is throttled (returns HTTP 429).
 _public_intake_limiter = FixedWindowRateLimiter(max_requests=20, window_seconds=60)
+
+# Fields the lead_qualifier prompt's schema requires (see src/ai/lead_qualifier/
+# prompts/prompts.txt) but that _parse_output never validates the LLM actually
+# returned — logged here so an incomplete AI response is visible, not silent.
+_EXPECTED_QUALIFICATION_KEYS = frozenset(
+    {
+        "project_type",
+        "budget_signal",
+        "timeline_signal",
+        "urgency_signal",
+        "red_flags",
+        "next_step",
+        "detected_signals",
+        "suggested_actions",
+        "price_range_min",
+        "price_range_max",
+    }
+)
 
 
 @dataclass
@@ -225,6 +246,16 @@ class DealsService:
             inquiry_text=inquiry_context,
             user_can_use_ai=True,  # TODO: get from subscriptions
         )
+
+        missing_keys = sorted(
+            key for key in _EXPECTED_QUALIFICATION_KEYS if result.get(key) is None
+        )
+        if missing_keys:
+            log.warning(
+                "deals.qualify_deal.incomplete_ai_output",
+                deal_id=str(deal_model.id),
+                missing_keys=missing_keys,
+            )
 
         _score_map = {"HOT": 80, "WARM": 50, "COLD": 20}
         _confidence_map = {

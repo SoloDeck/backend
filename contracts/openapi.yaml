@@ -61,6 +61,8 @@ tags:
     description: Read-only derived metrics — revenue, pipeline, win rate, top clients, and AI usage.
   - name: AI
     description: Standalone AI endpoints for lead qualification, proposal/contract generation, and follow-up drafts. All require an AI-enabled subscription.
+  - name: AI Jobs
+    description: Background-tracked AI generation runs (lead qualification, proposal/contract generation) dispatched to a Celery worker and polled for status — use this instead of the synchronous `AI` endpoints when the caller cannot block on the request.
   - name: Admin
     description: Platform administration — user management, subscription overrides, plan catalog, templates, feature flags, AI cost monitoring, and audit logs. Requires `role=admin`.
   - name: Intake Form
@@ -2999,6 +3001,137 @@ paths:
           $ref: '#/components/responses/PaymentRequired'
 
   # -------------------------------------------------------------------------
+  # AI JOBS — background-tracked counterparts to the synchronous AI endpoints
+  # -------------------------------------------------------------------------
+  /ai/jobs:
+    get:
+      tags: [AI Jobs]
+      summary: List AI jobs
+      description: |
+        Returns jobs owned by the authenticated user, optionally filtered by
+        entity. Used by the client to restore in-progress job state after a
+        page refresh or when returning to an entity's detail view.
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - name: entity_type
+          in: query
+          schema:
+            $ref: '#/components/schemas/AiJobEntityType'
+        - name: entity_id
+          in: query
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Paginated AI job list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AiJobPage'
+    post:
+      tags: [AI Jobs]
+      summary: Create a background AI generation job
+      description: |
+        Creates an `AiJob` row and dispatches it to a Celery worker; returns
+        immediately with `status=queued` rather than blocking on the LLM call.
+
+        `entity_type` must match `type`: `lead_qualifier` and
+        `proposal_generator` target `entity_type=deal`; `contract_generator`
+        targets `entity_type=contract` (the contract must already exist in
+        `draft` status — created from an accepted proposal via `/contracts`).
+
+        Pass `idempotency_key` to make retried client requests safe — a
+        second request with the same key returns the original job instead of
+        creating a duplicate. Even without a key, a request for the same
+        `(type, entity_type, entity_id)` while an active (`queued`/`running`)
+        job already exists returns that job instead of enqueuing a second one.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateAiJobRequest'
+      responses:
+        '201':
+          description: Job created (or an existing queued/running/idempotent-replay job returned)
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/AiJobResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: entity_type does not match what `type` requires
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /ai/jobs/{job_id}:
+    parameters:
+      - $ref: '#/components/parameters/AiJobId'
+    get:
+      tags: [AI Jobs]
+      summary: Poll an AI job's status/result
+      description: |
+        Returns 404 if the job does not exist or belongs to another user.
+        `result` and `error` are `null` until the job reaches a terminal
+        status (`succeeded`/`failed`/`cancelled`).
+      responses:
+        '200':
+          description: Job detail
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/AiJobResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /ai/jobs/{job_id}/cancel:
+    parameters:
+      - $ref: '#/components/parameters/AiJobId'
+    post:
+      tags: [AI Jobs]
+      summary: Cancel a queued or running AI job (best-effort)
+      description: |
+        Only valid while `status` is `queued` or `running` — returns 409
+        otherwise. This is best-effort: a job already mid-LLM-call cannot be
+        forcibly interrupted, but the worker checks for cancellation before
+        writing its result and will not overwrite `status=cancelled`.
+      responses:
+        '200':
+          description: Job cancelled
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/AiJobResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Job is already in a terminal status (succeeded/failed/cancelled)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # -------------------------------------------------------------------------
   # ADMIN — requires role: admin
   # -------------------------------------------------------------------------
   /admin/users:
@@ -4038,6 +4171,13 @@ components:
         format: uuid
     ProposalId:
       name: proposal_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    AiJobId:
+      name: job_id
       in: path
       required: true
       schema:
@@ -5492,6 +5632,89 @@ components:
           enum: [accepted, rejected]
         note:
           type: string
+
+    AiJobType:
+      type: string
+      enum: [lead_qualifier, proposal_generator, contract_generator]
+      description: Same vocabulary as `ai_module` on AI cost records.
+
+    AiJobEntityType:
+      type: string
+      enum: [deal, contract]
+
+    AiJobStatus:
+      type: string
+      enum: [queued, running, succeeded, failed, cancelled]
+
+    AiJobError:
+      type: object
+      required: [code, message, retryable]
+      properties:
+        code:
+          type: string
+          description: One of the standard ErrorCode values (see ErrorResponse).
+        message:
+          type: string
+        retryable:
+          type: boolean
+          description: True if creating a new job for the same entity could plausibly succeed (transient failure); false if it will fail again until something changes.
+
+    CreateAiJobRequest:
+      type: object
+      required: [entity_id, type, entity_type]
+      properties:
+        entity_id:
+          type: string
+          format: uuid
+        type:
+          $ref: '#/components/schemas/AiJobType'
+        entity_type:
+          $ref: '#/components/schemas/AiJobEntityType'
+        idempotency_key:
+          type: string
+          maxLength: 255
+          nullable: true
+
+    AiJobResponse:
+      type: object
+      required: [id, type, entity_type, entity_id, status, created_at, updated_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        type:
+          $ref: '#/components/schemas/AiJobType'
+        entity_type:
+          $ref: '#/components/schemas/AiJobEntityType'
+        entity_id:
+          type: string
+          format: uuid
+        status:
+          $ref: '#/components/schemas/AiJobStatus'
+        result:
+          type: object
+          nullable: true
+          description: 'Shape depends on `type`, e.g. {"proposal_id": "..."} or {"contract_id": "..."}.'
+        error:
+          allOf:
+            - $ref: '#/components/schemas/AiJobError'
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    AiJobPage:
+      allOf:
+        - $ref: '#/components/schemas/PaginatedResponse'
+        - type: object
+          properties:
+            data:
+              type: array
+              items:
+                $ref: '#/components/schemas/AiJobResponse'
 
     PublicProposalResponse:
       type: object
