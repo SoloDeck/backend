@@ -56,6 +56,9 @@ postgres_data/
 # Temporary image storage
 temp_docs/
 
+# Private docs — instructions/info not meant for the repo
+private_docs/
+
 # Alembic — migrations are intentionally tracked in version control
 
 # claude-code-harness (lifecycle) runtime state — keep out of git
