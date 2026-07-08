@@ -611,6 +611,42 @@ paths:
         '401':
           $ref: '#/components/responses/Unauthorized'
 
+  /users/me/avatar:
+    post:
+      tags: [Users]
+      summary: Upload a new profile picture
+      description: |
+        Accepts a single image file (`image/jpeg`, `image/png`, or `image/webp`, max 5MB)
+        as multipart form data, stores it in object storage, and sets `avatar_url` to the
+        resulting public URL.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        '200':
+          description: Updated user with new avatar_url
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/UserResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+
   /users/me/professional-profile:
     patch:
       tags: [Users]

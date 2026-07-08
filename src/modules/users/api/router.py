@@ -2,9 +2,9 @@
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from fastapi import APIRouter, Depends, File, UploadFile
 from src.infrastructure.database.session import get_db_session
 from src.modules.users.application.service import UsersService
 from src.modules.users.schemas.request import (
@@ -16,6 +16,7 @@ from src.modules.users.schemas.request import (
 )
 from src.modules.users.schemas.response import MessageResponse, UserResponse
 from src.shared.dependencies.auth import CurrentUserId
+from src.shared.dependencies.storage import StorageDep
 from src.shared.responses.response import ApiResponse
 
 router = APIRouter()
@@ -113,3 +114,21 @@ async def change_password(
 ) -> ApiResponse[MessageResponse]:
     await UsersService(db=db).change_password(user_id, payload)
     return ApiResponse.ok(MessageResponse(detail="Password changed successfully"))
+
+
+@router.post(
+    "/me/avatar",
+    response_model=ApiResponse[UserResponse],
+    summary="Upload a new profile picture",
+)
+async def upload_avatar(
+    user_id: CurrentUserId,
+    db: DBSession,
+    storage: StorageDep,
+    file: Annotated[UploadFile, File()],
+) -> ApiResponse[UserResponse]:
+    content = await file.read()
+    user = await UsersService(db=db, storage=storage).upload_avatar(
+        user_id, content=content, content_type=file.content_type or ""
+    )
+    return ApiResponse.ok(UserResponse.model_validate(user))
