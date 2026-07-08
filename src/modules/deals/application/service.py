@@ -4,6 +4,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
+import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.ai.facade import AIFacade
@@ -24,10 +25,30 @@ from src.shared.exceptions.domain import (
 )
 from src.shared.rate_limit import FixedWindowRateLimiter
 
+log = structlog.get_logger(__name__)
+
 # Basic per-link guard for the public, unauthenticated intake form. Process-local;
 # a generous window so legitimate submissions are unaffected while a flood of
 # automated posts to a single share link is throttled (returns HTTP 429).
 _public_intake_limiter = FixedWindowRateLimiter(max_requests=20, window_seconds=60)
+
+# Fields the lead_qualifier prompt's schema requires (see src/ai/lead_qualifier/
+# prompts/prompts.txt) but that _parse_output never validates the LLM actually
+# returned — logged here so an incomplete AI response is visible, not silent.
+_EXPECTED_QUALIFICATION_KEYS = frozenset(
+    {
+        "project_type",
+        "budget_signal",
+        "timeline_signal",
+        "urgency_signal",
+        "red_flags",
+        "next_step",
+        "detected_signals",
+        "suggested_actions",
+        "price_range_min",
+        "price_range_max",
+    }
+)
 
 
 @dataclass
@@ -94,14 +115,21 @@ class DealsService:
         if owner is None:
             raise NotFoundError("Intake form not found or link is invalid")
 
-        client = await self.repo.create_client(
-            owner_user_id=owner.id,
-            type="individual",
-            name=payload.name,
-            email=payload.email,
-            phone=payload.phone,
-            status="prospect",
-        )
+        # Deduplicate: reuse an existing client when both name and phone match.
+        client = None
+        if payload.phone:
+            client = await self.repo.find_client_by_name_and_phone(
+                owner.id, payload.name, payload.phone
+            )
+        if client is None:
+            client = await self.repo.create_client(
+                owner_user_id=owner.id,
+                type="individual",
+                name=payload.name,
+                email=payload.email,
+                phone=payload.phone,
+                status="prospect",
+            )
         deal = await self.repo.create(
             owner_user_id=owner.id,
             client_id=client.id,
@@ -130,11 +158,12 @@ class DealsService:
         user_id: uuid.UUID,
         title: str | None = None,
         stage: str | None = None,
+        client_id: uuid.UUID | None = None,
         page: int = 1,
         page_size: int = 20,
     ) -> tuple[list, int]:
         return await self.repo.list_all(
-            user_id, title=title, stage=stage, page=page, page_size=page_size
+            user_id, title=title, stage=stage, client_id=client_id, page=page, page_size=page_size
         )
 
     async def list_intakes(
@@ -218,6 +247,16 @@ class DealsService:
             user_can_use_ai=True,  # TODO: get from subscriptions
         )
 
+        missing_keys = sorted(
+            key for key in _EXPECTED_QUALIFICATION_KEYS if result.get(key) is None
+        )
+        if missing_keys:
+            log.warning(
+                "deals.qualify_deal.incomplete_ai_output",
+                deal_id=str(deal_model.id),
+                missing_keys=missing_keys,
+            )
+
         _score_map = {"HOT": 80, "WARM": 50, "COLD": 20}
         _confidence_map = {
             "HOT": AIConfidence.high(),
@@ -270,6 +309,13 @@ class DealsService:
             red_flags=result.get("red_flags"),
         )
 
+        detected_signals_raw = result.get("detected_signals")
+        detected_signals = (
+            [s if isinstance(s, dict) else s.model_dump() for s in detected_signals_raw]
+            if detected_signals_raw
+            else None
+        )
+
         deal_model.ai_qualification_score = lead_score.score
         deal_model.ai_qualification_confidence = lead_score.confidence.value
         deal_model.ai_qualification_recommendation = aggregate.deal.ai_recommendation
@@ -279,10 +325,16 @@ class DealsService:
         deal_model.ai_qualification_timeline_signal = result.get("timeline_signal")
         deal_model.ai_qualification_urgency_signal = result.get("urgency_signal")
         deal_model.ai_qualification_red_flags = result.get("red_flags")
+        deal_model.ai_qualification_next_step = result.get("next_step")
+        deal_model.ai_qualification_detected_signals = detected_signals
+        deal_model.ai_qualification_suggested_actions = result.get("suggested_actions")
+        deal_model.ai_qualification_price_range_min = result.get("price_range_min") or None
+        deal_model.ai_qualification_price_range_max = result.get("price_range_max") or None
         await self.repo.save(deal_model)
 
         return {
             **result,
+            "detected_signals": detected_signals,
             "ai_qualification_score": score,
             "ai_qualification_recommendation": aggregate.deal.ai_recommendation,
         }
@@ -297,22 +349,32 @@ class DealsService:
         if not self.ai_facade:
             raise RuntimeError("AIFacade not initialized")
 
-        # Prefer inquiry context from the linked intake if available
+        # Build inquiry context from all available deal fields, then layer in intake if present
+        parts = [f"Project: {deal_model.title}"]
+        if deal_model.source:
+            parts.append(f"Source: {deal_model.source}")
+        if deal_model.project_type:
+            parts.append(f"Project type: {deal_model.project_type}")
+        if deal_model.service_category:
+            parts.append(f"Service category: {deal_model.service_category}")
+        if deal_model.pricing_tier:
+            parts.append(f"Pricing tier: {deal_model.pricing_tier}")
+        if deal_model.estimated_value:
+            parts.append(f"Estimated value: {deal_model.estimated_value} {deal_model.currency}")
+        if deal_model.desired_timeline:
+            parts.append(f"Desired timeline: {deal_model.desired_timeline}")
+        if deal_model.notes:
+            parts.append(f"Notes: {deal_model.notes}")
+
         intake = await self.repo.get_intake_by_client_id(deal_model.client_id, user_id)
         if intake is not None:
-            parts = [intake.inquiry_text]
+            if intake.inquiry_text:
+                parts.append(f"Client inquiry: {intake.inquiry_text}")
             if intake.estimated_budget:
-                parts.append(f"Estimated budget: {intake.estimated_budget}")
-            if intake.desired_timeline:
-                parts.append(f"Desired timeline: {intake.desired_timeline}")
-        else:
-            parts = [deal_model.title]
-            if deal_model.notes:
-                parts.append(deal_model.notes)
-            if deal_model.estimated_value:
-                parts.append(f"Estimated value: {deal_model.estimated_value} {deal_model.currency}")
-            if deal_model.desired_timeline:
-                parts.append(f"Desired timeline: {deal_model.desired_timeline}")
+                parts.append(f"Client budget: {intake.estimated_budget}")
+            if intake.desired_timeline and intake.desired_timeline != deal_model.desired_timeline:
+                parts.append(f"Client timeline: {intake.desired_timeline}")
+
         inquiry_context = "\n".join(parts)
 
         return await self._run_ai_qualification(deal_model, inquiry_context)

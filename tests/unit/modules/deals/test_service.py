@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from unittest.mock import AsyncMock
 
 import pytest
+import structlog
 
 from src.modules.deals.application.service import DealsService
 from src.modules.deals.schemas.request import DealRequest, DealStageRequest, PublicIntakeRequest
@@ -148,6 +149,19 @@ _AI_RESULT = {
     "red_flags": ["no mockups provided"],
     "suggested_lead_score": "HOT",
     "reasoning": "Strong budget and clear timeline.",
+    "next_step": "Reply today to confirm scope and move to quoting.",
+    "detected_signals": [
+        {"text": "Budget explicitly stated", "is_positive": True},
+        {"text": "Timeline is clear", "is_positive": True},
+        {"text": "No mockups provided", "is_positive": False},
+    ],
+    "suggested_actions": [
+        "Reply today to confirm scope",
+        "Generate AI quote after scope confirmation",
+        "Set follow-up reminder in 24 hours",
+    ],
+    "price_range_min": 10000000,
+    "price_range_max": 25000000,
 }
 
 
@@ -168,6 +182,13 @@ class DealModelStub:
     title: str = "Test Deal"
     stage: str = "new_lead"
     source: str | None = None
+    notes: str | None = None
+    estimated_value: object | None = None
+    currency: str = "VND"
+    desired_timeline: str | None = None
+    project_type: str | None = None
+    service_category: str | None = None
+    pricing_tier: str | None = None
     ai_qualification_score: int | None = None
     ai_qualification_confidence: float | None = None
     ai_qualification_recommendation: str | None = None
@@ -177,6 +198,11 @@ class DealModelStub:
     ai_qualification_timeline_signal: str | None = None
     ai_qualification_urgency_signal: str | None = None
     ai_qualification_red_flags: list | None = None
+    ai_qualification_detected_signals: list | None = None
+    ai_qualification_suggested_actions: list | None = None
+    ai_qualification_next_step: str | None = None
+    ai_qualification_price_range_min: int | None = None
+    ai_qualification_price_range_max: int | None = None
     closed_at: object | None = None
     created_at: object | None = None
     updated_at: object | None = None
@@ -214,6 +240,17 @@ async def test_qualify_deal_writes_all_signal_fields_to_deal() -> None:
     assert deal_model.ai_qualification_timeline_signal == "CLEAR"
     assert deal_model.ai_qualification_urgency_signal == "MODERATE"
     assert deal_model.ai_qualification_red_flags == ["no mockups provided"]
+    assert deal_model.ai_qualification_next_step == "Reply today to confirm scope and move to quoting."
+    assert deal_model.ai_qualification_suggested_actions == [
+        "Reply today to confirm scope",
+        "Generate AI quote after scope confirmation",
+        "Set follow-up reminder in 24 hours",
+    ]
+    assert deal_model.ai_qualification_price_range_min == 10000000
+    assert deal_model.ai_qualification_price_range_max == 25000000
+    assert len(deal_model.ai_qualification_detected_signals) == 3
+    assert deal_model.ai_qualification_detected_signals[0]["is_positive"] is True
+    assert deal_model.ai_qualification_detected_signals[2]["is_positive"] is False
 
 
 async def test_qualify_deal_hot_score_maps_to_80_and_qualify() -> None:
@@ -256,3 +293,29 @@ async def test_qualify_deal_missing_ai_facade_raises() -> None:
 
     with pytest.raises(RuntimeError, match="AIFacade not initialized"):
         await service.qualify_deal(deal_model.owner_user_id, deal_model.id)
+
+
+async def test_qualify_deal_complete_ai_output_does_not_warn() -> None:
+    service, _, deal_model = _make_qualify_service(_AI_RESULT)
+
+    with structlog.testing.capture_logs() as logs:
+        await service.qualify_deal(deal_model.owner_user_id, deal_model.id)
+
+    warnings = [e for e in logs if e["event"] == "deals.qualify_deal.incomplete_ai_output"]
+    assert warnings == []
+
+
+async def test_qualify_deal_incomplete_ai_output_logs_missing_keys() -> None:
+    incomplete_result = {
+        k: v for k, v in _AI_RESULT.items() if k not in ("detected_signals", "price_range_min")
+    }
+    service, _, deal_model = _make_qualify_service(incomplete_result)
+
+    with structlog.testing.capture_logs() as logs:
+        await service.qualify_deal(deal_model.owner_user_id, deal_model.id)
+
+    warnings = [e for e in logs if e["event"] == "deals.qualify_deal.incomplete_ai_output"]
+    assert len(warnings) == 1
+    assert warnings[0]["log_level"] == "warning"
+    assert warnings[0]["deal_id"] == str(deal_model.id)
+    assert warnings[0]["missing_keys"] == ["detected_signals", "price_range_min"]

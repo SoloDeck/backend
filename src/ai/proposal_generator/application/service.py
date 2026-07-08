@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from google import genai
+from groq import Groq
 
 from ..schemas.proposal_content import ProposalContent
 from ..schemas.proposal_generation_input import ProposalGenerationInput
@@ -9,28 +9,18 @@ from ..schemas.proposal_generation_input import ProposalGenerationInput
 
 class ProposalGenerationService:
 
-    def __init__(self, client: genai.Client):
+    def __init__(self, client: Groq):
         self.client = client
 
     def _load_prompt(self) -> str:
         prompt_path = Path(__file__).parent.parent / "prompts" / "prompts.txt"
-
         return prompt_path.read_text(encoding="utf-8")
 
     def _clean_response(self, text: str) -> str:
-        """
-        Remove markdown code fences if Gemini returns:
-
-        ```json
-        {...}
-        ```
-        """
-
         text = text.strip()
 
         if text.startswith("```json"):
             text = text.removeprefix("```json").strip()
-
         elif text.startswith("```"):
             text = text.removeprefix("```").strip()
 
@@ -74,14 +64,27 @@ Pricing Tier:
 {request.pricing_tier}
 """
 
-        response = self.client.models.generate_content(model="gemini-2.5-flash", contents=prompt)
+        response = self.client.chat.completions.create(
+            model="meta-llama/llama-4-scout-17b-16e-instruct",
+            messages=[
+                {
+                    "role": "user",
+                    "content": prompt,
+                }
+            ],
+            temperature=0.2,
+        )
 
-        response_text = self._clean_response(response.text)
+        response_text = self._clean_response(
+            response.choices[0].message.content or ""
+        )
 
         try:
             content = json.loads(response_text)
 
         except json.JSONDecodeError as exc:
-            raise ValueError(f"Gemini did not return valid JSON:\n{response.text}") from exc
+            raise ValueError(
+                f"Model did not return valid JSON:\n{response_text}"
+            ) from exc
 
         return ProposalContent(**content)

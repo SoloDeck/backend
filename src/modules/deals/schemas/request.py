@@ -5,6 +5,24 @@ from pydantic import AliasChoices, BaseModel, Field
 
 
 class DealRequest(BaseModel):
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "client_id": "e1f881a5-fe2a-4f62-bcda-c0371077a924",
+                "title": "Xay dung website ban hang",
+                "stage": "new_lead",
+                "source": "referral",
+                "project_type": "E-commerce Website",
+                "service_category": "Web Development",
+                "pricing_tier": "standard",
+                "estimated_value": 50000000,
+                "currency": "VND",
+                "desired_timeline": "2 thang",
+                "notes": "Khach can website ban hang tich hop thanh toan VNPay va MOMO",
+            }
+        }
+    }
+
     client_id: uuid.UUID
     title: str
     stage: str = "new_lead"

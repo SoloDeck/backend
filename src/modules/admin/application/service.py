@@ -13,10 +13,11 @@ from src.modules.admin.schemas.request import (
     AdminPlanRequest,
     AdminSubscriptionOverrideRequest,
     AdminUpdateFeatureFlagRequest,
+    AdminUpdatePlanRequest,
     AdminUpdateTemplateRequest,
     AdminUpdateUserRequest,
 )
-from src.shared.exceptions.domain import BusinessRuleError, NotFoundError
+from src.shared.exceptions.domain import AlreadyExistsError, BusinessRuleError, NotFoundError
 
 
 @dataclass
@@ -64,15 +65,43 @@ class AdminService:
             raise NotFoundError(f"User {user_id} not found")
         return user
 
-    async def update_user(self, user_id: uuid.UUID, payload: AdminUpdateUserRequest) -> UserModel:
+    async def update_user(
+        self, user_id: uuid.UUID, payload: AdminUpdateUserRequest, *, admin_id: uuid.UUID
+    ) -> UserModel:
         user = await self.get_user(user_id)
+        changes: list[str] = []
         if payload.role is not None:
             user.role = payload.role
+            changes.append(f"role={payload.role}")
         if payload.status is not None:
             user.status = payload.status
+            changes.append(f"status={payload.status}")
         if payload.full_name is not None:
             user.full_name = payload.full_name
-        return await self.repo.save(user)
+            changes.append(f"full_name={payload.full_name}")
+        if payload.email is not None:
+            existing = await self.repo.get_user_by_email(payload.email, exclude_user_id=user_id)
+            if existing is not None:
+                raise AlreadyExistsError(f"Email '{payload.email}' is already in use")
+            user.email = payload.email
+            changes.append(f"email={payload.email}")
+        if payload.phone is not None:
+            existing = await self.repo.get_user_by_phone(payload.phone, exclude_user_id=user_id)
+            if existing is not None:
+                raise AlreadyExistsError(f"Phone '{payload.phone}' is already in use")
+            user.phone = payload.phone
+            changes.append(f"phone={payload.phone}")
+
+        user = await self.repo.save(user)
+        if changes:
+            await self.repo.create_audit_log(
+                event_type="user.updated",
+                actor_user_id=admin_id,
+                target_type="user",
+                target_id=user_id,
+                description=f"Admin updated user {user.email}: {', '.join(changes)}",
+            )
+        return user
 
     async def suspend_user(
         self, user_id: uuid.UUID, *, admin_id: uuid.UUID
@@ -124,7 +153,17 @@ class AdminService:
     async def list_plans(self) -> list:
         return await self.repo.list_plans()
 
+    async def get_plan(self, plan_id: uuid.UUID):
+        plan = await self.repo.get_plan(plan_id)
+        if plan is None:
+            raise NotFoundError(f"Plan {plan_id} not found")
+        return plan
+
     async def create_plan(self, payload: AdminPlanRequest):
+        if await self.repo.get_plan_by_name(payload.name) is not None:
+            raise AlreadyExistsError(f"Plan name '{payload.name}' is already in use")
+        if await self.repo.get_plan_by_slug(payload.slug) is not None:
+            raise AlreadyExistsError(f"Plan slug '{payload.slug}' is already in use")
         return await self.repo.create_plan(
             name=payload.name,
             slug=payload.slug,
@@ -135,23 +174,23 @@ class AdminService:
             max_clients=payload.max_clients,
             max_deals=payload.max_deals,
             max_ai_generations_per_month=payload.max_ai_generations_per_month,
-            is_active=payload.is_active,
         )
 
-    async def update_plan(self, plan_id: uuid.UUID, payload: AdminPlanRequest):
+    async def update_plan(self, plan_id: uuid.UUID, payload: AdminUpdatePlanRequest):
         plan = await self.repo.get_plan(plan_id)
         if plan is None:
             raise NotFoundError(f"Plan {plan_id} not found")
-        plan.name = payload.name
-        plan.slug = payload.slug
-        plan.price_monthly = payload.price_monthly
-        plan.currency = payload.currency
-        plan.can_use_ai = payload.can_use_ai
-        plan.can_export_pdf = payload.can_export_pdf
-        plan.max_clients = payload.max_clients
-        plan.max_deals = payload.max_deals
-        plan.max_ai_generations_per_month = payload.max_ai_generations_per_month
-        plan.is_active = payload.is_active
+
+        fields = payload.model_fields_set
+        if "name" in fields and payload.name != plan.name:
+            if await self.repo.get_plan_by_name(payload.name, exclude_plan_id=plan_id) is not None:
+                raise AlreadyExistsError(f"Plan name '{payload.name}' is already in use")
+        if "slug" in fields and payload.slug != plan.slug:
+            if await self.repo.get_plan_by_slug(payload.slug, exclude_plan_id=plan_id) is not None:
+                raise AlreadyExistsError(f"Plan slug '{payload.slug}' is already in use")
+
+        for field in fields:
+            setattr(plan, field, getattr(payload, field))
         return await self.repo.save(plan)
 
     # -------------------------------------------------------------------------

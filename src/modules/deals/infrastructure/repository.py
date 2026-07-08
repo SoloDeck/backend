@@ -38,6 +38,18 @@ class DealsRepository:
             )
         )
 
+    async def find_client_by_name_and_phone(
+        self, owner_user_id: uuid.UUID, name: str, phone: str
+    ):
+        return await self.db.scalar(
+            select(ClientModel).where(
+                ClientModel.owner_user_id == owner_user_id,
+                ClientModel.name == name,
+                ClientModel.phone == phone,
+                ClientModel.deleted_at.is_(None),
+            )
+        )
+
     async def create_client(self, **values):
         client = ClientModel(**values)
         self.db.add(client)
@@ -159,6 +171,7 @@ class DealsRepository:
         owner_user_id: uuid.UUID,
         title: str | None = None,
         stage: str | None = None,
+        client_id: uuid.UUID | None = None,
         page: int = 1,
         page_size: int = 20,
     ) -> tuple[list, int]:
@@ -167,6 +180,8 @@ class DealsRepository:
             conditions.append(DealModel.title.ilike(f"%{title}%"))
         if stage is not None:
             conditions.append(DealModel.stage == stage)
+        if client_id is not None:
+            conditions.append(DealModel.client_id == client_id)
         total = (
             await self.db.scalar(select(func.count()).select_from(DealModel).where(*conditions))
             or 0

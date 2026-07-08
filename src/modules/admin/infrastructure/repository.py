@@ -6,6 +6,7 @@ from decimal import Decimal
 from sqlalchemy import func, or_, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from src.infrastructure.database.models import (
     AiCostRecordModel,
@@ -94,18 +95,43 @@ class AdminRepository:
 
         sort_col = _USER_SORT_COLS.get(sort_by, UserModel.created_at)
         ordered = sort_col.desc() if sort_order == "desc" else sort_col.asc()
-        data_q = base_q.order_by(ordered).offset((page - 1) * page_size).limit(page_size)
+        data_q = (
+            base_q.options(selectinload(UserModel.subscription).selectinload(SubscriptionModel.plan))
+            .order_by(ordered)
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+        )
 
         result = await self.db.execute(data_q)
         return list(result.scalars().all()), total
 
     async def get_user(self, user_id: uuid.UUID):
         return await self.db.scalar(
-            select(UserModel).where(
+            select(UserModel)
+            .where(
                 UserModel.id == user_id,
                 UserModel.deleted_at.is_(None),
             )
+            .options(selectinload(UserModel.subscription).selectinload(SubscriptionModel.plan))
         )
+
+    async def get_user_by_email(self, email: str, *, exclude_user_id: uuid.UUID | None = None):
+        stmt = select(UserModel).where(
+            UserModel.email == email,
+            UserModel.deleted_at.is_(None),
+        )
+        if exclude_user_id is not None:
+            stmt = stmt.where(UserModel.id != exclude_user_id)
+        return await self.db.scalar(stmt)
+
+    async def get_user_by_phone(self, phone: str, *, exclude_user_id: uuid.UUID | None = None):
+        stmt = select(UserModel).where(
+            UserModel.phone == phone,
+            UserModel.deleted_at.is_(None),
+        )
+        if exclude_user_id is not None:
+            stmt = stmt.where(UserModel.id != exclude_user_id)
+        return await self.db.scalar(stmt)
 
     async def count_active_admins(self) -> int:
         return await self.db.scalar(
@@ -147,6 +173,18 @@ class AdminRepository:
 
     async def get_plan(self, plan_id: uuid.UUID):
         return await self.db.scalar(select(PlanModel).where(PlanModel.id == plan_id))
+
+    async def get_plan_by_name(self, name: str, *, exclude_plan_id: uuid.UUID | None = None):
+        stmt = select(PlanModel).where(PlanModel.name == name)
+        if exclude_plan_id is not None:
+            stmt = stmt.where(PlanModel.id != exclude_plan_id)
+        return await self.db.scalar(stmt)
+
+    async def get_plan_by_slug(self, slug: str, *, exclude_plan_id: uuid.UUID | None = None):
+        stmt = select(PlanModel).where(PlanModel.slug == slug)
+        if exclude_plan_id is not None:
+            stmt = stmt.where(PlanModel.id != exclude_plan_id)
+        return await self.db.scalar(stmt)
 
     async def create_plan(self, **values):
         plan = PlanModel(**values)

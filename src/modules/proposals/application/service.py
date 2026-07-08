@@ -2,7 +2,7 @@
 
 import uuid
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, date
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -14,6 +14,9 @@ from src.shared.exceptions.domain import (
     InvalidStateTransitionError,
     NotFoundError,
 )
+
+from src.ai.proposal_generator.application.render import ProposalPdfRenderer
+from src.ai.proposal_generator.schemas.proposal_document import ProposalDocument
 
 _VALID_TRANSITIONS: dict[str, frozenset[str]] = {
     "draft": frozenset({"sent"}),
@@ -185,6 +188,45 @@ class ProposalsService:
             content=content,
             ai_generated=True,
         )
+
+    async def generate_pdf(
+            self,
+            user_id: uuid.UUID,
+            proposal_id: uuid.UUID,
+    ) -> bytes:
+
+        proposal = await self._get_proposal(user_id, proposal_id)
+
+        deal = await self.repo.get_deal(proposal.deal_id)
+        if deal is None:
+            raise NotFoundError(f"Deal {proposal.deal_id} not found")
+
+        client = await self.repo.get_client(deal.client_id) if deal.client_id else None
+        user = await self.repo.get_user(user_id)
+
+        company_name = None
+        if client and getattr(client, "type", None) == "company":
+            company_name = client.name
+
+        document = ProposalDocument(
+            freelancer_name=user.full_name if user else "",
+            client_name=client.name if client else "",
+            company_name=company_name,
+            project_type=deal.project_type or "",
+            proposal_date=str(date.today()),
+
+            project_overview=proposal.content["project_overview"],
+            scope_of_work=proposal.content["scope_of_work"],
+            deliverables=proposal.content["deliverables"],
+            timeline=proposal.content["timeline"],
+            pricing=proposal.content["pricing"],
+            payment_terms=proposal.content["payment_terms"],
+            assumptions=proposal.content["assumptions"],
+        )
+
+        renderer = ProposalPdfRenderer()
+
+        return renderer.render_pdf(document)
 
     async def transition_status(
         self, user_id: uuid.UUID, proposal_id: uuid.UUID, target_status: str

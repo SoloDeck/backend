@@ -10,6 +10,8 @@ from src.modules.users.application.service import UsersService
 from src.modules.users.schemas.request import (
     ChangePasswordRequest,
     FreelancerProfileUpdateRequest,
+    UpdatePreferencesRequest,
+    UpdateProfessionalProfileRequest,
     UpdateUserRequest,
 )
 from src.modules.users.schemas.response import MessageResponse, UserResponse
@@ -68,6 +70,34 @@ async def update_freelancer_profile(
     db: DBSession,
 ) -> ApiResponse[UserResponse]:
     user = await UsersService(db=db).update_freelancer_profile(user_id, payload)
+    return ApiResponse.ok(UserResponse.model_validate(user))
+
+
+@router.patch(
+    "/me/professional-profile",
+    response_model=ApiResponse[UserResponse],
+    summary="Update professional profile (skills, rate, portfolio…)",
+)
+async def update_professional_profile(
+    payload: UpdateProfessionalProfileRequest,
+    user_id: CurrentUserId,
+    db: DBSession,
+) -> ApiResponse[UserResponse]:
+    user = await UsersService(db=db).update_professional_profile(user_id, payload)
+    return ApiResponse.ok(UserResponse.model_validate(user))
+
+
+@router.patch(
+    "/me/preferences",
+    response_model=ApiResponse[UserResponse],
+    summary="Update notification, locale, and theme preferences",
+)
+async def update_preferences(
+    payload: UpdatePreferencesRequest,
+    user_id: CurrentUserId,
+    db: DBSession,
+) -> ApiResponse[UserResponse]:
+    user = await UsersService(db=db).update_preferences(user_id, payload)
     return ApiResponse.ok(UserResponse.model_validate(user))
 
 

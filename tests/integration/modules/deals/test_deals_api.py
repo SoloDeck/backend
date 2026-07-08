@@ -311,6 +311,11 @@ _AI_FIELDS = [
     "ai_qualification_timeline_signal",
     "ai_qualification_urgency_signal",
     "ai_qualification_red_flags",
+    "ai_qualification_next_step",
+    "ai_qualification_detected_signals",
+    "ai_qualification_suggested_actions",
+    "ai_qualification_price_range_min",
+    "ai_qualification_price_range_max",
 ]
 
 _MOCK_AI_RESULT = {
@@ -321,6 +326,19 @@ _MOCK_AI_RESULT = {
     "red_flags": ["no mockups provided"],
     "suggested_lead_score": "HOT",
     "reasoning": "Strong budget and clear timeline.",
+    "next_step": "Reply today to confirm scope and move to quoting.",
+    "detected_signals": [
+        {"text": "Budget explicitly stated", "is_positive": True},
+        {"text": "Timeline is clear", "is_positive": True},
+        {"text": "No mockups provided", "is_positive": False},
+    ],
+    "suggested_actions": [
+        "Reply today to confirm scope",
+        "Generate AI quote after scope confirmation",
+        "Set follow-up reminder in 24 hours",
+    ],
+    "price_range_min": 10000000,
+    "price_range_max": 25000000,
 }
 
 
@@ -390,6 +408,11 @@ class TestDealAIFieldsPresence:
         assert deal["ai_qualification_recommendation"] is None
         assert deal["ai_qualification_reasoning"] is None
         assert deal["ai_qualification_red_flags"] is None
+        assert deal["ai_qualification_next_step"] is None
+        assert deal["ai_qualification_detected_signals"] is None
+        assert deal["ai_qualification_suggested_actions"] is None
+        assert deal["ai_qualification_price_range_min"] is None
+        assert deal["ai_qualification_price_range_max"] is None
 
 
 class TestDealAIQualificationFields:
@@ -431,6 +454,18 @@ class TestDealAIQualificationFields:
         assert qualified["ai_qualification_timeline_signal"] == "CLEAR"
         assert qualified["ai_qualification_urgency_signal"] == "MODERATE"
         assert qualified["ai_qualification_red_flags"] == ["no mockups provided"]
+        assert qualified["ai_qualification_next_step"] == "Reply today to confirm scope and move to quoting."
+        assert qualified["ai_qualification_suggested_actions"] == [
+            "Reply today to confirm scope",
+            "Generate AI quote after scope confirmation",
+            "Set follow-up reminder in 24 hours",
+        ]
+        assert qualified["ai_qualification_price_range_min"] == 10000000
+        assert qualified["ai_qualification_price_range_max"] == 25000000
+        signals = qualified["ai_qualification_detected_signals"]
+        assert len(signals) == 3
+        assert signals[0] == {"text": "Budget explicitly stated", "is_positive": True}
+        assert signals[2] == {"text": "No mockups provided", "is_positive": False}
 
     async def test_qualify_warm_score_maps_to_warm_level(self, client: AsyncClient) -> None:
         headers = await _auth(client)

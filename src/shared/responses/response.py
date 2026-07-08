@@ -15,21 +15,23 @@ def _now_iso() -> str:
 class ApiResponse[T](BaseModel):
     success: bool = True
     code: int
+    message: str = "OK"
     timestamp: str = Field(default_factory=_now_iso)
     data: T
 
     @classmethod
-    def ok(cls, data: T, code: int = 200) -> "ApiResponse[T]":
-        return cls(success=True, code=code, data=data)
+    def ok(cls, data: T, code: int = 200, message: str = "OK") -> "ApiResponse[T]":
+        return cls(success=True, code=code, message=message, data=data)
 
     @classmethod
-    def created(cls, data: T) -> "ApiResponse[T]":
-        return cls.ok(data, code=201)
+    def created(cls, data: T, message: str = "Created successfully.") -> "ApiResponse[T]":
+        return cls.ok(data, code=201, message=message)
 
 
 class PaginatedResponse[T](BaseModel):
     success: bool = True
     code: int = 200
+    message: str = "OK"
     timestamp: str = Field(default_factory=_now_iso)
     data: list[T]
     pagination: PaginationMetadata
@@ -42,11 +44,13 @@ class PaginatedResponse[T](BaseModel):
         total: int,
         page: int,
         page_size: int,
+        message: str = "OK",
     ) -> "PaginatedResponse[T]":
         import math
 
         total_pages = math.ceil(total / page_size) if page_size else 1
         return cls(
+            message=message,
             data=data,
             pagination=PaginationMetadata(
                 total=total,

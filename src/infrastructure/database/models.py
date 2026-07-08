@@ -9,6 +9,7 @@ from datetime import date, datetime
 from decimal import Decimal
 
 from sqlalchemy import (
+    BigInteger,
     Boolean,
     CheckConstraint,
     Date,
@@ -164,6 +165,18 @@ _ai_module_type = PgEnum(
 _ai_generation_status = PgEnum(
     "pending", "completed", "failed", name="ai_generation_status", create_type=False
 )
+_ai_job_status = PgEnum(
+    "queued",
+    "running",
+    "succeeded",
+    "failed",
+    "cancelled",
+    name="ai_job_status",
+    create_type=False,
+)
+_ai_job_entity_type = PgEnum(
+    "deal", "proposal", "contract", name="ai_job_entity_type", create_type=False
+)
 _project_status = PgEnum(
     "planning", "active", "on_hold", "completed", name="project_status", create_type=False
 )
@@ -191,7 +204,7 @@ class UserModel(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     hashed_password: Mapped[str | None] = mapped_column(String(255), nullable=True)
     avatar_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     bio: Mapped[str | None] = mapped_column(Text, nullable=True)
-    phone: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    phone: Mapped[str | None] = mapped_column(String(50), nullable=True, unique=True)
 
     # Professional profile
     skills: Mapped[list[str] | None] = mapped_column(ARRAY(Text), nullable=True)
@@ -370,6 +383,7 @@ class SubscriptionModel(UUIDMixin, TimestampMixin, Base):
     user: Mapped["UserModel"] = relationship(
         "UserModel", back_populates="subscription", foreign_keys=[user_id]
     )
+    plan: Mapped["PlanModel"] = relationship("PlanModel", foreign_keys=[plan_id])
 
     __table_args__ = (
         Index("idx_subscriptions_plan_status", "plan_id", "status"),
@@ -508,6 +522,11 @@ class DealModel(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     ai_qualification_timeline_signal: Mapped[str | None] = mapped_column(String(200), nullable=True)
     ai_qualification_urgency_signal: Mapped[str | None] = mapped_column(String(200), nullable=True)
     ai_qualification_red_flags: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    ai_qualification_detected_signals: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    ai_qualification_suggested_actions: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    ai_qualification_next_step: Mapped[str | None] = mapped_column(Text, nullable=True)
+    ai_qualification_price_range_min: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    ai_qualification_price_range_max: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     __table_args__ = (
@@ -1116,6 +1135,39 @@ class AiCostRecordModel(UUIDMixin, Base):
         Index("idx_ai_cost_records_user", "user_id", "occurred_at"),
         Index("idx_ai_cost_records_module", "ai_module", "occurred_at"),
         Index("idx_ai_cost_records_time", "occurred_at"),
+    )
+
+
+class AiJobModel(UUIDMixin, TimestampMixin, Base):
+    """Tracks a background AI generation run (qualify/proposal/contract) dispatched to Celery.
+
+    Polymorphic binding on entity_type/entity_id — no FK, mirroring TaskModel/
+    reminders — since a job can target a deal, proposal, or contract.
+    """
+
+    __tablename__ = "ai_jobs"
+
+    owner_user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    type: Mapped[str] = mapped_column(_ai_module_type, nullable=False)
+    entity_type: Mapped[str] = mapped_column(_ai_job_entity_type, nullable=False)
+    entity_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    status: Mapped[str] = mapped_column(_ai_job_status, nullable=False, server_default="queued")
+    result: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    error: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    idempotency_key: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+    __table_args__ = (
+        Index("idx_ai_jobs_owner", "owner_user_id"),
+        Index("idx_ai_jobs_entity", "entity_type", "entity_id"),
+        Index(
+            "uq_ai_jobs_owner_idempotency_key",
+            "owner_user_id",
+            "idempotency_key",
+            unique=True,
+            postgresql_where=text("idempotency_key IS NOT NULL"),
+        ),
     )
 
 
