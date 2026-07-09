@@ -528,6 +528,8 @@ class DealModel(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     ai_qualification_price_range_min: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     ai_qualification_price_range_max: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    document_url: Mapped[str | None] = mapped_column(String(2048), nullable=True)
+    document_filename: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     __table_args__ = (
         CheckConstraint(

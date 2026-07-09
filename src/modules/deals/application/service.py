@@ -8,8 +8,10 @@ import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.ai.facade import AIFacade
+from src.integrations.storage.client import StorageClient
 from src.modules.deals.domain.aggregates.deal_aggregate import DealAggregate
 from src.modules.deals.domain.entities.deal import Deal
+from src.modules.deals.domain.entities.deal_activity import DealActivityType
 from src.modules.deals.domain.value_objects.ai_confidence import AIConfidence
 from src.modules.deals.domain.value_objects.deal_stage import (
     STAGE_TRANSITIONS,
@@ -22,10 +24,13 @@ from src.shared.exceptions.domain import (
     BusinessRuleError,
     InvalidStateTransitionError,
     NotFoundError,
+    ValidationError,
 )
 from src.shared.rate_limit import FixedWindowRateLimiter
 
 log = structlog.get_logger(__name__)
+
+DOCUMENT_MAX_SIZE_BYTES = 20 * 1024 * 1024  # 20 MB
 
 # Basic per-link guard for the public, unauthenticated intake form. Process-local;
 # a generous window so legitimate submissions are unaffected while a flood of
@@ -56,6 +61,7 @@ class DealsService:
     db: AsyncSession
     ai_facade: AIFacade | None = None
     repo: DealsRepository | None = None
+    storage: StorageClient | None = None
 
     def __post_init__(self) -> None:
         if self.repo is None:
@@ -201,6 +207,39 @@ class DealsService:
         deal = await self._get_deal(user_id, deal_id)
         deal.deleted_at = datetime.now(UTC)
         await self.repo.save(deal)
+
+    async def upload_document(
+        self,
+        user_id: uuid.UUID,
+        deal_id: uuid.UUID,
+        *,
+        filename: str,
+        content: bytes,
+        content_type: str,
+    ):  # type: ignore[return]
+        if self.storage is None:
+            raise RuntimeError("Storage client not initialized")
+        if content_type != "application/pdf":
+            raise ValidationError(f"Unsupported file type '{content_type}'. Only PDF is allowed.")
+        if not content:
+            raise ValidationError("Document file is empty")
+        if len(content) > DOCUMENT_MAX_SIZE_BYTES:
+            raise ValidationError("Document must be 20MB or smaller")
+
+        deal = await self._get_deal(user_id, deal_id)
+        key = f"deals/{deal_id}/documents/{uuid.uuid4().hex}.pdf"
+        deal.document_url = await self.storage.upload(
+            key=key, content=content, content_type=content_type
+        )
+        deal.document_filename = filename
+        saved = await self.repo.save(deal)
+        await self.repo.create_activity_entry(
+            deal_id=deal_id,
+            owner_user_id=user_id,
+            entry_type=DealActivityType.DOCUMENT_ATTACHED.value,
+            description=f"Document attached: {filename}",
+        )
+        return saved
 
     async def transition_stage(
         self, user_id: uuid.UUID, deal_id: uuid.UUID, payload: DealStageRequest

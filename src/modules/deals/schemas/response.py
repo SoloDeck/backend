@@ -36,6 +36,8 @@ class DealResponse(BaseModel):
     ai_qualification_price_range_min: int | None
     ai_qualification_price_range_max: int | None
     closed_at: datetime | None
+    document_url: str | None
+    document_filename: str | None
     created_at: datetime
     updated_at: datetime
 
