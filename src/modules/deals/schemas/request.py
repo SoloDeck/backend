@@ -1,5 +1,6 @@
 import uuid
 from decimal import Decimal
+from typing import Any
 
 from pydantic import AliasChoices, BaseModel, Field
 
@@ -17,6 +18,9 @@ class DealRequest(BaseModel):
     project_type: str | None = None
     service_category: str | None = None
     pricing_tier: str | None = None
+    # Profession-specific qualification
+    profession: str | None = None
+    profession_fields: dict[str, Any] | None = None
 
 
 class DealStageRequest(BaseModel):
@@ -41,3 +45,7 @@ class PublicIntakeRequest(BaseModel):
     inquiry_text: str | None = Field(default=None, max_length=5000)
     estimated_budget: str | None = Field(default=None, max_length=255)
     desired_timeline: str | None = Field(default=None, max_length=255)
+    # Profession selected by the client
+    profession: str | None = None
+    # Profession-specific intake answers
+    qualification_fields: dict[str, Any] | None = None
