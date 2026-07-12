@@ -3,9 +3,9 @@ Knowledge retriever for Lead Qualification.
 
 Responsibilities
 ----------------
-- Load the qualification framework
+- Load the common qualification framework
 - Build one FAISS retriever for each profession
-- Retrieve the most relevant profession knowledge
+- Retrieve the most relevant qualification knowledge
 """
 
 from __future__ import annotations
@@ -19,24 +19,27 @@ from langchain_huggingface import HuggingFaceEmbeddings
 
 class LeadQualificationRetriever:
     """
-    Loads and caches qualification knowledge.
+    Loads and caches lead qualification knowledge.
 
-    Framework:
-        qualification-framework.md
+    Expected folder structure:
 
-    Profession Guides:
-        software_developer.md
-        uiux_designer.md
-        graphic_designer.md
-        digital_marketing.md
-        copywriter.md
-        photographer.md
+    ai/
+    ├── knowledge/
+    │   ├── common/
+    │   │   └── qualification-framework.md
+    │   └── professions/
+    │       ├── software-developer/
+    │       │   └── qualification.md
+    │       ├── graphic-design/
+    │       │   └── qualification.md
+    │       └── ...
     """
 
     def __init__(self):
 
+        # src/ai/knowledge
         self.base_path = (
-            Path(__file__).parent
+            Path(__file__).resolve().parent.parent
             / "knowledge"
         )
 
@@ -51,7 +54,7 @@ class LeadQualificationRetriever:
             chunk_overlap=100,
         )
 
-        self.profession_retrievers = {}
+        self.profession_retrievers: dict = {}
 
         self._build_retrievers()
 
@@ -63,6 +66,7 @@ class LeadQualificationRetriever:
 
         framework_file = (
             self.base_path
+            / "common"
             / "qualification-framework.md"
         )
 
@@ -77,35 +81,44 @@ class LeadQualificationRetriever:
 
     def _build_retrievers(self):
 
-        profession_files = {
-            "software_developer": "software_developer.md",
-            "uiux_designer": "uiux_designer.md",
-            "graphic_designer": "graphic_designer.md",
-            "digital_marketing": "digital_marketing.md",
-            "copywriter": "copywriter.md",
-            "photographer": "photographer.md",
-        }
+        professions_dir = (
+            self.base_path
+            / "professions"
+        )
 
-        for profession, filename in profession_files.items():
+        if not professions_dir.exists():
+            return
 
-            file_path = self.base_path / filename
+        for profession_dir in professions_dir.iterdir():
 
-            if not file_path.exists():
+            if not profession_dir.is_dir():
                 continue
 
-            text = file_path.read_text(encoding="utf-8")
+            qualification_file = (
+                profession_dir
+                / "qualification.md"
+            )
 
-            chunks = self.splitter.create_documents([text])
+            if not qualification_file.exists():
+                continue
+
+            text = qualification_file.read_text(
+                encoding="utf-8"
+            )
+
+            chunks = self.splitter.create_documents(
+                [text]
+            )
 
             vectorstore = FAISS.from_documents(
                 chunks,
                 self.embeddings,
             )
 
-            self.profession_retrievers[profession] = (
-                vectorstore.as_retriever(
-                    search_kwargs={"k": 4}
-                )
+            self.profession_retrievers[
+                profession_dir.name
+            ] = vectorstore.as_retriever(
+                search_kwargs={"k": 4}
             )
 
     # ------------------------------------------------------------
@@ -118,7 +131,8 @@ class LeadQualificationRetriever:
         query: str,
     ) -> str:
         """
-        Returns all retrieved knowledge as one string.
+        Returns the qualification framework together with the
+        most relevant profession-specific qualification knowledge.
         """
 
         sections = []
@@ -144,7 +158,7 @@ class LeadQualificationRetriever:
             )
 
             sections.append(
-                f"# Profession Guide ({profession})\n\n"
+                f"# Profession Qualification Guide ({profession})\n\n"
                 + profession_text
             )
 
