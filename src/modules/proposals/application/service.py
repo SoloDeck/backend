@@ -16,7 +16,7 @@ from src.shared.exceptions.domain import (
 )
 
 from src.ai.proposal_generator.application.render import ProposalPdfRenderer
-from src.ai.proposal_generator.schemas.proposal_document import ProposalDocument
+from src.modules.proposals.application.pdf_content import build_proposal_document
 
 _VALID_TRANSITIONS: dict[str, frozenset[str]] = {
     "draft": frozenset({"sent"}),
@@ -208,20 +208,18 @@ class ProposalsService:
         if client and getattr(client, "type", None) == "company":
             company_name = client.name
 
-        document = ProposalDocument(
+        # Trước đây chỗ này index cứng: proposal.content["project_overview"], ...
+        # Nó chỉ đọc được shape nội bộ của AI, và dùng [...] chứ không .get() nên
+        # thiếu MỘT khoá là KeyError → 500. Mọi báo giá do frontend tạo/sửa đều
+        # không xuất được PDF — dù frontend lưu ĐÚNG shape ProposalContentDTO mà
+        # contracts/openapi.yaml khai. Giờ đọc được cả hai shape.  #Huynh
+        document = build_proposal_document(
+            proposal.content,
             freelancer_name=user.full_name if user else "",
             client_name=client.name if client else "",
             company_name=company_name,
             project_type=deal.project_type or "",
             proposal_date=str(date.today()),
-
-            project_overview=proposal.content["project_overview"],
-            scope_of_work=proposal.content["scope_of_work"],
-            deliverables=proposal.content["deliverables"],
-            timeline=proposal.content["timeline"],
-            pricing=proposal.content["pricing"],
-            payment_terms=proposal.content["payment_terms"],
-            assumptions=proposal.content["assumptions"],
         )
 
         renderer = ProposalPdfRenderer()
