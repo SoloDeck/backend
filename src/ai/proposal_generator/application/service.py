@@ -3,6 +3,8 @@ from pathlib import Path
 
 from groq import Groq
 
+from src.ai.shared.json_output import extract_json_object
+
 from ..schemas.proposal_content import ProposalContent
 from ..schemas.proposal_generation_input import ProposalGenerationInput
 
@@ -16,18 +18,8 @@ class ProposalGenerationService:
         prompt_path = Path(__file__).parent.parent / "prompts" / "prompts.txt"
         return prompt_path.read_text(encoding="utf-8")
 
-    def _clean_response(self, text: str) -> str:
-        text = text.strip()
-
-        if text.startswith("```json"):
-            text = text.removeprefix("```json").strip()
-        elif text.startswith("```"):
-            text = text.removeprefix("```").strip()
-
-        if text.endswith("```"):
-            text = text.removesuffix("```").strip()
-
-        return text
+    # _clean_response() cũ chỉ cắt fence khi CẢ chuỗi bắt đầu bằng ``` — cùng bug với
+    # lead_qualifier. Đã thay bằng extract_json_object() dùng chung.  #Huynh
 
     def generate(self, request: ProposalGenerationInput) -> ProposalContent:
 
@@ -73,18 +65,19 @@ Pricing Tier:
                 }
             ],
             temperature=0.2,
+            # Buộc model trả JSON thuần. Thiếu cờ này, llama-4-scout bọc câu trả lời
+            # trong văn bản và parser vỡ — đúng bug đã làm chết lead_qualifier.  #Huynh
+            response_format={"type": "json_object"},
         )
 
-        response_text = self._clean_response(
-            response.choices[0].message.content or ""
-        )
+        raw_response = response.choices[0].message.content or ""
 
         try:
-            content = json.loads(response_text)
+            content = extract_json_object(raw_response)
 
         except json.JSONDecodeError as exc:
             raise ValueError(
-                f"Model did not return valid JSON:\n{response_text}"
+                f"Model did not return valid JSON:\n{raw_response}"
             ) from exc
 
         return ProposalContent(**content)

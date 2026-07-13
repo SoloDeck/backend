@@ -9,6 +9,7 @@ import structlog
 from groq import Groq
 
 from src.ai.shared.base import BaseAIChain
+from src.ai.shared.json_output import extract_json_object
 from src.config.settings import settings
 from src.shared.exceptions.domain import AIOutputParseError
 
@@ -39,25 +40,15 @@ class LeadQualifier(BaseAIChain):
         return None
 
     def _parse_output(self, raw: str) -> dict[str, Any]:
+        """Bóc khối JSON ra khỏi câu trả lời của model.
+
+        Phần bóc nằm ở ``src/ai/shared/json_output.py`` để proposal_generator dùng
+        chung — trước đây mỗi chain một bản, sửa nơi này quên nơi kia.  #Huynh
+        """
         try:
-            text = raw.strip()
-
-            if text.startswith("```json"):
-                text = text.removeprefix("```json").strip()
-            elif text.startswith("```"):
-                text = text.removeprefix("```").strip()
-
-            if text.endswith("```"):
-                text = text.removesuffix("```").strip()
-
-            return json.loads(text)
-
+            return extract_json_object(raw)
         except json.JSONDecodeError as exc:
-            log.error(
-                "ai.lead_qualifier.parse_failed",
-                raw=raw,
-                error=str(exc),
-            )
+            log.error("ai.lead_qualifier.parse_failed", raw=raw, error=str(exc))
             raise AIOutputParseError(
                 f"Failed to parse lead qualification output: {exc}",
                 raw_output=raw,
@@ -76,6 +67,11 @@ class LeadQualifier(BaseAIChain):
                 }
             ],
             temperature=0.2,
+            # Buộc model trả JSON thuần. Thiếu cờ này, llama-4-scout bọc câu trả lời
+            # trong văn bản ("Here is the draft qualification result:") và parser vỡ.
+            # Prompt vốn đã yêu cầu trả JSON, nhưng chỉ cờ này mới khiến API BẢO ĐẢM
+            # điều đó.  #Huynh
+            response_format={"type": "json_object"},
         )
 
         return response.choices[0].message.content or ""

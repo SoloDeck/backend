@@ -101,10 +101,58 @@ class TestParseOutput:
         raw = '```json\n{"project_type": "Website"}\n```'
         assert q._parse_output(raw) == {"project_type": "Website"}
 
+    def test_preamble_before_fenced_json(self):
+        """Đúng chuỗi đã làm hỏng production: câu dẫn, rồi fence không nhãn.
+
+        llama-4-scout cứ thêm câu dẫn ở đầu. Parser cũ chỉ cắt fence khi câu trả lời
+        BẮT ĐẦU bằng fence, nên ca này ném AIOutputParseError và kết quả AI hoàn toàn
+        đúng bị vứt đi.  #Huynh
+        """
+        q = LeadQualifier()
+        raw = (
+            "Here is the draft qualification result:\n\n"
+            "```\n"
+            '{"project_type": "E-commerce Website", "suggested_lead_score": "HOT"}\n'
+            "```"
+        )
+        assert q._parse_output(raw) == {
+            "project_type": "E-commerce Website",
+            "suggested_lead_score": "HOT",
+        }
+
+    def test_preamble_without_fence(self):
+        q = LeadQualifier()
+        raw = 'Sure! Here you go: {"project_type": "Website"}'
+        assert q._parse_output(raw) == {"project_type": "Website"}
+
+    def test_trailing_commentary_after_json(self):
+        q = LeadQualifier()
+        raw = '{"project_type": "Website"}\n\nLet me know if you need anything else!'
+        assert q._parse_output(raw) == {"project_type": "Website"}
+
+    def test_nested_objects_are_not_truncated(self):
+        """Greedy quan trọng ở đây: non-greedy sẽ dừng ở dấu `}` đầu tiên.  #Huynh"""
+        q = LeadQualifier()
+        raw = (
+            "Result:\n"
+            '{"detected_signals": [{"text": "Clear budget", "is_positive": true}], '
+            '"price_range_min": 40000000}'
+        )
+        assert q._parse_output(raw) == {
+            "detected_signals": [{"text": "Clear budget", "is_positive": True}],
+            "price_range_min": 40000000,
+        }
+
     def test_malformed_raises(self):
         q = LeadQualifier()
         with pytest.raises(AIOutputParseError):
             q._parse_output("not valid json")
+
+    def test_prose_with_broken_json_still_raises(self):
+        """Có khối `{...}` nhưng JSON hỏng thì VẪN phải báo lỗi, không nuốt im lặng.  #Huynh"""
+        q = LeadQualifier()
+        with pytest.raises(AIOutputParseError):
+            q._parse_output("Here you go: {project_type: Website,,}")
 
     def test_empty_string_raises(self):
         q = LeadQualifier()
