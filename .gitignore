@@ -53,6 +53,10 @@ Thumbs.db
 # Docker volumes
 postgres_data/
 
+# Local-only Docker overrides — personal dev fixes, not for the team/CI
+Dockerfile.local
+compose.override.yml
+
 # Temporary image storage
 temp_img/
 
