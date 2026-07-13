@@ -1,7 +1,7 @@
 from typing import Annotated
 
 from fastapi import Depends
-from google import genai
+from groq import Groq
 
 from src.ai.contract_generator.chain import ContractGenerator
 from src.ai.facade import AIFacade
@@ -13,11 +13,16 @@ from src.config.settings import settings
 
 
 def get_ai_facade() -> AIFacade:
-    gemini_client = genai.Client(api_key=settings.gemini_api_key)
+    # Trước đây dựng genai.Client (Gemini) rồi đưa vào ProposalGenerationService,
+    # trong khi service gọi client.chat.completions.create — cú pháp của Groq. Gemini
+    # client không có .chat nên ném AttributeError. Đây là cùng một bug với
+    # modules/proposals/api/router.py; worker Celery lấy facade từ đây nên job
+    # proposal_generator cũng chết theo.  #Huynh
+    groq_client = Groq(api_key=settings.groq_api_key)
     return AIFacade(
         lead_qualifier=LeadQualifier(),
         proposal_generator=ProposalGenerator(
-            generation_service=ProposalGenerationService(client=gemini_client)
+            generation_service=ProposalGenerationService(client=groq_client)
         ),
         contract_generator=ContractGenerator(),
         followup_generator=FollowUpGenerator(),

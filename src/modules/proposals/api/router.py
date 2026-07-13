@@ -38,7 +38,7 @@ async def ai_generate_proposal(
     user_id: CurrentUserId,
     db: DBSession,
 ) -> ApiResponse[ProposalResponse]:
-    from google import genai
+    from groq import Groq
 
     from src.ai.proposal_generator.application.service import ProposalGenerationService
     from src.ai.proposal_generator.schemas.proposal_generation_input import ProposalGenerationInput
@@ -56,7 +56,11 @@ async def ai_generate_proposal(
         pricing_tier=payload.pricing_tier,
         freelancer_name=payload.freelancer_name,
     )
-    client = genai.Client(api_key=settings.gemini_api_key)
+    # Trước đây chỗ này dựng genai.Client (Gemini) rồi đưa vào ProposalGenerationService,
+    # trong khi service gọi client.chat.completions.create — cú pháp của Groq. Gemini
+    # client không có .chat nên ném AttributeError → endpoint này 500 MỌI LÚC, bất kể
+    # API key. Cuộc di trú sang Groq đã bỏ sót đúng route mà frontend đang gọi.  #Huynh
+    client = Groq(api_key=settings.groq_api_key)
     svc = ProposalGenerationService(client=client)
     content = await asyncio.to_thread(svc.generate, gen_input)
 
