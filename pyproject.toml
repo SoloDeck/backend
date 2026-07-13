@@ -44,6 +44,12 @@ dependencies = [
     "weasyprint>=69.0",
     "jinja2>=3.1.6",
     "groq>=1.5.0",
+    "langchain-community>=0.4.2",
+    "langchain-huggingface>=1.2.2",
+    "langchain-text-splitters>=1.1.2",
+    "huggingface-hub>=1.23.0",
+    "sentence-transformers>=5.6.0",
+    "faiss-cpu>=1.14.3",
 ]
 
 [project.optional-dependencies]

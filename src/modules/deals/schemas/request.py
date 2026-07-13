@@ -47,5 +47,5 @@ class PublicIntakeRequest(BaseModel):
     desired_timeline: str | None = Field(default=None, max_length=255)
     # Profession selected by the client
     profession: str | None = None
-    # Profession-specific intake answers
-    qualification_fields: dict[str, Any] | None = None
+    # Profession-specific intake answers (5 questions for the selected profession)
+    profession_fields: dict[str, Any] | None = None

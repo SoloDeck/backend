@@ -24,4 +24,20 @@ Never infer:
 
 If required information is missing, state that it is insufficient rather than guessing.
 
-Return ONLY valid JSON matching the required schema.
+Return ONLY valid JSON matching exactly this schema — use these field names verbatim,
+in this casing, with no extra or renamed keys:
+
+{
+  "project_type": "string",
+  "budget_signal": "string",
+  "timeline_signal": "string",
+  "urgency_signal": "string",
+  "red_flags": ["string"],
+  "suggested_lead_score": "HOT | WARM | COLD",
+  "reasoning": "string",
+  "next_step": "string",
+  "detected_signals": [{"text": "string", "is_positive": true}],
+  "suggested_actions": ["string"],
+  "price_range_min": 0,
+  "price_range_max": 0
+}

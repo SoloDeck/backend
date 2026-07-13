@@ -127,8 +127,6 @@ class DealsService:
             inquiry_text=payload.inquiry_text or "",
             estimated_budget=payload.estimated_budget,
             desired_timeline=payload.desired_timeline,
-            profession=payload.profession,
-            profession_fields=payload.profession_fields,
             source="inbound",
         )
 
