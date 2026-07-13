@@ -253,36 +253,65 @@ async def test_qualify_deal_writes_all_signal_fields_to_deal() -> None:
     assert deal_model.ai_qualification_detected_signals[2]["is_positive"] is False
 
 
-async def test_qualify_deal_hot_score_maps_to_80_and_qualify() -> None:
+# Ba test dưới đây TRƯỚC ĐÂY khoá lại bảng tra {"HOT": 80, "WARM": 50, "COLD": 20} —
+# tức là chúng đang bảo vệ đúng cái thứ khiến điểm số vô nghĩa: mọi deal WARM đều ra
+# đúng 50/100 dù là deal 20 triệu hay deal 700 nghìn. Giờ điểm được cộng từ thang 5
+# tiêu chí do AI chấm, và NHÃN suy ra TỪ điểm.  #Huynh
+
+
+def _breakdown(scope: int, budget: int, timeline: int, detail: int, context: int) -> dict:
+    return {
+        "scope": {"points": scope, "reason": ""},
+        "budget": {"points": budget, "reason": ""},
+        "timeline": {"points": timeline, "reason": ""},
+        "detail": {"points": detail, "reason": ""},
+        "context": {"points": context, "reason": ""},
+    }
+
+
+async def test_qualify_deal_diem_cong_tu_thang_tieu_chi() -> None:
     service, _, deal_model = _make_qualify_service(
-        {**_AI_RESULT, "suggested_lead_score": "HOT"}
+        {**_AI_RESULT, "score_breakdown": _breakdown(28, 25, 18, 13, 8)}
     )
 
     await service.qualify_deal(deal_model.owner_user_id, deal_model.id)
 
-    assert deal_model.ai_qualification_score == 80
+    assert deal_model.ai_qualification_score == 92  # 28+25+18+13+8
     assert deal_model.ai_qualification_recommendation == "qualify"
 
 
-async def test_qualify_deal_cold_score_maps_to_20_and_pass() -> None:
+async def test_qualify_deal_nhan_suy_ra_tu_diem_chu_khong_tu_model() -> None:
+    """Model bảo HOT nhưng điểm chỉ 30 → hệ thống phải nghe ĐIỂM, không nghe nhãn."""
     service, _, deal_model = _make_qualify_service(
-        {**_AI_RESULT, "suggested_lead_score": "COLD"}
+        {
+            **_AI_RESULT,
+            "suggested_lead_score": "HOT",
+            "score_breakdown": _breakdown(10, 10, 5, 3, 2),
+        }
     )
 
-    await service.qualify_deal(deal_model.owner_user_id, deal_model.id)
+    result = await service.qualify_deal(deal_model.owner_user_id, deal_model.id)
 
-    assert deal_model.ai_qualification_score == 20
+    assert deal_model.ai_qualification_score == 30
+    assert result["suggested_lead_score"] == "COLD"
     assert deal_model.ai_qualification_recommendation == "pass"
 
 
-async def test_qualify_deal_warm_score_maps_to_50() -> None:
-    service, _, deal_model = _make_qualify_service(
-        {**_AI_RESULT, "suggested_lead_score": "WARM"}
+async def test_qualify_deal_hai_deal_khac_nhau_ra_diem_khac_nhau() -> None:
+    """Chính là thứ bảng tra cũ không làm được: deal nào cũng ra đúng 50."""
+    service_a, _, deal_a = _make_qualify_service(
+        {**_AI_RESULT, "score_breakdown": _breakdown(30, 25, 20, 15, 10)}
+    )
+    service_b, _, deal_b = _make_qualify_service(
+        {**_AI_RESULT, "score_breakdown": _breakdown(5, 20, 0, 5, 0)}
     )
 
-    await service.qualify_deal(deal_model.owner_user_id, deal_model.id)
+    await service_a.qualify_deal(deal_a.owner_user_id, deal_a.id)
+    await service_b.qualify_deal(deal_b.owner_user_id, deal_b.id)
 
-    assert deal_model.ai_qualification_score == 50
+    assert deal_a.ai_qualification_score == 100
+    assert deal_b.ai_qualification_score == 30
+    assert deal_a.ai_qualification_score != deal_b.ai_qualification_score
 
 
 async def test_qualify_deal_missing_ai_facade_raises() -> None:

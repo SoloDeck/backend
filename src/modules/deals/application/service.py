@@ -8,6 +8,11 @@ import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.ai.facade import AIFacade
+from src.ai.lead_qualifier.scoring import (
+    compute_readiness,
+    compute_win_likelihood,
+    level_from_score,
+)
 from src.modules.deals.domain.aggregates.deal_aggregate import DealAggregate
 from src.modules.deals.domain.entities.deal import Deal
 from src.modules.deals.domain.value_objects.ai_confidence import AIConfidence
@@ -257,17 +262,37 @@ class DealsService:
                 missing_keys=missing_keys,
             )
 
-        _score_map = {"HOT": 80, "WARM": 50, "COLD": 20}
+        # Trước đây điểm chỉ là bảng tra ba nấc {"HOT": 80, "WARM": 50, "COLD": 20} —
+        # AI không hề chấm điểm, nên deal 20 triệu và deal 700 nghìn đều ra đúng 50/100.
+        # Giờ AI chấm TỪNG tiêu chí, backend cộng tổng (không giao phép cộng cho LLM),
+        # và nhãn HOT/WARM/COLD suy ra TỪ điểm nên không bao giờ mâu thuẫn với nó.  #Huynh
+        score, readiness_breakdown = compute_readiness(result.get("score_breakdown"))
+        lead_level = level_from_score(score)
+        result["suggested_lead_score"] = lead_level  # ghi đè nhãn model tự đoán
+        result["score_breakdown"] = readiness_breakdown
+
         _confidence_map = {
             "HOT": AIConfidence.high(),
             "WARM": AIConfidence.medium(),
             "COLD": AIConfidence.low(),
         }
-        raw = str(result.get("suggested_lead_score", "")).upper()
-        score = _score_map.get(raw, 50)
-        confidence = _confidence_map.get(raw, AIConfidence.medium())
+        confidence = _confidence_map.get(lead_level, AIConfidence.medium())
         reasoning = str(result.get("reasoning", ""))
-        model_version = "gemma-4-31b-it"
+        # Trước ghi "gemma-4-31b-it" — SAI. Model chạy thật là llama-4-scout (xem
+        # lead_qualifier/chain.py). Ghi sai model là ghi sai bằng chứng.  #Huynh
+        model_version = "meta-llama/llama-4-scout-17b-16e-instruct"
+
+        # Khả năng chốt deal — tính bằng CODE từ CHÍNH bảng phân rã ở trên, không hỏi AI
+        # và không dò chuỗi trong câu văn của model.  #Huynh
+        points = {item["key"]: item["points"] for item in readiness_breakdown}
+        result["win_likelihood"] = compute_win_likelihood(
+            budget_points=points.get("budget", 0),
+            timeline_points=points.get("timeline", 0),
+            detail_points=points.get("detail", 0),
+            estimated_value=deal_model.estimated_value,
+            price_range_min=result.get("price_range_min"),
+            source=deal_model.source,
+        )
 
         deal_domain = Deal(
             id=deal_model.id,
@@ -349,32 +374,53 @@ class DealsService:
         if not self.ai_facade:
             raise RuntimeError("AIFacade not initialized")
 
-        # Build inquiry context from all available deal fields, then layer in intake if present
-        parts = [f"Project: {deal_model.title}"]
-        if deal_model.source:
-            parts.append(f"Source: {deal_model.source}")
-        if deal_model.project_type:
-            parts.append(f"Project type: {deal_model.project_type}")
-        if deal_model.service_category:
-            parts.append(f"Service category: {deal_model.service_category}")
-        if deal_model.pricing_tier:
-            parts.append(f"Pricing tier: {deal_model.pricing_tier}")
-        if deal_model.estimated_value:
-            parts.append(f"Estimated value: {deal_model.estimated_value} {deal_model.currency}")
-        if deal_model.desired_timeline:
-            parts.append(f"Desired timeline: {deal_model.desired_timeline}")
-        if deal_model.notes:
-            parts.append(f"Notes: {deal_model.notes}")
-
+        # Tách bạch AI NÓI GÌ và FREELANCER TỰ NHẬP GÌ.
+        #
+        # Trước đây tất cả gộp thành một danh sách phẳng, trong đó có dòng
+        # "Estimated value: 200000 VND" — mà đó là ô "Giá trị dự kiến" do FREELANCER tự
+        # điền lúc tạo deal, KHÔNG PHẢI khách báo giá. AI đọc thấy con số thì tưởng khách
+        # đã nêu ngân sách và chấm 20/25 "khách cung cấp giá trị cụ thể", trong khi khách
+        # chưa hề nói gì về tiền. Nhãn dữ liệu mập mờ thì AI có giỏi mấy cũng chấm sai.
+        #
+        # Giờ chia hai khối rõ ràng, và prompt bắt buộc chỉ chấm ngân sách/thời gian dựa
+        # trên khối "KHÁCH HÀNG NÓI GÌ".  #Huynh
         intake = await self.repo.get_intake_by_client_id(deal_model.client_id, user_id)
-        if intake is not None:
-            if intake.inquiry_text:
-                parts.append(f"Client inquiry: {intake.inquiry_text}")
-            if intake.estimated_budget:
-                parts.append(f"Client budget: {intake.estimated_budget}")
-            if intake.desired_timeline and intake.desired_timeline != deal_model.desired_timeline:
-                parts.append(f"Client timeline: {intake.desired_timeline}")
 
-        inquiry_context = "\n".join(parts)
+        own: list[str] = [f"- Tên dự án: {deal_model.title}"]
+        if deal_model.source:
+            own.append(f"- Nguồn deal: {deal_model.source}")
+        if deal_model.project_type:
+            own.append(f"- Loại dự án: {deal_model.project_type}")
+        if deal_model.service_category:
+            own.append(f"- Nhóm dịch vụ: {deal_model.service_category}")
+        if deal_model.notes:
+            own.append(f"- Ghi chú nội bộ: {deal_model.notes}")
+        if deal_model.estimated_value:
+            own.append(
+                f"- Giá trị dự kiến (FREELANCER TỰ ƯỚC, KHÔNG PHẢI KHÁCH BÁO): "
+                f"{deal_model.estimated_value} {deal_model.currency}"
+            )
+
+        said: list[str] = []
+        client_budget = getattr(intake, "estimated_budget", None) if intake else None
+        client_timeline = getattr(intake, "desired_timeline", None) if intake else None
+        if intake is not None and intake.inquiry_text:
+            said.append(f"- Nguyên văn yêu cầu: {intake.inquiry_text}")
+        if client_budget:
+            said.append(f"- Ngân sách khách nêu: {client_budget}")
+        if client_timeline:
+            said.append(f"- Thời gian khách muốn: {client_timeline}")
+        if deal_model.desired_timeline:
+            said.append(f"- Thời hạn ghi nhận được: {deal_model.desired_timeline}")
+
+        inquiry_context = "\n".join(
+            [
+                "## THÔNG TIN FREELANCER TỰ NHẬP (không phải lời khách)",
+                *own,
+                "",
+                "## KHÁCH HÀNG NÓI GÌ",
+                *(said or ["- (Khách chưa cung cấp thông tin nào)"]),
+            ]
+        )
 
         return await self._run_ai_qualification(deal_model, inquiry_context)
