@@ -30,12 +30,14 @@ def qualify_deal_async_by_id(self, user_id: str, deal_id: str) -> dict:  # type:
     sees a hot/warm/cold score in their pipeline without manual action.
     Retries up to 3 times (15 s apart) on transient failures.
     """
+    from google import genai
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
     from src.ai.contract_generator.chain import ContractGenerator
     from src.ai.facade import AIFacade
     from src.ai.followup_generator.chain import FollowUpGenerator
     from src.ai.lead_qualifier.chain import LeadQualifier
+    from src.ai.proposal_generator.application.service import ProposalGenerationService
     from src.ai.proposal_generator.chain import ProposalGenerator
     from src.config.settings import settings
     from src.modules.deals.application.service import DealsService
@@ -45,9 +47,12 @@ def qualify_deal_async_by_id(self, user_id: str, deal_id: str) -> dict:  # type:
         factory = async_sessionmaker(
             engine, class_=AsyncSession, expire_on_commit=False, autoflush=False
         )
+        gemini_client = genai.Client(api_key=settings.gemini_api_key)
         ai_facade = AIFacade(
             lead_qualifier=LeadQualifier(),
-            proposal_generator=ProposalGenerator(),
+            proposal_generator=ProposalGenerator(
+                generation_service=ProposalGenerationService(client=gemini_client)
+            ),
             contract_generator=ContractGenerator(),
             followup_generator=FollowUpGenerator(),
         )
