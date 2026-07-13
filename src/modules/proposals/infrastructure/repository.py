@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.infrastructure.database.models import (
     ClientModel,
+    DealIntakeModel,
     DealModel,
     PlanModel,
     ProposalModel,
@@ -87,6 +88,22 @@ class ProposalsRepository:
 
     async def get_user(self, user_id: uuid.UUID):
         return await self.db.scalar(select(UserModel).where(UserModel.id == user_id))
+
+    async def get_intake_by_client_id(self, client_id: uuid.UUID, owner_user_id: uuid.UUID):
+        """Phiếu tiếp nhận mới nhất của khách — chứa NGUYÊN VĂN yêu cầu họ viết.
+
+        AI soạn báo giá trước đây không đọc bảng này (chỉ lead_qualifier đọc), nên nguồn
+        tin giàu nhất bị bỏ phí và báo giá viết ra rất mỏng.  #Huynh
+        """
+        return await self.db.scalar(
+            select(DealIntakeModel)
+            .where(
+                DealIntakeModel.client_id == client_id,
+                DealIntakeModel.owner_user_id == owner_user_id,
+                DealIntakeModel.deleted_at.is_(None),
+            )
+            .order_by(DealIntakeModel.created_at.desc())
+        )
 
     async def get_subscription(self, user_id: uuid.UUID):
         return await self.db.scalar(

@@ -2,10 +2,12 @@
 
 import uuid
 from dataclasses import dataclass
-from datetime import UTC, datetime, date
+from datetime import UTC, date, datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.ai.proposal_generator.application.render import ProposalPdfRenderer
+from src.modules.proposals.application.pdf_content import build_proposal_document
 from src.modules.proposals.infrastructure.repository import ProposalsRepository
 from src.modules.proposals.schemas.request import ProposalRequest
 from src.shared.events.bus import event_bus
@@ -14,9 +16,6 @@ from src.shared.exceptions.domain import (
     InvalidStateTransitionError,
     NotFoundError,
 )
-
-from src.ai.proposal_generator.application.render import ProposalPdfRenderer
-from src.modules.proposals.application.pdf_content import build_proposal_document
 
 _VALID_TRANSITIONS: dict[str, frozenset[str]] = {
     "draft": frozenset({"sent"}),
@@ -43,7 +42,13 @@ class ProposalsService:
             raise NotFoundError(f"Proposal {proposal_id} not found")
         return proposal
 
-    async def create(self, user_id: uuid.UUID, payload: ProposalRequest, *, ai_generated: bool = False):  # type: ignore[return]
+    async def create(  # type: ignore[return]
+        self,
+        user_id: uuid.UUID,
+        payload: ProposalRequest,
+        *,
+        ai_generated: bool = False,
+    ):
         deal = await self.repo.get_deal(payload.deal_id)
         if deal is None or deal.owner_user_id != user_id:
             raise NotFoundError(f"Deal {payload.deal_id} not found")
@@ -91,7 +96,8 @@ class ProposalsService:
         proposal = await self._get_proposal(user_id, proposal_id)
         if proposal.status != "draft":
             raise BusinessRuleError(
-                f"AI generation is only available for draft proposals (current status: '{proposal.status}')"
+                f"AI generation is only available for draft proposals "
+                f"(current status: '{proposal.status}')"
             )
 
         sub = await self.repo.get_subscription(user_id)
@@ -110,6 +116,13 @@ class ProposalsService:
         if client and getattr(client, "type", None) == "company":
             company_name = client.name
 
+        # Cả BA đường sinh báo giá (/ai-generate, /generate-from-deal, /{id}/generate) đều
+        # phải thấy CÙNG một bộ dữ liệu — nếu không thì cùng một deal, gọi endpoint khác
+        # nhau lại ra báo giá khác nhau.  #Huynh
+        intake = None
+        if deal and deal.client_id:
+            intake = await self.repo.get_intake_by_client_id(deal.client_id, user_id)
+
         content = await ai_facade.generate_proposal(
             deal_data={
                 "title": deal.title if deal else "",
@@ -119,6 +132,12 @@ class ProposalsService:
                 "service_category": deal.service_category if deal else None,
                 "pricing_tier": deal.pricing_tier if deal else None,
                 "budget": budget,
+                "client_inquiry": getattr(intake, "inquiry_text", None) if intake else None,
+                "client_budget": getattr(intake, "estimated_budget", None) if intake else None,
+                "client_timeline": (
+                    getattr(intake, "desired_timeline", None) if intake else None
+                )
+                or (deal.desired_timeline if deal else None),
             },
             client_data={
                 "name": client.name if client else "",
@@ -156,6 +175,14 @@ class ProposalsService:
         if client and getattr(client, "type", None) == "company":
             company_name = client.name
 
+        # Nguyên văn yêu cầu khách viết trong Biểu mẫu tiếp nhận. Đây là nguồn tin GIÀU
+        # NHẤT về dự án, nhưng trước đây AI soạn báo giá KHÔNG hề được đọc — chỉ
+        # lead_qualifier đọc. Hậu quả: khách mô tả cả đoạn mà báo giá vẫn mỏng dính, vì
+        # thứ duy nhất AI thấy là ghi chú nội bộ của freelancer.  #Huynh
+        intake = None
+        if deal.client_id:
+            intake = await self.repo.get_intake_by_client_id(deal.client_id, user_id)
+
         content = await ai_facade.generate_proposal(
             deal_data={
                 "title": deal.title,
@@ -164,7 +191,16 @@ class ProposalsService:
                 "project_type": deal.project_type,
                 "service_category": deal.service_category,
                 "pricing_tier": deal.pricing_tier,
+                # "budget" ở đây là ô "Giá trị dự kiến" — FREELANCER tự nhập, không phải
+                # khách báo. Prompt được dặn dùng đúng con số này làm giá chào.
                 "budget": budget,
+                # Lời khách — tách riêng để AI không nhầm với thông tin freelancer tự nhập.
+                "client_inquiry": getattr(intake, "inquiry_text", None) if intake else None,
+                "client_budget": getattr(intake, "estimated_budget", None) if intake else None,
+                "client_timeline": (
+                    getattr(intake, "desired_timeline", None) if intake else None
+                )
+                or deal.desired_timeline,
             },
             client_data={
                 "name": client.name if client else "",

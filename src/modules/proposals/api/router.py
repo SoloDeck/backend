@@ -1,13 +1,11 @@
 """Proposals API api."""
 
-import asyncio
 import uuid
+from io import BytesIO
 from typing import Annotated
 
-from io import BytesIO
-from fastapi.responses import StreamingResponse
-
 from fastapi import APIRouter, Depends, Query
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -37,42 +35,30 @@ async def ai_generate_proposal(
     payload: AiProposalRequest,
     user_id: CurrentUserId,
     db: DBSession,
+    ai: AIFacadeDep,
 ) -> ApiResponse[ProposalResponse]:
-    from groq import Groq
+    """Sinh báo giá bằng AI cho một deal.
 
-    from src.ai.proposal_generator.application.service import ProposalGenerationService
-    from src.ai.proposal_generator.schemas.proposal_generation_input import ProposalGenerationInput
-    from src.config.settings import settings
+    Endpoint này giờ đi CHUNG một đường với `/generate-from-deal`: cả hai đều dựng ngữ
+    cảnh từ database (deal + phiếu tiếp nhận của khách + hồ sơ freelancer).
 
-    gen_input = ProposalGenerationInput(
-        client_name=payload.client_name,
-        company_name=payload.company_name,
-        project_type=payload.project_type,
-        project_description=payload.project_description,
-        estimated_scope=payload.estimated_scope,
-        budget=payload.budget,
-        urgency=payload.urgency,
-        service_category=payload.service_category,
-        pricing_tier=payload.pricing_tier,
-        freelancer_name=payload.freelancer_name,
-    )
-    # Trước đây chỗ này dựng genai.Client (Gemini) rồi đưa vào ProposalGenerationService,
-    # trong khi service gọi client.chat.completions.create — cú pháp của Groq. Gemini
-    # client không có .chat nên ném AttributeError → endpoint này 500 MỌI LÚC, bất kể
-    # API key. Cuộc di trú sang Groq đã bỏ sót đúng route mà frontend đang gọi.  #Huynh
-    client = Groq(api_key=settings.groq_api_key)
-    svc = ProposalGenerationService(client=client)
-    content = await asyncio.to_thread(svc.generate, gen_input)
+    Vì sao đổi: trước đây nó KHÔNG đọc database, chỉ dùng đúng những gì frontend nhét vào
+    payload. Mà frontend thì gửi `project_description = ghi chú nội bộ` và KHÔNG hề gửi
+    nguyên văn yêu cầu của khách — dù nó nằm sẵn trong bảng `deal_intakes`. Kết quả: khách
+    viết cả đoạn mô tả mà báo giá vẫn mỏng dính, vì AI bị bịt mắt.
 
-    proposal = await ProposalsService(db=db).create(
-        user_id,
-        ProposalRequest(deal_id=payload.deal_id, content=content.model_dump()),
-        ai_generated=True,
-    )
+    Các trường trong payload giờ là dư thừa (đều suy ra được từ `deal_id`), nhưng vẫn nhận
+    để không phá hợp đồng API. Nguồn sự thật là DATABASE, không phải payload.  #Huynh
+    """
+    proposal = await ProposalsService(db=db).generate_from_deal(user_id, payload.deal_id, ai)
     return ApiResponse.created(ProposalResponse.model_validate(proposal))
 
 
-@router.post("/generate-from-deal/{deal_id}", response_model=ApiResponse[ProposalResponse], status_code=201)
+@router.post(
+    "/generate-from-deal/{deal_id}",
+    response_model=ApiResponse[ProposalResponse],
+    status_code=201,
+)
 async def generate_proposal_from_deal(
     deal_id: uuid.UUID,
     user_id: CurrentUserId,
