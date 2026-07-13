@@ -101,7 +101,10 @@ PROFESSIONS: list[ProfessionDef] = [
                 "expected_deliverables",
                 "Expected deliverables",
                 "multiselect",
-                ["Wireframes", "User flows", "High-fidelity UI", "Prototype", "Design system", "UX research"],
+                [
+                    "Wireframes", "User flows", "High-fidelity UI", "Prototype",
+                    "Design system", "UX research",
+                ],
             ),
         ],
     },
@@ -145,7 +148,10 @@ PROFESSIONS: list[ProfessionDef] = [
                 "marketing_objective",
                 "Marketing objective",
                 "select",
-                ["Brand awareness", "Lead generation", "Sales", "Website traffic", "Customer retention", "Other"],
+                [
+                    "Brand awareness", "Lead generation", "Sales",
+                    "Website traffic", "Customer retention", "Other",
+                ],
             ),
             _field(
                 "marketing_channels",
@@ -158,7 +164,10 @@ PROFESSIONS: list[ProfessionDef] = [
                 "services_required",
                 "Services required",
                 "multiselect",
-                ["Strategy", "Advertising", "SEO", "Content planning", "Analytics", "Campaign management"],
+                [
+                    "Strategy", "Advertising", "SEO",
+                    "Content planning", "Analytics", "Campaign management",
+                ],
             ),
             _field(
                 "current_marketing_status",
@@ -226,7 +235,10 @@ PROFESSIONS: list[ProfessionDef] = [
                 "required_deliverables",
                 "Required deliverables",
                 "multiselect",
-                ["Edited photos", "Raw photos", "Highlight video", "Full video", "Short-form social media clips"],
+                [
+                    "Edited photos", "Raw photos", "Highlight video",
+                    "Full video", "Short-form social media clips",
+                ],
             ),
             _field(
                 "estimated_duration",

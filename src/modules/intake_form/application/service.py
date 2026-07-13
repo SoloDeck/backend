@@ -4,7 +4,11 @@ from dataclasses import dataclass
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.modules.intake_form.infrastructure.repository import IntakeFormRepository
-from src.modules.intake_form.professions import PROFESSIONS, PROFESSIONS_BY_VALUE, required_field_keys
+from src.modules.intake_form.professions import (
+    PROFESSIONS,
+    PROFESSIONS_BY_VALUE,
+    required_field_keys,
+)
 from src.modules.intake_form.schemas.request import IntakeFormUpdateRequest
 from src.modules.intake_form.schemas.response import (
     IntakeFormFieldResponse,
