@@ -169,6 +169,10 @@ class ContractsService:
             user_profile={
                 "name": user.full_name if user else "",
                 "email": user.email if user else "",
+                # Hợp đồng ghi bên cung cấp là hộ kinh doanh/công ty nếu freelancer có
+                # đăng ký. Cột này đã có sẵn trong bảng users, chỉ là chưa ai truyền
+                # xuống.  #Huynh
+                "business_name": (user.business_name or "") if user else "",
             },
             user_can_use_ai=user_can_use_ai,
         )

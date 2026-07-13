@@ -2,29 +2,10 @@ from typing import Any
 
 from pydantic import BaseModel, field_validator
 
-
-def _to_text(value: Any) -> str:
-    """Ép mọi thứ model trả về thành văn bản đọc được.  #Huynh"""
-    if value is None:
-        return ""
-    if isinstance(value, str):
-        return value
-    if isinstance(value, list):
-        return "\n".join(_to_text(item) for item in value)
-    if isinstance(value, dict):
-        return "\n".join(f"{key}: {_to_text(val)}" for key, val in value.items())
-    return str(value)
-
-
-def _to_text_list(value: Any) -> list[str]:
-    """Ép mọi thứ model trả về thành danh sách chuỗi.  #Huynh"""
-    if value is None:
-        return []
-    if isinstance(value, list):
-        return [_to_text(item) for item in value]
-    if isinstance(value, dict):
-        return [f"{key}: {_to_text(val)}" for key, val in value.items()]
-    return [_to_text(value)]
+# Hai hàm ép kiểu này giờ nằm ở src/ai/shared/text_coercion.py vì contract_generator
+# cũng cần đúng như vậy.  #Huynh
+from src.ai.shared.text_coercion import to_text as _to_text
+from src.ai.shared.text_coercion import to_text_list as _to_text_list
 
 
 class ProposalContent(BaseModel):
