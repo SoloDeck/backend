@@ -521,3 +521,121 @@ class TestDealAIQualificationFields:
         assert qualified["ai_level"] == "cold"
         assert qualified["is_ai_qualified"] is False
         assert qualified["ai_qualification_recommendation"] == "pass"
+
+
+# ---------------------------------------------------------------------------
+# POST /deals/{deal_id}/document
+# ---------------------------------------------------------------------------
+
+
+class _FakeStorageClient:
+    async def upload(self, *, key: str, content: bytes, content_type: str) -> str:
+        return f"https://cdn.example.com/{key}"
+
+
+class TestUploadDocument:
+    async def test_uploads_and_returns_document_url(self, client: AsyncClient) -> None:
+        headers = await _auth(client)
+        deal = await _create_deal(client, headers)
+
+        from src.main import app
+        from src.shared.dependencies.storage import get_storage_client
+
+        app.dependency_overrides[get_storage_client] = lambda: _FakeStorageClient()
+        try:
+            resp = await client.post(
+                f"/api/v1/deals/{deal['id']}/document",
+                files={"file": ("brief.pdf", b"%PDF-1.4 fake", "application/pdf")},
+                headers=headers,
+            )
+        finally:
+            app.dependency_overrides.pop(get_storage_client, None)
+
+        assert resp.status_code == 200, resp.text
+        data = resp.json()["data"]
+        assert data["document_url"].startswith("https://cdn.example.com/deals/")
+        assert data["document_filename"] == "brief.pdf"
+
+    async def test_rejects_non_pdf_content_type(self, client: AsyncClient) -> None:
+        headers = await _auth(client)
+        deal = await _create_deal(client, headers)
+
+        from src.main import app
+        from src.shared.dependencies.storage import get_storage_client
+
+        app.dependency_overrides[get_storage_client] = lambda: _FakeStorageClient()
+        try:
+            resp = await client.post(
+                f"/api/v1/deals/{deal['id']}/document",
+                files={"file": ("image.png", b"fake-png-bytes", "image/png")},
+                headers=headers,
+            )
+        finally:
+            app.dependency_overrides.pop(get_storage_client, None)
+
+        assert resp.status_code == 422
+
+    async def test_rejects_oversized_file(self, client: AsyncClient) -> None:
+        headers = await _auth(client)
+        deal = await _create_deal(client, headers)
+        oversized = b"x" * (20 * 1024 * 1024 + 1)
+
+        from src.main import app
+        from src.shared.dependencies.storage import get_storage_client
+
+        app.dependency_overrides[get_storage_client] = lambda: _FakeStorageClient()
+        try:
+            resp = await client.post(
+                f"/api/v1/deals/{deal['id']}/document",
+                files={"file": ("brief.pdf", oversized, "application/pdf")},
+                headers=headers,
+            )
+        finally:
+            app.dependency_overrides.pop(get_storage_client, None)
+
+        assert resp.status_code == 422
+
+    async def test_unauthenticated_returns_401(self, client: AsyncClient) -> None:
+        resp = await client.post(
+            f"/api/v1/deals/{uuid.uuid4()}/document",
+            files={"file": ("brief.pdf", b"%PDF-1.4 fake", "application/pdf")},
+        )
+        assert resp.status_code == 401
+
+    async def test_unknown_deal_returns_404(self, client: AsyncClient) -> None:
+        headers = await _auth(client)
+
+        from src.main import app
+        from src.shared.dependencies.storage import get_storage_client
+
+        app.dependency_overrides[get_storage_client] = lambda: _FakeStorageClient()
+        try:
+            resp = await client.post(
+                f"/api/v1/deals/{uuid.uuid4()}/document",
+                files={"file": ("brief.pdf", b"%PDF-1.4 fake", "application/pdf")},
+                headers=headers,
+            )
+        finally:
+            app.dependency_overrides.pop(get_storage_client, None)
+
+        assert resp.status_code == 404
+
+    async def test_other_users_deal_returns_404(self, client: AsyncClient) -> None:
+        headers_a = await _auth(client)
+        headers_b = await _auth(client)
+        deal = await _create_deal(client, headers_a)
+
+        from src.main import app
+        from src.shared.dependencies.storage import get_storage_client
+
+        app.dependency_overrides[get_storage_client] = lambda: _FakeStorageClient()
+        try:
+            resp = await client.post(
+                f"/api/v1/deals/{deal['id']}/document",
+                files={"file": ("brief.pdf", b"%PDF-1.4 fake", "application/pdf")},
+                headers=headers_b,
+            )
+        finally:
+            app.dependency_overrides.pop(get_storage_client, None)
+
+        assert resp.status_code == 404

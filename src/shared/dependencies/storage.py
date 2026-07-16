@@ -1,6 +1,7 @@
 from typing import Annotated
 
 from fastapi import Depends
+
 from src.integrations.storage.client import StorageClient
 from src.integrations.storage.s3_client import S3StorageClient
 

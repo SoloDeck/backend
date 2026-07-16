@@ -3,7 +3,7 @@
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, File, Query, UploadFile
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -13,6 +13,7 @@ from src.modules.deals.schemas.request import DealRequest, DealStageRequest
 from src.modules.deals.schemas.response import DealResponse, IntakeResponse
 from src.shared.dependencies.ai import AIFacadeDep
 from src.shared.dependencies.auth import CurrentUserId
+from src.shared.dependencies.storage import StorageDep
 from src.shared.responses.response import ApiResponse, PaginatedResponse
 
 router = APIRouter()
@@ -115,6 +116,29 @@ async def delete_deal(
 ) -> ApiResponse[MsgResp]:
     await DealsService(db=db).delete(user_id, deal_id)
     return ApiResponse.ok(MsgResp(detail="Deal deleted"))
+
+
+@router.post(
+    "/{deal_id}/document",
+    response_model=ApiResponse[DealResponse],
+    summary="Upload a PDF document to a deal",
+)
+async def upload_document(
+    deal_id: uuid.UUID,
+    user_id: CurrentUserId,
+    db: DBSession,
+    storage: StorageDep,
+    file: Annotated[UploadFile, File()],
+) -> ApiResponse[DealResponse]:
+    content = await file.read()
+    deal = await DealsService(db=db, storage=storage).upload_document(
+        user_id,
+        deal_id,
+        filename=file.filename or "document.pdf",
+        content=content,
+        content_type=file.content_type or "",
+    )
+    return ApiResponse.ok(DealResponse.model_validate(deal))
 
 
 @router.post("/{deal_id}/qualify")

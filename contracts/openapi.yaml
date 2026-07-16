@@ -1255,6 +1255,51 @@ paths:
         '204':
           description: Deal deleted
 
+  /deals/{deal_id}/document:
+    parameters:
+      - $ref: '#/components/parameters/DealId'
+    post:
+      tags: [Deals]
+      summary: Upload a PDF document to a deal
+      description: |
+        Accepts a single PDF file (`application/pdf`, max 20MB) as multipart form data,
+        stores it in object storage, and sets `document_url`/`document_filename` on the
+        deal. Re-uploading replaces the previously stored document. Also appends a
+        `document_attached` entry to the deal's activity log.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        '200':
+          description: Updated deal with new document_url
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/DealResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          description: Not a PDF, empty, or exceeds 20MB (VALIDATION_FAILED)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+
   /deals/{deal_id}/stage:
     parameters:
       - $ref: '#/components/parameters/DealId'
@@ -5352,6 +5397,14 @@ components:
           type: string
           format: date-time
           nullable: true
+        document_url:
+          type: string
+          nullable: true
+          description: Public URL of the most recently uploaded PDF document, if any.
+        document_filename:
+          type: string
+          nullable: true
+          description: Original filename of the most recently uploaded PDF document.
         project_id:
           type: string
           format: uuid
