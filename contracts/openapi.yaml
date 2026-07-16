@@ -4293,6 +4293,12 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/ApiError'
+    UnprocessableEntity:
+      description: Request body failed validation (VALIDATION_FAILED)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
     Unauthorized:
       description: Missing or invalid authentication token (UNAUTHORIZED)
       content:
