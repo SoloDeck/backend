@@ -2,7 +2,7 @@
 
 import uuid
 from datetime import datetime
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Query, Response
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,6 +14,7 @@ from src.modules.admin.schemas.request import (
     AdminPlanRequest,
     AdminSubscriptionOverrideRequest,
     AdminUpdateFeatureFlagRequest,
+    AdminUpdatePlanRequest,
     AdminUpdateTemplateRequest,
     AdminUpdateUserRequest,
 )
@@ -69,8 +70,8 @@ def _sub_to_response(sub, plan) -> AdminSubscriptionResponse:
 async def list_users(
     _: AdminUser,
     db: DBSession,
-    status: str | None = Query(default=None),
-    role: str | None = Query(default=None),
+    status: Literal["active", "suspended", "deleted"] | None = Query(default=None),
+    role: Literal["freelancer", "admin"] | None = Query(default=None),
     search: str | None = Query(default=None),
     plan_slug: str | None = Query(default=None),
     sort_by: str = Query(default="created_at"),
@@ -112,10 +113,12 @@ async def get_user(
 async def update_user(
     user_id: uuid.UUID,
     payload: AdminUpdateUserRequest,
-    _: AdminUser,
+    admin: AdminUser,
     db: DBSession,
 ) -> ApiResponse[AdminUserResponse]:
-    user = await AdminService(db=db).update_user(user_id, payload)
+    user = await AdminService(db=db).update_user(
+        user_id, payload, admin_id=uuid.UUID(admin.sub)
+    )
     return ApiResponse.ok(AdminUserResponse.model_validate(user))
 
 
@@ -167,6 +170,16 @@ async def list_plans(
     return ApiResponse.ok([AdminPlanResponse.model_validate(p) for p in plans])
 
 
+@router.get("/plans/{plan_id}", response_model=ApiResponse[AdminPlanResponse])
+async def get_plan(
+    plan_id: uuid.UUID,
+    _: AdminUser,
+    db: DBSession,
+) -> ApiResponse[AdminPlanResponse]:
+    plan = await AdminService(db=db).get_plan(plan_id)
+    return ApiResponse.ok(AdminPlanResponse.model_validate(plan))
+
+
 @router.post("/plans", response_model=ApiResponse[AdminPlanResponse], status_code=201)
 async def create_plan(
     payload: AdminPlanRequest,
@@ -180,7 +193,7 @@ async def create_plan(
 @router.patch("/plans/{plan_id}", response_model=ApiResponse[AdminPlanResponse])
 async def update_plan(
     plan_id: uuid.UUID,
-    payload: AdminPlanRequest,
+    payload: AdminUpdatePlanRequest,
     _: AdminUser,
     db: DBSession,
 ) -> ApiResponse[AdminPlanResponse]:
@@ -197,7 +210,7 @@ async def update_plan(
 async def list_subscriptions(
     _: AdminUser,
     db: DBSession,
-    status: str | None = Query(default=None),
+    status: Literal["active", "past_due", "suspended", "cancelled"] | None = Query(default=None),
     plan_slug: str | None = Query(default=None),
     sort_by: str = Query(default="created_at"),
     sort_order: str = Query(default="desc"),
@@ -248,7 +261,10 @@ async def override_subscription(
 async def list_ai_costs(
     _: AdminUser,
     db: DBSession,
-    ai_module: str | None = Query(default=None),
+    ai_module: (
+        Literal["lead_qualifier", "proposal_generator", "contract_generator", "followup_generator"]
+        | None
+    ) = Query(default=None),
     from_date: datetime | None = Query(default=None),
     to_date: datetime | None = Query(default=None),
     sort_by: str = Query(default="occurred_at"),
@@ -329,7 +345,7 @@ async def list_audit_logs(
 async def list_templates(
     _: AdminUser,
     db: DBSession,
-    template_type: str | None = Query(default=None),
+    template_type: Literal["proposal", "contract"] | None = Query(default=None),
     is_active: bool | None = Query(default=None),
 ) -> ApiResponse[list[AdminTemplateResponse]]:
     templates = await AdminService(db=db).list_templates(

@@ -1,0 +1,17 @@
+{
+  "id": "solodesk-env",
+  "name": "SoloDesk Local",
+  "values": [
+    { "key": "base_url",     "value": "http://localhost:8000/api/v1", "enabled": true },
+    { "key": "token",        "value": "", "enabled": true },
+    { "key": "admin_token",  "value": "", "enabled": true },
+    { "key": "client_id",    "value": "", "enabled": true },
+    { "key": "deal_id",      "value": "", "enabled": true },
+    { "key": "proposal_id",  "value": "", "enabled": true },
+    { "key": "intake_id",    "value": "", "enabled": true },
+    { "key": "intake_token", "value": "", "enabled": true },
+    { "key": "user_id",      "value": "", "enabled": true },
+    { "key": "plan_id",      "value": "", "enabled": true }
+  ],
+  "_postman_variable_scope": "environment"
+}

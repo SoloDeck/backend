@@ -25,8 +25,8 @@ _PLANS: list[_PlanDef] = [
     _PlanDef(
         name="Free",
         slug="free",
-        price_monthly=Decimal("0.00"),
-        currency="USD",
+        price_monthly=Decimal("0"),
+        currency="VND",
         max_ai_generations_per_month=0,
         can_use_ai=False,
         can_export_pdf=False,
@@ -36,8 +36,8 @@ _PLANS: list[_PlanDef] = [
     _PlanDef(
         name="Pro",
         slug="pro",
-        price_monthly=Decimal("9.99"),
-        currency="USD",
+        price_monthly=Decimal("199000"),
+        currency="VND",
         max_ai_generations_per_month=50,
         can_use_ai=True,
         can_export_pdf=True,
@@ -47,8 +47,8 @@ _PLANS: list[_PlanDef] = [
     _PlanDef(
         name="Agency",
         slug="agency",
-        price_monthly=Decimal("29.99"),
-        currency="USD",
+        price_monthly=Decimal("599000"),
+        currency="VND",
         max_ai_generations_per_month=500,
         can_use_ai=True,
         can_export_pdf=True,
@@ -57,7 +57,7 @@ _PLANS: list[_PlanDef] = [
     ),
 ]
 
-_UPSERT = text("""
+_INSERT_IF_MISSING = text("""
     INSERT INTO subscription_plans (
         name, slug, price_monthly, currency,
         max_ai_generations_per_month, can_use_ai, can_export_pdf,
@@ -67,16 +67,7 @@ _UPSERT = text("""
         :max_ai_generations_per_month, :can_use_ai, :can_export_pdf,
         :max_clients, :max_deals, TRUE
     )
-    ON CONFLICT (slug) DO UPDATE SET
-        name                            = EXCLUDED.name,
-        price_monthly                   = EXCLUDED.price_monthly,
-        currency                        = EXCLUDED.currency,
-        max_ai_generations_per_month    = EXCLUDED.max_ai_generations_per_month,
-        can_use_ai                      = EXCLUDED.can_use_ai,
-        can_export_pdf                  = EXCLUDED.can_export_pdf,
-        max_clients                     = EXCLUDED.max_clients,
-        max_deals                       = EXCLUDED.max_deals,
-        is_active                       = TRUE
+    ON CONFLICT (slug) DO NOTHING
     """)
 
 
@@ -87,7 +78,7 @@ class PlansSeeder(BaseSeeder):
         self._log.info("seeder.start", plans=[p.slug for p in _PLANS])
         for plan in _PLANS:
             await self.db.execute(
-                _UPSERT,
+                _INSERT_IF_MISSING,
                 {
                     "name": plan.name,
                     "slug": plan.slug,

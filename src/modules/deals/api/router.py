@@ -45,11 +45,14 @@ async def list_deals(
         default=None,
         description="Filter by stage: new_lead, qualified, proposal_sent, in_negotiation, active, completed_and_billed, lost",
     ),
+    client_id: uuid.UUID | None = Query(
+        default=None, description="Filter by client ID"
+    ),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
 ) -> PaginatedResponse[DealResponse]:
     deals, total = await DealsService(db=db).list_all(
-        user_id, title=title, stage=stage, page=page, page_size=page_size
+        user_id, title=title, stage=stage, client_id=client_id, page=page, page_size=page_size
     )
     return PaginatedResponse.ok(
         [DealResponse.model_validate(d) for d in deals], total=total, page=page, page_size=page_size
