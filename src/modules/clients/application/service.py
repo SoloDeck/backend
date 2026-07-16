@@ -98,7 +98,34 @@ class ClientsService:
         return clients, total
 
     async def get_one(self, user_id: uuid.UUID, client_id: uuid.UUID):  # type: ignore[return]
-        return await self._get_client(user_id, client_id)
+        from sqlalchemy import func, select
+
+        from src.infrastructure.database.models import ClientModel, DealModel
+
+        deal_count_subq = (
+            select(func.count(DealModel.id))
+            .where(
+                DealModel.client_id == ClientModel.id,
+                DealModel.deleted_at.is_(None),
+            )
+            .correlate(ClientModel)
+            .scalar_subquery()
+        )
+
+        row = await self.db.execute(
+            select(ClientModel, deal_count_subq.label("deal_count"))
+            .where(
+                ClientModel.id == client_id,
+                ClientModel.owner_user_id == user_id,
+                ClientModel.deleted_at.is_(None),
+            )
+        )
+        result = row.first()
+        if result is None:
+            raise NotFoundError(f"Client {client_id} not found")
+        client, count = result
+        client.deal_count = count
+        return client
 
     async def update(self, user_id: uuid.UUID, client_id: uuid.UUID, payload: ClientRequest):  # type: ignore[return]
         client = await self._get_client(user_id, client_id)

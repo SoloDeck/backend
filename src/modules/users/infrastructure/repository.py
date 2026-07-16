@@ -19,6 +19,15 @@ class UsersRepository:
             )
         )
 
+    async def get_by_phone(self, phone: str, *, exclude_user_id: uuid.UUID | None = None):
+        stmt = select(UserModel).where(
+            UserModel.phone == phone,
+            UserModel.deleted_at.is_(None),
+        )
+        if exclude_user_id is not None:
+            stmt = stmt.where(UserModel.id != exclude_user_id)
+        return await self.db.scalar(stmt)
+
     async def save(self, obj):
         await self.db.flush()
         await self.db.refresh(obj)
