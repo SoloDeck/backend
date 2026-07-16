@@ -1,0 +1,75 @@
+============================================================
+  CLIENTS ENDPOINTS
+  BASE: http://localhost:8000/api/v1
+  Replace <TOKEN> and <CLIENT_ID>
+============================================================
+
+--- CREATE CLIENT ---
+POST /clients
+
+curl -X POST http://localhost:8000/api/v1/clients \
+  -H "Authorization: Bearer <TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Cong ty ABC",
+    "email": "abc@company.vn",
+    "phone": "0901234567",
+    "type": "company",
+    "status": "prospect",
+    "address_city": "Ho Chi Minh",
+    "address_country": "Vietnam",
+    "notes": "Khach hang tiem nang"
+  }'
+
+--- LIST CLIENTS ---
+GET /clients
+
+curl "http://localhost:8000/api/v1/clients?page=1&page_size=20" \
+  -H "Authorization: Bearer <TOKEN>"
+
+# With filters:
+curl "http://localhost:8000/api/v1/clients?status=prospect&name=ABC&page=1&page_size=20" \
+  -H "Authorization: Bearer <TOKEN>"
+
+--- GET CLIENT ---
+GET /clients/{client_id}
+
+curl http://localhost:8000/api/v1/clients/<CLIENT_ID> \
+  -H "Authorization: Bearer <TOKEN>"
+
+--- UPDATE CLIENT ---
+PATCH /clients/{client_id}
+
+curl -X PATCH http://localhost:8000/api/v1/clients/<CLIENT_ID> \
+  -H "Authorization: Bearer <TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Cong ty ABC (Updated)",
+    "status": "active",
+    "notes": "Da ky hop dong thang 6"
+  }'
+
+--- DELETE CLIENT ---
+DELETE /clients/{client_id}
+Note: 409 if client has existing deals/invoices/contracts
+
+curl -X DELETE http://localhost:8000/api/v1/clients/<CLIENT_ID> \
+  -H "Authorization: Bearer <TOKEN>"
+
+--- ADD COMMUNICATION LOG ---
+POST /clients/{client_id}/comm-logs
+
+curl -X POST http://localhost:8000/api/v1/clients/<CLIENT_ID>/comm-logs \
+  -H "Authorization: Bearer <TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "channel": "email",
+    "summary": "Da gui bao gia cho khach hang, cho phan hoi trong 3 ngay",
+    "communicated_at": "2026-06-30T09:00:00Z"
+  }'
+
+--- LIST COMMUNICATION LOGS ---
+GET /clients/{client_id}/comm-logs
+
+curl http://localhost:8000/api/v1/clients/<CLIENT_ID>/comm-logs \
+  -H "Authorization: Bearer <TOKEN>"

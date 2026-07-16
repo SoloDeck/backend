@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from unittest.mock import AsyncMock
 
 import pytest
+import structlog
 
 from src.modules.deals.application.service import DealsService
 from src.modules.deals.schemas.request import DealRequest, DealStageRequest, PublicIntakeRequest
@@ -294,3 +295,29 @@ async def test_qualify_deal_missing_ai_facade_raises() -> None:
 
     with pytest.raises(RuntimeError, match="AIFacade not initialized"):
         await service.qualify_deal(deal_model.owner_user_id, deal_model.id)
+
+
+async def test_qualify_deal_complete_ai_output_does_not_warn() -> None:
+    service, _, deal_model = _make_qualify_service(_AI_RESULT)
+
+    with structlog.testing.capture_logs() as logs:
+        await service.qualify_deal(deal_model.owner_user_id, deal_model.id)
+
+    warnings = [e for e in logs if e["event"] == "deals.qualify_deal.incomplete_ai_output"]
+    assert warnings == []
+
+
+async def test_qualify_deal_incomplete_ai_output_logs_missing_keys() -> None:
+    incomplete_result = {
+        k: v for k, v in _AI_RESULT.items() if k not in ("detected_signals", "price_range_min")
+    }
+    service, _, deal_model = _make_qualify_service(incomplete_result)
+
+    with structlog.testing.capture_logs() as logs:
+        await service.qualify_deal(deal_model.owner_user_id, deal_model.id)
+
+    warnings = [e for e in logs if e["event"] == "deals.qualify_deal.incomplete_ai_output"]
+    assert len(warnings) == 1
+    assert warnings[0]["log_level"] == "warning"
+    assert warnings[0]["deal_id"] == str(deal_model.id)
+    assert warnings[0]["missing_keys"] == ["detected_signals", "price_range_min"]

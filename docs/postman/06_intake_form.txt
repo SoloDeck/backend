@@ -1,0 +1,67 @@
+============================================================
+  INTAKE FORM ENDPOINTS
+  BASE: http://localhost:8000/api/v1
+  Replace <TOKEN>, <INTAKE_TOKEN>
+  Get <INTAKE_TOKEN> from GET /users/me -> intake_share_token
+============================================================
+
+--- GET FORM CONFIG (owner) ---
+GET /intake-form
+
+curl http://localhost:8000/api/v1/intake-form \
+  -H "Authorization: Bearer <TOKEN>"
+
+--- UPDATE FORM CONFIG ---
+PUT /intake-form
+
+curl -X PUT http://localhost:8000/api/v1/intake-form \
+  -H "Authorization: Bearer <TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "title": "Gui yeu cau du an",
+    "description": "Hay dien thong tin de chung toi lien he voi ban",
+    "is_active": true,
+    "fields": [
+      { "field_key": "name",            "label": "Ho ten",           "field_type": "text",     "is_required": true,  "is_visible": true, "sort_order": 1 },
+      { "field_key": "phone",           "label": "So dien thoai",    "field_type": "phone",    "is_required": true,  "is_visible": true, "sort_order": 2 },
+      { "field_key": "email",           "label": "Email",            "field_type": "email",    "is_required": false, "is_visible": true, "sort_order": 3 },
+      { "field_key": "project_name",    "label": "Ten du an",        "field_type": "text",     "is_required": false, "is_visible": true, "sort_order": 4 },
+      { "field_key": "inquiry_text",    "label": "Mo ta yeu cau",    "field_type": "textarea", "is_required": true,  "is_visible": true, "sort_order": 5 },
+      { "field_key": "estimated_budget","label": "Ngan sach du kien","field_type": "text",     "is_required": false, "is_visible": true, "sort_order": 6 },
+      { "field_key": "desired_timeline","label": "Thoi gian mong muon","field_type": "text",   "is_required": false, "is_visible": true, "sort_order": 7 }
+    ]
+  }'
+
+--- GET PUBLIC FORM CONFIG (no auth, for display on frontend) ---
+GET /intake/{intake_token}/config
+
+curl http://localhost:8000/api/v1/intake/<INTAKE_TOKEN>/config
+
+--- SUBMIT INTAKE FORM (no auth, client-facing) ---
+POST /intake/{intake_token}
+Note: If same name + phone already exists under this owner,
+      the new deal is added to the existing client (deduplication).
+
+curl -X POST http://localhost:8000/api/v1/intake/<INTAKE_TOKEN> \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Tran Thi Khach",
+    "phone": "0909999888",
+    "email": "khach@example.vn",
+    "project_name": "App dat hang online",
+    "inquiry_text": "Toi can xay dung mot ung dung di dong cho phep khach hang dat mon an va theo doi don hang theo thoi gian thuc.",
+    "estimated_budget": "30,000,000 - 50,000,000 VND",
+    "desired_timeline": "3 thang"
+  }'
+
+--- SUBMIT DUPLICATE INTAKE (same name + phone = reuses same client) ---
+POST /intake/{intake_token}
+
+curl -X POST http://localhost:8000/api/v1/intake/<INTAKE_TOKEN> \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Tran Thi Khach",
+    "phone": "0909999888",
+    "inquiry_text": "Du an thu 2 - nen dung chung client cu",
+    "project_name": "Website ban hang"
+  }'

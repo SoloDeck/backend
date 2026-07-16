@@ -171,6 +171,7 @@ class DealsRepository:
         owner_user_id: uuid.UUID,
         title: str | None = None,
         stage: str | None = None,
+        client_id: uuid.UUID | None = None,
         page: int = 1,
         page_size: int = 20,
     ) -> tuple[list, int]:
@@ -179,6 +180,8 @@ class DealsRepository:
             conditions.append(DealModel.title.ilike(f"%{title}%"))
         if stage is not None:
             conditions.append(DealModel.stage == stage)
+        if client_id is not None:
+            conditions.append(DealModel.client_id == client_id)
         total = (
             await self.db.scalar(select(func.count()).select_from(DealModel).where(*conditions))
             or 0

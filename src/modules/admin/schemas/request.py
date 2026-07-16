@@ -1,14 +1,17 @@
 import uuid
 from datetime import datetime
 from decimal import Decimal
+from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, EmailStr, Field
 
 
 class AdminUpdateUserRequest(BaseModel):
-    role: str | None = None
-    status: str | None = None
+    role: Literal["freelancer", "admin"] | None = None
+    status: Literal["active", "suspended", "deleted"] | None = None
     full_name: str | None = None
+    email: EmailStr | None = None
+    phone: str | None = None
 
 
 class AdminPlanRequest(BaseModel):
@@ -21,7 +24,19 @@ class AdminPlanRequest(BaseModel):
     max_clients: int | None = None
     max_deals: int | None = None
     max_ai_generations_per_month: int = 0
-    is_active: bool = True
+
+
+class AdminUpdatePlanRequest(BaseModel):
+    name: str | None = None
+    slug: str | None = None
+    price_monthly: Decimal | None = None
+    currency: str | None = None
+    can_use_ai: bool | None = None
+    can_export_pdf: bool | None = None
+    max_clients: int | None = None
+    max_deals: int | None = None
+    max_ai_generations_per_month: int | None = None
+    is_active: bool | None = None
 
 
 class AdminSubscriptionOverrideRequest(BaseModel):
@@ -31,7 +46,7 @@ class AdminSubscriptionOverrideRequest(BaseModel):
 
 class AdminCreateTemplateRequest(BaseModel):
     name: str
-    template_type: str
+    template_type: Literal["proposal", "contract"]
     content: dict
     plan_tier_required: str | None = None
     is_active: bool = False
