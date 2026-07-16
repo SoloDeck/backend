@@ -66,4 +66,4 @@ class PublicIntakeRequest(BaseModel):
     # Profession selected by the client
     profession: str | None = None
     # Profession-specific intake answers
-    qualification_fields: dict[str, Any] | None = None
+    profession_fields: dict[str, Any] | None = None
