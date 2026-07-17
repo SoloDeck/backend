@@ -74,6 +74,29 @@ class DealsRepository:
             )
         )
 
+    async def get_intake_for_deal(
+        self, deal_id: uuid.UUID, client_id: uuid.UUID, owner_user_id: uuid.UUID
+    ):
+        """Phiếu tiếp nhận của ĐÚNG deal này.
+
+        Tra theo `deal_id` trước. Chỉ khi không có (phiếu cũ tạo trước khi có cột đó) mới
+        rơi về tra theo client — chấp nhận rủi ro lấy nhầm phiếu, nhưng chỉ với dữ liệu cũ.
+
+        Trước đây LUÔN tra theo client: một khách gửi form hai lần cho hai dự án → deal cũ
+        bị chấm điểm (và báo giá!) bằng brief của dự án mới.  #Huynh
+        """
+        intake = await self.db.scalar(
+            select(DealIntakeModel).where(
+                DealIntakeModel.deal_id == deal_id,
+                DealIntakeModel.owner_user_id == owner_user_id,
+                DealIntakeModel.deleted_at.is_(None),
+            )
+        )
+        if intake is not None:
+            return intake
+
+        return await self.get_intake_by_client_id(client_id, owner_user_id)
+
     async def get_intake_by_client_id(self, client_id: uuid.UUID, owner_user_id: uuid.UUID):
         return await self.db.scalar(
             select(DealIntakeModel)

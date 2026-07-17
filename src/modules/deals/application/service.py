@@ -146,6 +146,9 @@ class DealsService:
         intake = await self.repo.create_intake(
             owner_user_id=owner.id,
             client_id=client.id,
+            # Gắn phiếu vào ĐÚNG deal vừa tạo. Thiếu dòng này là khách gửi form lần hai
+            # thì deal cũ bị chấm điểm (và báo giá) bằng brief của dự án mới.  #Huynh
+            deal_id=deal.id,
             inquiry_text=payload.inquiry_text or "",
             estimated_budget=payload.estimated_budget,
             desired_timeline=payload.desired_timeline,
@@ -384,7 +387,7 @@ class DealsService:
         #
         # Giờ chia hai khối rõ ràng, và prompt bắt buộc chỉ chấm ngân sách/thời gian dựa
         # trên khối "KHÁCH HÀNG NÓI GÌ".  #Huynh
-        intake = await self.repo.get_intake_by_client_id(deal_model.client_id, user_id)
+        intake = await self.repo.get_intake_for_deal(deal_model.id, deal_model.client_id, user_id)
 
         own: list[str] = [f"- Tên dự án: {deal_model.title}"]
         if deal_model.source:

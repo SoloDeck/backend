@@ -567,6 +567,29 @@ class DealIntakeModel(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
         nullable=False,
     )
 
+    # Phiếu này thuộc về deal NÀO.
+    #
+    # BUG CŨ: bảng này CHỈ có `client_id`. Một khách gửi form hai lần cho hai dự án khác
+    # nhau → hai deal, cùng một client. Khi chấm điểm, `get_intake_by_client_id()` trả về
+    # phiếu MỚI NHẤT, nên deal cũ bị chấm bằng brief của dự án MỚI.
+    #
+    # Kiểm chứng thật: khách gửi "Website bán hoa (25 triệu, 20/8)" rồi "App giao hàng
+    # (80 triệu, 30/12)" → CẢ HAI deal đều bị AI đọc thành "80 triệu, 30/12".
+    #
+    # Không chỉ chấm điểm sai: báo giá AI dùng chung hàm đó, nên freelancer gửi cho khách
+    # một bản báo giá cho DỰ ÁN SAI.
+    #
+    # Nullable vì phiếu cũ (tạo trước khi có cột này) không biết thuộc deal nào.  #Huynh
+    # Phiếu thuộc về ĐÚNG deal nào. Nullable vì phiếu cũ (trước migration n2b3c4d5e6f7)
+    # không biết thuộc deal nào — code phải chịu được NULL và rơi về tra theo client.
+    #
+    # Có index: tra phiếu theo deal chạy mỗi lần chấm điểm VÀ mỗi lần sinh báo giá.  #Huynh
+    deal_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("deals.id", ondelete="CASCADE"),
+        nullable=True,
+    )
+
     inquiry_text: Mapped[str] = mapped_column(
         Text,
         nullable=False,
@@ -598,6 +621,10 @@ class DealIntakeModel(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
         Index("idx_deal_intakes_client", "client_id"),
         Index("idx_deal_intakes_submitted", "submitted_at"),
         Index("idx_deal_intakes_owner_deleted", "owner_user_id", "deleted_at"),
+        # Tra phiếu theo deal chạy mỗi lần chấm điểm VÀ mỗi lần sinh báo giá. Đặt tên
+        # tường minh cho khớp migration n2b3c4d5e6f7 — thiếu dòng này thì metadata lệch
+        # DB, và autogenerate đòi XOÁ index ở mọi lần chạy sau.  #Huynh
+        Index("idx_deal_intakes_deal", "deal_id"),
     )
 
 
