@@ -1,5 +1,6 @@
 """File khách gửi kèm deal — lưu trữ + bóc chữ cho AI."""
 
+import asyncio
 import uuid
 from dataclasses import dataclass
 
@@ -20,6 +21,7 @@ from src.shared.exceptions.domain import BusinessRuleError, NotFoundError, Valid
 @dataclass
 class DealAttachmentService:
     db: AsyncSession
+
 
     async def upload(
         self,
@@ -54,7 +56,7 @@ class DealAttachmentService:
                 "Object storage chưa được cấu hình (thiếu STORAGE_ENDPOINT/ACCESS_KEY)."
             )
 
-        storage_key = object_storage.upload(
+        storage_key = await object_storage.upload(
             data=data,
             content_type=content_type,
             prefix=f"deals/{deal_id}",
@@ -65,7 +67,15 @@ class DealAttachmentService:
         #
         # Không bóc lại mỗi lần chấm điểm: bóc PDF tốn CPU, mà một deal có thể chấm lại
         # nhiều lần. Bóc một lần, dùng mãi.  #Huynh
-        extracted = extract_pdf_text(data) if content_type == "application/pdf" else None
+        #
+        # `to_thread` vì pypdf là thư viện ĐỒNG BỘ và ngốn CPU: chính dòng comment trên
+        # đã nói "tốn CPU" mà lại gọi thẳng trong hàm async — bóc một PDF vài chục trang
+        # là cả API đứng im suốt lúc đó.  #Huynh
+        extracted = (
+            await asyncio.to_thread(extract_pdf_text, data)
+            if content_type == "application/pdf"
+            else None
+        )
 
         attachment = DealAttachmentModel(
             id=uuid.uuid4(),
@@ -101,12 +111,12 @@ class DealAttachmentService:
     ) -> tuple[bytes, str, str]:
         """Trả về (bytes, content_type, filename)."""
         attachment = await self._get_owned(user_id, attachment_id)
-        data, content_type = object_storage.download(attachment.storage_key)
+        data, content_type = await object_storage.download(attachment.storage_key)
         return data, content_type or attachment.content_type, attachment.filename
 
     async def delete(self, user_id: uuid.UUID, attachment_id: uuid.UUID) -> None:
         attachment = await self._get_owned(user_id, attachment_id)
-        object_storage.delete(attachment.storage_key)
+        await object_storage.delete(attachment.storage_key)
         await self.db.delete(attachment)
         await self.db.flush()
 

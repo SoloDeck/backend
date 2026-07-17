@@ -12,6 +12,7 @@ localStorage**. Ba vấn đề:
 deploy**: chỉ đổi ``STORAGE_ENDPOINT`` sang AWS S3 hoặc Cloudflare R2.  #Huynh
 """
 
+import asyncio
 import uuid
 from dataclasses import dataclass
 from typing import Any
@@ -91,7 +92,12 @@ class ObjectStorage:
         return self._client
 
     def ensure_bucket(self) -> None:
-        """Tạo bucket nếu chưa có. Gọi lúc app khởi động."""
+        """Tạo bucket nếu chưa có. Gọi lúc app khởi động.
+
+        ĐỒNG BỘ, và đây là NGOẠI LỆ DUY NHẤT trong file: nó chạy trong `lifespan`, tức
+        trước khi app nhận request đầu tiên. Lúc đó chặn event loop không phiền ai, vì
+        chưa có ai để phiền. Các hàm còn lại nằm trên đường request nên phải async.  #Huynh
+        """
         if not self.enabled:
             log.warning("storage.disabled", reason="STORAGE_ENDPOINT hoặc ACCESS_KEY rỗng")
             return
@@ -103,7 +109,7 @@ class ObjectStorage:
             self.client.create_bucket(Bucket=bucket)
             log.info("storage.bucket_created", bucket=bucket)
 
-    def upload(self, *, data: bytes, content_type: str, prefix: str, filename: str) -> str:
+    async def upload(self, *, data: bytes, content_type: str, prefix: str, filename: str) -> str:
         """Đẩy file lên, trả về ``storage_key`` để lưu vào DB.
 
         Key có UUID nên **không đè nhau** dù hai người upload cùng tên file, và không đoán
@@ -112,7 +118,8 @@ class ObjectStorage:
         ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else "bin"
         key = f"{prefix}/{uuid.uuid4()}.{ext}"
 
-        self.client.put_object(
+        await asyncio.to_thread(
+            self.client.put_object,
             Bucket=settings.storage_bucket,
             Key=key,
             Body=data,
@@ -120,13 +127,19 @@ class ObjectStorage:
         )
         return key
 
-    def download(self, key: str) -> tuple[bytes, str]:
+    async def download(self, key: str) -> tuple[bytes, str]:
         """Tải file về (bytes, content_type)."""
-        obj = self.client.get_object(Bucket=settings.storage_bucket, Key=key)
-        return obj["Body"].read(), obj.get("ContentType", "application/octet-stream")
+        obj = await asyncio.to_thread(
+            self.client.get_object, Bucket=settings.storage_bucket, Key=key
+        )
+        # `.read()` cũng là I/O mạng (botocore đọc từ socket), nên cũng phải ra khỏi loop.
+        data = await asyncio.to_thread(obj["Body"].read)
+        return data, obj.get("ContentType", "application/octet-stream")
 
-    def delete(self, key: str) -> None:
-        self.client.delete_object(Bucket=settings.storage_bucket, Key=key)
+    async def delete(self, key: str) -> None:
+        await asyncio.to_thread(
+            self.client.delete_object, Bucket=settings.storage_bucket, Key=key
+        )
 
 
 object_storage = ObjectStorage()
