@@ -242,16 +242,39 @@ class DealsService:
             raise BusinessRuleError("Invalid deal stage") from exc
         if target not in STAGE_TRANSITIONS.get(current, frozenset()):
             raise InvalidStateTransitionError("deal", deal.stage, payload.stage)
-        if target == DealStage.ACTIVE and not await self.repo.has_accepted_proposal(
-            deal_id, user_id
-        ):
-            raise BusinessRuleError("Transitioning to active requires an accepted proposal")
-        if target == DealStage.COMPLETED_AND_BILLED and not await self.repo.has_invoice(
-            deal_id, user_id
-        ):
-            raise BusinessRuleError(
-                "Transitioning to completed_and_billed requires a linked invoice"
-            )
+        if target == DealStage.ACTIVE:
+            if not await self.repo.has_accepted_proposal(deal_id, user_id):
+                raise BusinessRuleError("Transitioning to active requires an accepted proposal")
+            # Không cho bắt tay làm việc khi chưa có hợp đồng đã ký.
+            #
+            # Trước đây chỗ này CHỈ đòi báo giá được chấp nhận. Freelancer triển khai dự án
+            # mà không có hợp đồng nào — đúng cái rủi ro SoloDesk sinh ra để ngăn. Giao diện
+            # có chặn (nút bị khoá), nhưng API thì không: gọi thẳng là qua. Luật nghiệp vụ
+            # phải nằm ở backend, giao diện chỉ là lớp lịch sự.  #Huynh
+            if not await self.repo.has_signed_contract(deal_id, user_id):
+                raise BusinessRuleError(
+                    "Transitioning to active requires a signed contract "
+                    "(record the client's signature on the contract first)"
+                )
+        if target == DealStage.COMPLETED_AND_BILLED:
+            if not await self.repo.has_invoice(deal_id, user_id):
+                raise BusinessRuleError(
+                    "Transitioning to completed_and_billed requires a linked invoice"
+                )
+
+            # GHI LẠI GIÁ THẬT — đây là chỗ đóng vòng lặp học của bộ định giá.
+            #
+            # `actual_value` trước đây KHÔNG BAO GIỜ được điền (0/63 deal trong DB), nên bộ
+            # định giá chẳng có gì để neo và mọi báo giá đều rơi về "AI ước lượng, tin cậy
+            # thấp". Deal chốt xong mà không ghi lại giá thì hệ thống không học được gì.
+            #
+            # Không bắt người dùng gõ tay: hoá đơn đã BẮT BUỘC có ở bước này (luật ngay
+            # trên), và tổng hoá đơn CHÍNH LÀ tiền thật đã xuất. Bắt gõ lại một con số hệ
+            # thống đã biết là mời sai sót.  #Huynh
+            invoiced = await self.repo.invoiced_total(deal_id, user_id)
+            if invoiced:
+                deal.actual_value = invoiced
+
         deal.stage = payload.stage
         if target in TERMINAL_STAGES and hasattr(deal, "closed_at"):
             deal.closed_at = datetime.now(UTC)

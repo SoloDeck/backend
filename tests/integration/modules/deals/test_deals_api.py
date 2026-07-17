@@ -1,18 +1,19 @@
 """Integration tests for deals CRUD and list filters."""
 
 import uuid
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from httpx import AsyncClient
 
 from src.shared.dependencies.ai import get_ai_facade
+from tests.conftest import grant_ai_plan
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
 
-async def _auth(client: AsyncClient) -> dict:
+async def _auth(client: AsyncClient, db_session=None) -> dict:
     resp = await client.post(
         "/api/v1/auth/register",
         json={
@@ -22,7 +23,16 @@ async def _auth(client: AsyncClient) -> dict:
         },
     )
     assert resp.status_code == 201, resp.text
-    return {"Authorization": f"Bearer {resp.json()['data']['access_token']}"}
+    headers = {"Authorization": f"Bearer {resp.json()['data']['access_token']}"}
+
+    # Truyền `db_session` khi test cần CHẠY AI: `/deals/{id}/qualify` giờ kiểm tra quyền +
+    # hạn mức qua `AiUsageService.consume()`, mà user đăng ký mới trong test không có gói
+    # nào (test DB không seed bảng gói) → 402.  #Huynh
+    if db_session is not None:
+        me = await client.get("/api/v1/users/me", headers=headers)
+        await grant_ai_plan(db_session, uuid.UUID(me.json()["data"]["id"]))
+
+    return headers
 
 
 async def _create_client(client: AsyncClient, headers: dict, name: str = "Acme") -> str:
@@ -325,6 +335,19 @@ _MOCK_AI_RESULT = {
     "urgency_signal": "MODERATE",
     "red_flags": ["no mockups provided"],
     "suggested_lead_score": "HOT",
+    # Điểm giờ được TÍNH TRONG CODE từ bảng phân rã 5 tiêu chí này (tối đa
+    # 30/25/20/15/10 = 100), KHÔNG còn tra bảng từ nhãn `suggested_lead_score` mà AI tự
+    # dán. Đó chính là lý do bộ chấm điểm cũ không đáng tin: AI nói "HOT" là được 80 điểm,
+    # không ai kiểm chứng được vì sao.
+    #
+    # 25 + 22 + 18 + 10 + 5 = 80.  #Huynh
+    "score_breakdown": {
+        "scope": {"points": 25, "reason": "Khách nêu rõ hạng mục cần làm."},
+        "budget": {"points": 22, "reason": "Khách nói rõ ngân sách."},
+        "timeline": {"points": 18, "reason": "Khách nêu deadline cụ thể."},
+        "detail": {"points": 10, "reason": "Mô tả tương đối chi tiết."},
+        "context": {"points": 5, "reason": "Đến từ kênh inbound."},
+    },
     "reasoning": "Strong budget and clear timeline.",
     "next_step": "Reply today to confirm scope and move to quoting.",
     "detected_signals": [
@@ -342,9 +365,14 @@ _MOCK_AI_RESULT = {
 }
 
 
-def _mock_ai_facade():
+def _mock_ai_facade(**overrides):
     facade = AsyncMock()
-    facade.qualify_lead.return_value = _MOCK_AI_RESULT
+    facade.qualify_lead.return_value = {**_MOCK_AI_RESULT, **overrides}
+
+    # `last_usage()` là hàm ĐỒNG BỘ (facade thật trả về dict token đã dùng để ghi
+    # `ai_cost_records`). Để AsyncMock tự sinh thì nó trả về coroutine, và code gọi
+    # `.get("input_tokens")` trên coroutine đó → AttributeError.  #Huynh
+    facade.last_usage = MagicMock(return_value=None)
     return facade
 
 
@@ -418,8 +446,10 @@ class TestDealAIFieldsPresence:
 class TestDealAIQualificationFields:
     """After qualification, computed fields and signal fields reflect AI output."""
 
-    async def test_qualify_sets_hot_level_and_all_signals(self, client: AsyncClient) -> None:
-        headers = await _auth(client)
+    async def test_qualify_sets_hot_level_and_all_signals(
+        self, client: AsyncClient, db_session
+    ) -> None:
+        headers = await _auth(client, db_session)
         deal_id = await _create_deal_via_intake(client, headers)
 
         mock_facade = _mock_ai_facade()
@@ -454,7 +484,10 @@ class TestDealAIQualificationFields:
         assert qualified["ai_qualification_timeline_signal"] == "CLEAR"
         assert qualified["ai_qualification_urgency_signal"] == "MODERATE"
         assert qualified["ai_qualification_red_flags"] == ["no mockups provided"]
-        assert qualified["ai_qualification_next_step"] == "Reply today to confirm scope and move to quoting."
+        assert (
+            qualified["ai_qualification_next_step"]
+            == "Reply today to confirm scope and move to quoting."
+        )
         assert qualified["ai_qualification_suggested_actions"] == [
             "Reply today to confirm scope",
             "Generate AI quote after scope confirmation",
@@ -467,12 +500,25 @@ class TestDealAIQualificationFields:
         assert signals[0] == {"text": "Budget explicitly stated", "is_positive": True}
         assert signals[2] == {"text": "No mockups provided", "is_positive": False}
 
-    async def test_qualify_warm_score_maps_to_warm_level(self, client: AsyncClient) -> None:
-        headers = await _auth(client)
+    async def test_qualify_warm_score_maps_to_warm_level(
+        self, client: AsyncClient, db_session
+    ) -> None:
+        headers = await _auth(client, db_session)
         deal_id = await _create_deal_via_intake(client, headers)
 
-        mock_facade = AsyncMock()
-        mock_facade.qualify_lead.return_value = {**_MOCK_AI_RESULT, "suggested_lead_score": "WARM"}
+        # Điểm do CODE cộng từ bảng phân rã, không phải do nhãn AI tự dán. Muốn ra WARM
+        # thì phải cho một bảng phân rã cộng lại ra 50 — chứ không phải sửa chữ "WARM".
+        # 18 + 12 + 10 + 6 + 4 = 50.  #Huynh
+        mock_facade = _mock_ai_facade(
+            suggested_lead_score="WARM",
+            score_breakdown={
+                "scope": {"points": 18, "reason": "Phạm vi nêu chung chung."},
+                "budget": {"points": 12, "reason": "Khách nói ngân sách mơ hồ."},
+                "timeline": {"points": 10, "reason": "Thời gian chưa rõ."},
+                "detail": {"points": 6, "reason": "Mô tả sơ sài."},
+                "context": {"points": 4, "reason": "Kênh inbound."},
+            },
+        )
 
         from src.main import app
 
@@ -491,16 +537,29 @@ class TestDealAIQualificationFields:
         assert qualified is not None
         assert qualified["ai_qualification_score"] == 50
         assert qualified["ai_level"] == "warm"
-        assert qualified["is_ai_qualified"] is False  # 50 < 60 threshold
+        # "Đủ điều kiện báo giá" = KHÔNG PHẢI COLD. Ngưỡng lấy từ `scoring.py`
+        # (COLD_THRESHOLD=45), không còn là con số 60 hardcode riêng ở tầng response — hai
+        # nguồn sự thật đá nhau là chuyện đã xảy ra một lần rồi.  #Huynh
+        assert qualified["is_ai_qualified"] is True  # 50 >= COLD_THRESHOLD (45)
 
     async def test_qualify_cold_score_maps_to_cold_level_and_pass(
-        self, client: AsyncClient
+        self, client: AsyncClient, db_session
     ) -> None:
-        headers = await _auth(client)
+        headers = await _auth(client, db_session)
         deal_id = await _create_deal_via_intake(client, headers)
 
-        mock_facade = AsyncMock()
-        mock_facade.qualify_lead.return_value = {**_MOCK_AI_RESULT, "suggested_lead_score": "COLD"}
+        # 8 + 0 + 0 + 7 + 5 = 20. Khách không hề nói ngân sách hay thời gian → 0 điểm cả
+        # hai tiêu chí đó, và đó chính là thứ người dùng nhìn thấy trên bảng chấm điểm.
+        mock_facade = _mock_ai_facade(
+            suggested_lead_score="COLD",
+            score_breakdown={
+                "scope": {"points": 8, "reason": "Chỉ nói chung chung 'cần làm web'."},
+                "budget": {"points": 0, "reason": "Khách KHÔNG đề cập ngân sách."},
+                "timeline": {"points": 0, "reason": "Khách KHÔNG đề cập thời hạn."},
+                "detail": {"points": 7, "reason": "Mô tả rất ngắn."},
+                "context": {"points": 5, "reason": "Kênh inbound."},
+            },
+        )
 
         from src.main import app
 

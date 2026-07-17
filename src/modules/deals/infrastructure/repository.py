@@ -1,11 +1,13 @@
 import uuid
 from dataclasses import dataclass
+from decimal import Decimal
 
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.infrastructure.database.models import (
     ClientModel,
+    ContractModel,
     DealAttachmentModel,
     DealIntakeModel,
     DealModel,
@@ -198,6 +200,21 @@ class DealsRepository:
             .where(InvoiceModel.deal_id == deal_id, InvoiceModel.owner_user_id == owner_user_id)
         )
         return bool(count)
+
+    async def invoiced_total(self, deal_id: uuid.UUID, owner_user_id: uuid.UUID) -> Decimal | None:
+        """Tổng tiền ĐÃ XUẤT HOÁ ĐƠN cho deal này. Bỏ hoá đơn đã huỷ (`void`).
+
+        Đây là con số dùng để điền `actual_value` khi deal hoàn thành — và chính nó là mốc
+        neo giá cho các deal sau. Xem `comparable_deal_values()`.  #Huynh
+        """
+        total = await self.db.scalar(
+            select(func.sum(InvoiceModel.total)).where(
+                InvoiceModel.deal_id == deal_id,
+                InvoiceModel.owner_user_id == owner_user_id,
+                InvoiceModel.status != "void",
+            )
+        )
+        return Decimal(total) if total else None
 
     async def cancel_pending_reminders(self, deal_id: uuid.UUID, owner_user_id: uuid.UUID) -> None:
         await self.db.execute(

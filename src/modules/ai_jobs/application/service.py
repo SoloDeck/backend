@@ -3,6 +3,7 @@
 import uuid
 from dataclasses import dataclass
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.infrastructure.database.models import AiJobModel
@@ -59,13 +60,33 @@ class AiJobsService:
         if existing_active is not None:
             return existing_active
 
-        job = await self.repo.create(
-            owner_user_id=owner_user_id,
-            type=payload.type,
-            entity_type=payload.entity_type,
-            entity_id=payload.entity_id,
-            idempotency_key=payload.idempotency_key,
-        )
+        try:
+            job = await self.repo.create(
+                owner_user_id=owner_user_id,
+                type=payload.type,
+                entity_type=payload.entity_type,
+                entity_id=payload.entity_id,
+                idempotency_key=payload.idempotency_key,
+            )
+            await self.db.flush()
+        except IntegrityError:
+            # HAI YÊU CẦU CÙNG `idempotency_key` ĐẾN ĐỒNG THỜI.
+            #
+            # Mấy bước kiểm ở trên là "tìm rồi mới tạo" — kinh điển bị đua: cả hai cùng
+            # tìm, cùng không thấy, cùng tạo. Thứ THẬT SỰ chặn được là ràng buộc UNIQUE
+            # dưới DB (`uq_ai_jobs_owner_idempotency_key`); mấy bước kiểm kia chỉ là tối ưu
+            # cho trường hợp thường.
+            #
+            # Thua cuộc đua KHÔNG phải là lỗi: người gọi muốn "một job cho khoá này", và job
+            # đó tồn tại rồi. Trả về nó, đừng ném 500. Mỗi job thừa = một lượt AI thật bị
+            # đốt.  #Huynh
+            await self.db.rollback()
+            existing = await self.repo.get_by_idempotency_key(
+                owner_user_id, payload.idempotency_key
+            )
+            if existing is None:
+                raise
+            return existing
 
         # The Celery worker opens its own DB connection and must see this row
         # — commit now rather than waiting for the request's implicit commit,

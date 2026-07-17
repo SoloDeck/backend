@@ -13,6 +13,7 @@ from src.modules.contracts.domain.value_objects.contract_status import (
 )
 from src.modules.contracts.infrastructure.repository import ContractsRepository
 from src.modules.contracts.schemas.request import ContractRequest
+from src.modules.subscriptions.application.ai_usage import AiUsageService
 from src.shared.exceptions.domain import (
     BusinessRuleError,
     EntitlementError,
@@ -113,7 +114,24 @@ class ContractsService:
         contract.status = target.value
 
         if target == ContractStatus.ACTIVE:
-            contract.signed_by_freelancer_at = now
+            # Freelancer GHI NHẬN rằng hai bên đã ký (ngoài hệ thống: giấy, scan, Zalo).
+            #
+            # Khách hàng của freelancer KHÔNG có tài khoản SoloDesk — bắt họ đăng ký để ký
+            # một hợp đồng vài trăm nghìn là giết luôn tính năng. Nên hai bên ký ở ngoài,
+            # freelancer vào đánh dấu. Đúng khuôn mẫu đã dùng cho báo giá
+            # (PATCH /proposals/{id}/status — "ghi nhận phản hồi của khách bên ngoài").
+            #
+            # Bug cũ: chỗ này CHỈ ghi signed_by_freelancer_at. Hợp đồng thành "đang
+            # hiệu lực" mà DB không có dấu vết nào cho thấy khách đã ký — hỏi "bằng
+            # chứng đâu?" là bí. Giờ ghi cả hai mốc.
+            #
+            # LƯU Ý: đây là SỔ GHI NHẬN, không phải chữ ký số. SoloDesk không xác thực
+            # danh tính người ký. Giao diện phải nói đúng như vậy, đừng gọi là "Khách ký".
+            #   #Huynh
+            if contract.signed_by_freelancer_at is None:
+                contract.signed_by_freelancer_at = now
+            if contract.signed_by_client_at is None:
+                contract.signed_by_client_at = now
         elif target == ContractStatus.PENDING_SIGNATURES or target in TERMINAL_CONTRACT_STATUSES:
             pass
 
@@ -150,6 +168,10 @@ class ContractsService:
                 f"AI generation is only available for draft contracts (current status: '{contract.status}')"
             )
 
+        # Cổng AI: kiểm tra gói (402), kiểm tra hạn mức tháng (429), ghi nhận lượt dùng.
+        # Xem src/modules/subscriptions/application/ai_usage.py  #Huynh
+        await AiUsageService(db=self.db).consume(user_id)
+
         sub = await self.repo.get_subscription(user_id)
         plan = await self.repo.get_plan(sub.plan_id) if sub else None
         user_can_use_ai = bool(plan and plan.can_use_ai)
@@ -176,6 +198,12 @@ class ContractsService:
             },
             user_can_use_ai=user_can_use_ai,
         )
+        await AiUsageService(db=self.db).record_cost(
+            user_id,
+            ai_module="contract_generator",
+            usage=ai_facade.last_usage("contract_generator"),
+        )
+
         contract.content = content
         contract.ai_generated = True
         return await self.repo.save(contract)

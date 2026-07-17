@@ -40,7 +40,18 @@ class AuthRepository:
         self.db.add(user)
 
     async def get_free_plan(self):
-        return await self.db.scalar(select(PlanModel).where(PlanModel.name == "Free"))
+        """Gói miễn phí — tra theo MÃ (`slug`), không theo TÊN.
+
+        Bản cũ tra `name == "Free"`. Đó là bug chờ nổ: admin đổi tên gói thành "Miễn phí"
+        qua màn quản trị là **mọi người đăng ký mới không được gán gói nào** — và không một
+        lỗi nào hiện ra, vì `if free_plan:` chỉ lặng lẽ bỏ qua. Người dùng đăng ký xong,
+        dùng AI, ăn 402 mà không hiểu vì sao.
+
+        Đây chính là lý do gói có MÃ riêng bên cạnh TÊN: tên để hiển thị (đổi thoải mái),
+        mã là khoá code. `seeders/admin.py` vốn đã tra theo `slug == "free"` — chỗ này lệch
+        chuẩn.  #Huynh
+        """
+        return await self.db.scalar(select(PlanModel).where(PlanModel.slug == "free"))
 
     async def get_plan(self, plan_id: uuid.UUID):
         return await self.db.scalar(select(PlanModel).where(PlanModel.id == plan_id))

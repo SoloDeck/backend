@@ -45,7 +45,18 @@ async def test_revenue_pipeline_win_rate_top_clients_and_ai_usage_return_contrac
 
     ai_usage = await client.get("/api/v1/analytics/ai-usage", headers=headers)
     assert ai_usage.status_code == 200
-    assert set(ai_usage.json()["data"]) == {"generations_used", "estimated_cost_usd"}
+    # Trước đây chỉ trả về số lượt đã dùng — người dùng thấy "đã gọi 12 lần" nhưng KHÔNG
+    # biết mình còn bao nhiêu lượt, cũng không biết gói của mình có được dùng AI không.
+    # Màn "Gói đăng ký" cần đủ 5 trường dưới để vẽ được vòng tròn hạn mức.  #Huynh
+    assert set(ai_usage.json()["data"]) == {
+        "generations_used",
+        "estimated_cost_usd",
+        "limit",
+        "remaining",
+        "can_use_ai",
+        "period_start",
+        "period_end",
+    }
 
 
 async def test_revenue_aggregates_paid_invoices(client: AsyncClient) -> None:

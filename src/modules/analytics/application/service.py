@@ -16,6 +16,7 @@ from src.modules.analytics.schemas.response import (
     TopClientResponse,
     WinRateResponse,
 )
+from src.modules.subscriptions.application.ai_usage import AiUsageService
 
 
 @dataclass
@@ -75,4 +76,22 @@ class AnalyticsService:
     async def get_ai_usage(
         self, user_id: uuid.UUID, from_date: date | None = None, to_date: date | None = None
     ) -> AiUsageResponse:
-        return AiUsageResponse(**await self.repo.ai_usage(user_id, from_date, to_date))
+        """Đã dùng bao nhiêu lượt AI, còn bao nhiêu theo gói.
+
+        Endpoint này TRƯỚC ĐÂY LUÔN TRẢ VỀ 0: nó cộng từ bảng `usage_records`, mà không
+        ai ghi vào bảng đó. Giờ `AiUsageService.consume()` ghi thật, nên con số mới có
+        nghĩa — và ta bổ sung hạn mức để màn "Gói đăng ký" nói được "3/50" thay vì
+        "đã dùng 3 lượt" (3 trên bao nhiêu?).  #Huynh
+        """
+        usage = await self.repo.ai_usage(user_id, from_date, to_date)
+        quota = await AiUsageService(db=self.db).summary(user_id)
+
+        return AiUsageResponse(
+            generations_used=quota["used"],
+            estimated_cost_usd=usage.get("estimated_cost_usd", 0),
+            limit=quota["limit"],
+            remaining=quota["remaining"],
+            can_use_ai=quota["can_use_ai"],
+            period_start=quota.get("period_start"),
+            period_end=quota.get("period_end"),
+        )
