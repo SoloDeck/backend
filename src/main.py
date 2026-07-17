@@ -9,6 +9,7 @@ import yaml
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from src.ai.followup_generator.api.router import router as followup_router
 from src.ai.lead_qualifier.api.router import router as lead_qualifier_router
 from src.config.settings import settings
 from src.infrastructure.database.session import engine
@@ -151,6 +152,7 @@ app.include_router(freelancers_router, prefix=f"{API_V1}/public/freelancers", ta
 app.include_router(projects_router, prefix=f"{API_V1}/projects", tags=["Projects"])
 app.include_router(admin_router, prefix=f"{API_V1}/admin", tags=["Admin"])
 app.include_router(lead_qualifier_router, prefix=f"{API_V1}/ai")
+app.include_router(followup_router, prefix=f"{API_V1}/ai")
 app.include_router(ai_jobs_router, prefix=f"{API_V1}/ai/jobs", tags=["AI Jobs"])
 
 
