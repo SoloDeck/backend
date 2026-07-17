@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.infrastructure.database.models import (
     ClientModel,
+    DealAttachmentModel,
     DealIntakeModel,
     DealModel,
     InvoiceModel,
@@ -124,6 +125,45 @@ class DealsRepository:
                 ProposalModel.deal_id == deal_id,
                 ProposalModel.owner_user_id == owner_user_id,
                 ProposalModel.status == "accepted",
+            )
+        )
+        return bool(count)
+
+    async def list_attachments_with_text(self, deal_id: uuid.UUID, owner_user_id: uuid.UUID):
+        """File đính kèm ĐÃ BÓC ĐƯỢC CHỮ — chỉ những file này mới đưa cho AI đọc.
+
+        Bỏ qua file không bóc được (PDF scan là ảnh, ảnh chụp, .docx...): đưa vào prompt
+        cũng chỉ là một cái tên file, không giúp AI chấm chuẩn hơn.  #Huynh
+        """
+        rows = await self.db.scalars(
+            select(DealAttachmentModel)
+            .where(
+                DealAttachmentModel.deal_id == deal_id,
+                DealAttachmentModel.owner_user_id == owner_user_id,
+                DealAttachmentModel.extracted_text.isnot(None),
+            )
+            .order_by(DealAttachmentModel.created_at)
+        )
+        return list(rows)
+
+    async def has_signed_contract(self, deal_id: uuid.UUID, owner_user_id: uuid.UUID) -> bool:
+        """Deal này đã có hợp đồng ở trạng thái `active` chưa.
+
+        `active` = freelancer đã GHI NHẬN rằng hai bên ký xong (ký ngoài hệ thống — khách
+        của freelancer không có tài khoản SoloDesk). SoloDesk là SỔ THEO DÕI, không phải
+        nền tảng chữ ký số.
+
+        Cần hàm này vì trước đây chuyển deal sang "Đang triển khai" CHỈ đòi có báo giá
+        được chấp nhận — không đòi hợp đồng nào cả. Freelancer bắt tay làm việc mà không
+        có hợp đồng, đúng thứ SoloDesk sinh ra để ngăn.  #Huynh
+        """
+        count = await self.db.scalar(
+            select(func.count())
+            .select_from(ContractModel)
+            .where(
+                ContractModel.deal_id == deal_id,
+                ContractModel.owner_user_id == owner_user_id,
+                ContractModel.status == "active",
             )
         )
         return bool(count)

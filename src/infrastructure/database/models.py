@@ -692,6 +692,47 @@ class LeadScoreModel(Base):
 # =============================================================================
 
 
+class DealAttachmentModel(UUIDMixin, TimestampMixin, Base):
+    """File khách gửi kèm deal (brief dự án, yêu cầu kỹ thuật, bảng giá tham khảo...).
+
+    Nghiệp vụ: freelancer đính file PDF của khách vào deal, AI ĐỌC file đó để chấm điểm.
+
+    Đây là mảnh còn thiếu quan trọng: deal tạo tay luôn mất 25 điểm ngân sách vì "khách
+    chưa nói gì" — nhưng nếu khách gửi hẳn một file brief thì ĐÓ CHÍNH LÀ LỜI KHÁCH.
+    `extracted_text` được đưa vào khối "KHÁCH HÀNG NÓI GÌ" của prompt.
+
+    `extracted_text` lưu sẵn để KHÔNG phải bóc lại PDF mỗi lần chấm điểm — bóc PDF tốn
+    CPU, và mỗi deal có thể chấm lại nhiều lần.
+
+    File thật nằm trên object storage (MinIO/S3), DB chỉ giữ `storage_key`. Trước đây
+    frontend nhét cả nội dung file dạng base64 vào localStorage — 5MB là vỡ.  #Huynh
+    """
+
+    __tablename__ = "deal_attachments"
+
+    deal_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("deals.id", ondelete="CASCADE"), nullable=False
+    )
+    owner_user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=False
+    )
+
+    filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    content_type: Mapped[str] = mapped_column(String(100), nullable=False)
+    size_bytes: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+
+    # Khoá trên object storage. File KHÔNG nằm trong DB.
+    storage_key: Mapped[str] = mapped_column(String(500), nullable=False)
+
+    # Chữ bóc từ PDF, để AI đọc. NULL = chưa bóc được (PDF scan ảnh, hoặc không phải PDF).
+    extracted_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    __table_args__ = (
+        Index("idx_deal_attachments_deal", "deal_id"),
+        Index("idx_deal_attachments_owner", "owner_user_id"),
+    )
+
+
 class ProposalModel(UUIDMixin, TimestampMixin, Base):
     __tablename__ = "proposals"
 

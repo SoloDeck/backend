@@ -1,13 +1,17 @@
 """Deals API api."""
 
 import uuid
+from datetime import datetime
+from io import BytesIO
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, File, Query, UploadFile
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.infrastructure.database.session import get_db_session
+from src.modules.deals.application.attachment_service import DealAttachmentService
 from src.modules.deals.application.service import DealsService
 from src.modules.deals.schemas.request import DealRequest, DealStageRequest
 from src.modules.deals.schemas.response import DealResponse, IntakeResponse
@@ -137,3 +141,99 @@ async def transition_stage(
 ) -> ApiResponse[DealResponse]:
     deal = await DealsService(db=db).transition_stage(user_id, deal_id, payload)
     return ApiResponse.ok(DealResponse.model_validate(deal))
+
+
+# ---------------------------------------------------------------------------
+# File đính kèm — khách gửi brief PDF, AI đọc để chấm điểm deal
+# ---------------------------------------------------------------------------
+
+
+class DealAttachmentResponse(BaseModel):
+    id: uuid.UUID
+    deal_id: uuid.UUID
+    filename: str
+    content_type: str
+    size_bytes: int
+    # AI có đọc được nội dung file này không. PDF scan từ máy in là ẢNH, không có lớp
+    # chữ nào để bóc — phải nói rõ, đừng để người dùng tưởng AI đã đọc.
+    ai_readable: bool
+    created_at: datetime
+
+    @classmethod
+    def from_model(cls, m) -> "DealAttachmentResponse":  # type: ignore[no-untyped-def]
+        return cls(
+            id=m.id,
+            deal_id=m.deal_id,
+            filename=m.filename,
+            content_type=m.content_type,
+            size_bytes=m.size_bytes,
+            ai_readable=bool(m.extracted_text),
+            created_at=m.created_at,
+        )
+
+
+@router.post(
+    "/{deal_id}/attachments",
+    response_model=ApiResponse[DealAttachmentResponse],
+    status_code=201,
+)
+async def upload_deal_attachment(
+    deal_id: uuid.UUID,
+    user_id: CurrentUserId,
+    db: DBSession,
+    file: UploadFile = File(...),
+) -> ApiResponse[DealAttachmentResponse]:
+    """Đính file vào deal (brief dự án khách gửi, hợp đồng scan, biên nhận...).
+
+    File PDF sẽ được BÓC CHỮ ngay lúc upload và lưu vào DB. Khi chấm điểm deal, chữ đó
+    được đưa vào khối "KHÁCH HÀNG NÓI GÌ" của prompt — nên AI đọc được yêu cầu thật của
+    khách thay vì chỉ thấy mỗi cái tên dự án.  #Huynh
+    """
+    data = await file.read()
+    attachment = await DealAttachmentService(db=db).upload(
+        user_id,
+        deal_id,
+        filename=file.filename or "file",
+        content_type=file.content_type or "application/octet-stream",
+        data=data,
+    )
+    return ApiResponse.created(DealAttachmentResponse.from_model(attachment))
+
+
+@router.get(
+    "/{deal_id}/attachments",
+    response_model=ApiResponse[list[DealAttachmentResponse]],
+)
+async def list_deal_attachments(
+    deal_id: uuid.UUID,
+    user_id: CurrentUserId,
+    db: DBSession,
+) -> ApiResponse[list[DealAttachmentResponse]]:
+    rows = await DealAttachmentService(db=db).list_for_deal(user_id, deal_id)
+    return ApiResponse.ok([DealAttachmentResponse.from_model(r) for r in rows])
+
+
+@router.get("/attachments/{attachment_id}/download")
+async def download_deal_attachment(
+    attachment_id: uuid.UUID,
+    user_id: CurrentUserId,
+    db: DBSession,
+):
+    data, content_type, filename = await DealAttachmentService(db=db).download(
+        user_id, attachment_id
+    )
+    return StreamingResponse(
+        BytesIO(data),
+        media_type=content_type,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.delete("/attachments/{attachment_id}", response_model=ApiResponse[MsgResp])
+async def delete_deal_attachment(
+    attachment_id: uuid.UUID,
+    user_id: CurrentUserId,
+    db: DBSession,
+) -> ApiResponse[MsgResp]:
+    await DealAttachmentService(db=db).delete(user_id, attachment_id)
+    return ApiResponse.ok(MsgResp(detail="Attachment deleted"))

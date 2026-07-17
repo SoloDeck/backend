@@ -406,6 +406,19 @@ class DealsService:
         client_timeline = getattr(intake, "desired_timeline", None) if intake else None
         if intake is not None and intake.inquiry_text:
             said.append(f"- Nguyên văn yêu cầu: {intake.inquiry_text}")
+
+        # Chữ bóc từ file khách gửi kèm (brief dự án PDF).
+        #
+        # Đây là mảnh còn thiếu quan trọng nhất: deal tạo TAY luôn mất trọn 25 điểm ngân
+        # sách vì luật chấm điểm chỉ tính những gì KHÁCH nói — mà khách thì "chưa nói gì"
+        # (ô "Giá trị dự kiến" là freelancer tự nhập). Nên deal tự tạo gần như luôn COLD.
+        #
+        # Nhưng khách GỬI HẲN MỘT FILE BRIEF thì đó CHÍNH LÀ LỜI KHÁCH. Đưa vào đây, AI
+        # đọc được yêu cầu thật, ngân sách thật, deadline thật.  #Huynh
+        attachments = await self.repo.list_attachments_with_text(deal_model.id, user_id)
+        for att in attachments:
+            said.append(f"- Nội dung file khách gửi ({att.filename}):")
+            said.append(att.extracted_text or "")
         if client_budget:
             said.append(f"- Ngân sách khách nêu: {client_budget}")
         if client_timeline:

@@ -13,6 +13,7 @@ from src.ai.lead_qualifier.api.router import router as lead_qualifier_router
 from src.config.settings import settings
 from src.infrastructure.database.session import engine
 from src.infrastructure.redis.client import close_redis_pool
+from src.infrastructure.storage.object_storage import object_storage
 from src.modules.admin.api.router import router as admin_router
 from src.modules.ai_jobs.api.router import router as ai_jobs_router
 from src.modules.analytics.api.router import router as analytics_router
@@ -48,6 +49,16 @@ log = structlog.get_logger()
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     log.info("solodesk.startup", environment=settings.app_env)
+
+    # Tạo bucket object storage nếu chưa có. Thiếu bước này thì upload file đầu tiên
+    # nổ NoSuchBucket — MinIO không tự tạo bucket.  #Huynh
+    try:
+        object_storage.ensure_bucket()
+    except Exception as exc:  # noqa: BLE001
+        # Không chặn app khởi động: mọi tính năng khác vẫn chạy được, chỉ upload file là
+        # hỏng. Chặn ở đây là vì một file đính kèm mà cả hệ thống không lên.
+        log.warning("storage.ensure_bucket_failed", error=str(exc))
+
     yield
     await engine.dispose()
     await close_redis_pool()
