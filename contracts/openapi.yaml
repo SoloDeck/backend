@@ -5395,6 +5395,18 @@ components:
         notes:
           type: string
           nullable: true
+        desired_timeline:
+          type: string
+          nullable: true
+        project_type:
+          type: string
+          nullable: true
+        service_category:
+          type: string
+          nullable: true
+        pricing_tier:
+          type: string
+          nullable: true
         profession:
           type: string
           nullable: true
@@ -5411,6 +5423,55 @@ components:
           type: string
           enum: [qualify, pass]
           nullable: true
+        ai_qualification_reasoning:
+          type: string
+          nullable: true
+        ai_qualification_project_type:
+          type: string
+          nullable: true
+        ai_qualification_budget_signal:
+          type: string
+          nullable: true
+        ai_qualification_timeline_signal:
+          type: string
+          nullable: true
+        ai_qualification_urgency_signal:
+          type: string
+          nullable: true
+        ai_qualification_red_flags:
+          type: array
+          items:
+            type: string
+          nullable: true
+        ai_qualification_detected_signals:
+          type: array
+          items:
+            $ref: '#/components/schemas/DealDetectedSignal'
+          nullable: true
+        ai_qualification_suggested_actions:
+          type: array
+          items:
+            type: string
+          nullable: true
+        ai_qualification_next_step:
+          type: string
+          nullable: true
+        ai_qualification_price_range_min:
+          type: integer
+          nullable: true
+        ai_qualification_price_range_max:
+          type: integer
+          nullable: true
+        ai_level:
+          type: string
+          enum: [hot, warm, cold]
+          nullable: true
+          readOnly: true
+          description: Derived from `ai_qualification_score` (>=80 hot, >=50 warm, else cold).
+        is_ai_qualified:
+          type: boolean
+          readOnly: true
+          description: 'True when `ai_qualification_score >= 60`.'
         closed_at:
           type: string
           format: date-time
@@ -5428,6 +5489,15 @@ components:
         updated_at:
           type: string
           format: date-time
+
+    DealDetectedSignal:
+      type: object
+      required: [text, is_positive]
+      properties:
+        text:
+          type: string
+        is_positive:
+          type: boolean
 
     DealPage:
       allOf:
