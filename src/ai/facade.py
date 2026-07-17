@@ -50,7 +50,7 @@ class AIFacade:
         self._check_entitlement(user_can_use_ai)
 
         return await self.lead_qualifier.run(profession=profession,
-                                             inquiry_text=inquiry_text)
+                                             inquiry_context=inquiry_text)
 
     async def generate_proposal(
         self,

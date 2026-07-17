@@ -4927,7 +4927,7 @@ components:
 
     PublicIntakeFormConfigResponse:
       type: object
-      required: [title, freelancer_name, fields]
+      required: [title, freelancer_name, fields, professions]
       properties:
         title:
           type: string
@@ -4940,6 +4940,49 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/PublicIntakeFormFieldResponse'
+        professions:
+          type: array
+          description: >-
+            The 6 supported professions and their qualification questions.
+            Client picks one, which reveals its `fields` on the form; the
+            answers are submitted as `profession_fields` on PublicIntakeRequest.
+          items:
+            $ref: '#/components/schemas/ProfessionOptionResponse'
+
+    ProfessionOptionResponse:
+      type: object
+      required: [value, label, fields]
+      properties:
+        value:
+          type: string
+          description: Canonical profession slug, submitted back as `profession`.
+        label:
+          type: string
+        fields:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProfessionFieldOptionResponse'
+
+    ProfessionFieldOptionResponse:
+      type: object
+      required: [field_key, label, field_type, is_required]
+      properties:
+        field_key:
+          type: string
+          description: Key to use in `profession_fields` when submitting.
+        label:
+          type: string
+        field_type:
+          type: string
+          enum: [text, select, multiselect]
+        options:
+          type: array
+          items:
+            type: string
+          nullable: true
+          description: Choices for `select`/`multiselect` fields; null for `text`.
+        is_required:
+          type: boolean
 
     PublicIntakeRequest:
       type: object
@@ -4969,6 +5012,19 @@ components:
           type: string
           maxLength: 255
           nullable: true
+        profession:
+          type: string
+          nullable: true
+          description: >-
+            Selected profession slug, one of the `value`s returned by
+            GET /intake/{share_token}/config in `professions`.
+        profession_fields:
+          type: object
+          additionalProperties: true
+          nullable: true
+          description: >-
+            Answers to the selected profession's qualification questions,
+            keyed by `field_key`.
 
     IntakeResponse:
       type: object
@@ -5351,6 +5407,13 @@ components:
         pricing_tier:
           type: string
           nullable: true
+        profession:
+          type: string
+          nullable: true
+        profession_fields:
+          type: object
+          additionalProperties: true
+          nullable: true
         ai_qualification_score:
           type: integer
           minimum: 0
@@ -5490,6 +5553,13 @@ components:
         notes:
           type: string
           example: "Khách cần website bán hàng tích hợp thanh toán VNPay và MOMO"
+        profession:
+          type: string
+          nullable: true
+        profession_fields:
+          type: object
+          additionalProperties: true
+          nullable: true
       example:
         client_id: "e1f881a5-fe2a-4f62-bcda-c0371077a924"
         title: "Xây dựng website bán hàng"
@@ -5536,6 +5606,13 @@ components:
           description: Estimated project duration (free text, e.g. "2 tháng", "6 tuần")
         notes:
           type: string
+        profession:
+          type: string
+          nullable: true
+        profession_fields:
+          type: object
+          additionalProperties: true
+          nullable: true
 
     StageTransitionRequest:
       type: object
