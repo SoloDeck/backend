@@ -20,37 +20,39 @@ VALID_MOCK_DATA = {
 }
 
 
-class FakeMessage:
+class MockMessage:
     def __init__(self, content):
         self.content = content
 
 
-class FakeChoice:
+class MockChoice:
     def __init__(self, content):
-        self.message = FakeMessage(content)
+        self.message = MockMessage(content)
 
 
-class FakeCompletionResponse:
+class MockCompletion:
     def __init__(self, content):
-        self.choices = [FakeChoice(content)]
+        self.choices = [MockChoice(content)]
 
 
-class FakeCompletions:
+class MockCompletions:
     def __init__(self, content):
         self._content = content
 
     def create(self, *args, **kwargs):
-        return FakeCompletionResponse(self._content)
+        return MockCompletion(self._content)
 
 
-class FakeChat:
+class MockChat:
     def __init__(self, content):
-        self.completions = FakeCompletions(content)
+        self.completions = MockCompletions(content)
 
 
 class FakeClient:
+    """Mimics the shape of a Groq client's `client.chat.completions.create(...)`."""
+
     def __init__(self, content):
-        self.chat = FakeChat(content)
+        self.chat = MockChat(content)
 
 
 def _make_qualifier(data: dict) -> LeadQualifier:
