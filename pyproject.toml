@@ -42,6 +42,11 @@ dependencies = [
     # Env
     "python-dotenv>=1.0",
     "google-auth[requests]>=2.53.0",
+    # Object storage S3-compatible (MinIO khi dev, AWS S3/R2 khi deploy)
+    "boto3>=1.35",
+    # ĐỌC pdf (weasyprint chỉ GHI pdf). Dùng để bóc chữ trong file brief khách gửi,
+    # rồi đưa cho AI chấm điểm deal.
+    "pypdf>=5.1",
     "weasyprint>=69.0",
     "jinja2>=3.1.6",
 ]

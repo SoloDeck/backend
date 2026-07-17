@@ -29,6 +29,34 @@ services:
   # -------------------------------------------------------------------------
   # Redis
   # -------------------------------------------------------------------------
+  # Object storage S3-compatible cho file đính kèm (hợp đồng scan, biên nhận chuyển
+  # khoản...). Trước đây frontend nhét cả nội dung file dạng base64 vào localStorage:
+  # giới hạn ~5MB nên một cái PDF là vỡ, đổi máy là mất sạch, và file không bao giờ ra
+  # khỏi trình duyệt nên không gửi được cho khách.
+  #
+  # .env.example vốn đã khai STORAGE_ENDPOINT/BUCKET/ACCESS_KEY — team định dùng S3 từ
+  # đầu, chỉ chưa ai dựng. MinIO là S3 chạy local; khi deploy chỉ cần trỏ STORAGE_ENDPOINT
+  # sang AWS S3 hay Cloudflare R2, không phải sửa code.  #Huynh
+  minio:
+    image: minio/minio:latest
+    restart: always
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: solodesk
+      MINIO_ROOT_PASSWORD: solodesk123
+    ports:
+      - "9000:9000"   # API S3
+      - "9001:9001"   # Giao diện quản trị
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - solodesk-network
+
   redis:
     image: redis:7-alpine
     restart: always
@@ -224,6 +252,7 @@ services:
 
 volumes:
   postgres_data:
+  minio_data:
 
 
 networks:
