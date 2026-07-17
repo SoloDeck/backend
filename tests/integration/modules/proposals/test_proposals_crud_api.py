@@ -40,7 +40,11 @@ async def _create_proposal(
 ) -> dict:
     resp = await client.post(
         "/api/v1/proposals",
-        json={"deal_id": deal_id, "content": content or {"summary": "Proposal text"}},
+        json={
+            "deal_id": deal_id,
+            "content": content
+            or {"summary": "Proposal text", "pricing": {"total": 5_000_000, "currency": "VND"}},
+        },
         headers=headers,
     )
     assert resp.status_code == 201, resp.text
@@ -394,7 +398,5 @@ class TestProposalPdf:
             "src.ai.proposal_generator.application.render.ProposalPdfRenderer.render_pdf",
             return_value=_FAKE_PDF,
         ):
-            resp = await client.get(
-                f"/api/v1/proposals/{proposal['id']}/pdf", headers=headers_b
-            )
+            resp = await client.get(f"/api/v1/proposals/{proposal['id']}/pdf", headers=headers_b)
         assert resp.status_code == 404

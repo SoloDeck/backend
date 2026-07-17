@@ -306,6 +306,49 @@ class DealsRepository:
         await self.db.refresh(obj)
         return obj
 
+    async def comparable_deal_values(
+        self, owner_user_id: uuid.UUID, service_category: str | None
+    ) -> tuple[list[Decimal], list[Decimal]]:
+        """Giá THẬT của các deal đã chốt xong — dùng làm mốc neo khi báo giá.
+
+        Trả về ``(cùng_nhóm_dịch_vụ, mọi_nhóm)``.
+
+        Điều kiện lọc, và vì sao từng cái:
+
+        - ``stage = completed_and_billed``: chỉ deal ĐÃ XONG và ĐÃ XUẤT HOÁ ĐƠN. Deal đang
+          chào giá thì chưa biết khách có gật không — lấy nó làm mốc là neo vào một con số
+          chưa ai đồng ý.
+        - ``actual_value IS NOT NULL``: TIỀN THẬT THU ĐƯỢC, không phải `estimated_value`
+          (con số freelancer tự ước lúc mới tạo deal, thường sai).
+        - ``LIMIT 10`` gần nhất: giá năm 2023 không còn đúng cho năm 2026.
+
+        Lọc theo ``service_category`` chính là lời giải cho chuyện "một freelancer làm nhiều
+        nghề": lịch sử báo giá thiết kế không được dùng để định giá dự án lập trình.  #Huynh
+        """
+
+        def _recent_won(extra_filter=None):  # type: ignore[no-untyped-def]
+            stmt = select(DealModel.actual_value).where(
+                DealModel.owner_user_id == owner_user_id,
+                DealModel.stage == "completed_and_billed",
+                DealModel.actual_value.isnot(None),
+                DealModel.actual_value > 0,
+            )
+            if extra_filter is not None:
+                stmt = stmt.where(extra_filter)
+            return stmt.order_by(DealModel.updated_at.desc()).limit(10)
+
+        any_category = list(await self.db.scalars(_recent_won()))
+
+        same_category: list[Decimal] = []
+        if service_category:
+            same_category = list(
+                await self.db.scalars(
+                    _recent_won(DealModel.service_category == service_category)
+                )
+            )
+
+        return same_category, any_category
+
     async def list_lead_scores(self, deal_id: uuid.UUID, owner_user_id: uuid.UUID) -> list:
         """Lịch sử chấm điểm của một deal — mới nhất trước.
 

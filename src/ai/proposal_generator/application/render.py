@@ -7,7 +7,6 @@ from ..schemas.proposal_document import ProposalDocument
 
 
 class ProposalPdfRenderer:
-
     def __init__(self):
         templates_dir = Path(__file__).parent.parent / "templates"
 

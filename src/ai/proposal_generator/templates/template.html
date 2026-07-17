@@ -61,6 +61,38 @@
         margin-top: 10px;
     }
 
+    .pricing-table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 10px;
+    }
+
+    .pricing-table th,
+    .pricing-table td {
+        border-bottom: 1px solid #e5e5e5;
+        padding: 8px 4px;
+        text-align: left;
+    }
+
+    .pricing-table th {
+        font-size: 10pt;
+        text-transform: uppercase;
+        color: #777;
+    }
+
+    .pricing-table .amount {
+        text-align: right;
+        white-space: nowrap;
+    }
+
+    .pricing-table tfoot td {
+        border-top: 2px solid #333;
+        border-bottom: none;
+        font-weight: bold;
+        font-size: 12pt;
+        padding-top: 10px;
+    }
+
     .signature {
         width: 100%;
         margin-top: 60px;
@@ -84,80 +116,178 @@
 
 <body>
 
-<h1>ĐỀ XUẤT DỊCH VỤ</h1>
+<h1>BÁO GIÁ DỊCH VỤ</h1>
 
-<div class="subtitle">
-    Được chuẩn bị bởi {{ freelancer_name }}
-</div>
+<div class="subtitle">{{ project_type }}</div>
+
+<h2>1. Thông Tin Người Gửi Báo Giá (Bên A)</h2>
 
 <table class="info-table">
     <tr>
-        <td class="label">Khách hàng:</td>
-        <td>{{ client_name }}</td>
+        <td class="label">Họ và tên:</td>
+        <td>{{ freelancer_name }}</td>
     </tr>
-
+    {% if freelancer_email %}
     <tr>
-        <td class="label">Loại dự án:</td>
-        <td>{{ project_type }}</td>
+        <td class="label">Email:</td>
+        <td>{{ freelancer_email }}</td>
     </tr>
-
+    {% endif %}
+    {% if freelancer_phone %}
     <tr>
-        <td class="label">Ngày đề xuất:</td>
-        <td>{{ proposal_date }}</td>
+        <td class="label">Số điện thoại:</td>
+        <td>{{ freelancer_phone }}</td>
     </tr>
+    {% endif %}
 </table>
 
-<h2>1. Tổng Quan Dự Án</h2>
+<h2>2. Thông Tin Khách Hàng (Bên B)</h2>
 
-<p>
+<table class="info-table">
+    <tr>
+        <td class="label">{% if company_name %}Tên công ty{% else %}Người nhận{% endif %}:</td>
+        <td>{{ company_name or client_name }}</td>
+    </tr>
+    {% if company_name %}
+    <tr>
+        <td class="label">Người liên hệ:</td>
+        <td>{{ client_name }}</td>
+    </tr>
+    {% endif %}
+    {% if client_email %}
+    <tr>
+        <td class="label">Email:</td>
+        <td>{{ client_email }}</td>
+    </tr>
+    {% endif %}
+    {% if client_phone %}
+    <tr>
+        <td class="label">Số điện thoại:</td>
+        <td>{{ client_phone }}</td>
+    </tr>
+    {% endif %}
+</table>
+
+<h2>3. Thông Tin Báo Giá</h2>
+
+<table class="info-table">
+    <tr>
+        <td class="label">Dự án:</td>
+        <td>{{ project_type }}</td>
+    </tr>
+    <tr>
+        <td class="label">Ngày lập:</td>
+        <td>{{ proposal_date }}</td>
+    </tr>
+    {% if valid_until %}
+    <tr>
+        <td class="label">Hiệu lực đến:</td>
+        <td><span data-field="valid_until" data-kind="date" data-label="Hiệu lực đến">{{ valid_until }}</span></td>
+    </tr>
+    {% endif %}
+</table>
+
+<h2>4. Mô Tả Dự Án</h2>
+
+<p data-field="project_overview" data-label="Mô tả dự án">
     {{ project_overview }}
 </p>
 
-<h2>2. Phạm Vi Công Việc</h2>
+<h2>5. Phạm Vi Công Việc</h2>
 
-<ul>
+<ul data-field="scope_of_work" data-kind="list" data-label="Phạm vi công việc">
     {% for item in scope_of_work %}
     <li>{{ item }}</li>
     {% endfor %}
 </ul>
 
-<h2>3. Sản Phẩm Bàn Giao</h2>
+<h2>6. Sản Phẩm Bàn Giao</h2>
 
-<ul>
+<ul data-field="deliverables" data-kind="list" data-label="Sản phẩm bàn giao">
     {% for item in deliverables %}
     <li>{{ item }}</li>
     {% endfor %}
 </ul>
 
-<h2>4. Thời Gian Thực Hiện</h2>
+<h2>7. Bảng Chi Phí</h2>
 
-<p>
-    {{ timeline }}
-</p>
-
-<h2>5. Chi Phí Dự Kiến</h2>
-
+{% if pricing_line_items %}
+<table class="pricing-table">
+    <thead>
+        <tr>
+            <th>Hạng mục</th>
+            <th class="amount">Thành tiền</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for item in pricing_line_items %}
+        <tr>
+            <td>{{ item.description }}</td>
+            <td class="amount">{{ item.amount }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+    <tfoot>
+        <tr>
+            <td>Tổng báo giá</td>
+            <td class="amount">{{ pricing_total }}</td>
+        </tr>
+    </tfoot>
+</table>
+{% else %}
 <div class="pricing-box">
     <strong>Tổng chi phí dự án:</strong>
     {{ pricing }}
 </div>
+{% endif %}
 
-<h2>6. Điều Khoản Thanh Toán</h2>
+<h2>8. Điều Khoản Thanh Toán</h2>
 
-<p>
+<p data-field="payment_terms" data-label="Điều khoản thanh toán">
     {{ payment_terms }}
 </p>
 
-<h2>7. Ghi Chú Và Giả Định</h2>
+<h2>9. Thời Gian Thực Hiện</h2>
+
+<p data-field="timeline" data-label="Thời gian thực hiện">
+    {{ timeline }}
+</p>
+
+{% if out_of_scope or revision_policy %}
+<h2>10. Điều Khoản Bổ Sung</h2>
+
+{% if out_of_scope %}
+<p><strong>Phạm vi KHÔNG bao gồm:</strong></p>
+<ul data-field="out_of_scope" data-kind="list" data-label="Phạm vi không bao gồm">
+    {% for item in out_of_scope %}
+    <li>{{ item }}</li>
+    {% endfor %}
+</ul>
+{% endif %}
+
+{% if revision_policy %}
+<p><strong>Chính sách chỉnh sửa:</strong> <span data-field="revision_policy" data-label="Chính sách chỉnh sửa">{{ revision_policy }}</span></p>
+{% endif %}
+{% endif %}
+
+<h2>11. Ghi Chú Và Giả Định</h2>
+
+<p data-field="assumptions" data-label="Ghi chú và giả định">
+    {{ assumptions }}
+</p>
+
+<h2>12. Xác Nhận</h2>
 
 <p>
-    {{ assumptions }}
+    {% if valid_until %}Báo giá này có hiệu lực đến {{ valid_until }}. {% endif %}Vui lòng
+    xác nhận đồng ý để bắt đầu triển khai dự án.
 </p>
 
 <table class="signature">
     <tr>
         <td>
-            <strong>{{ client_name }}</strong>
+            <strong>{{ company_name or client_name }}</strong>
+            <div style="font-size:10pt;color:#777;">Người nhận báo giá (Bên B)</div>
             <br>
             Khách hàng
             <br><br><br><br>
@@ -166,6 +296,7 @@
 
         <td>
             <strong>{{ freelancer_name }}</strong>
+            <div style="font-size:10pt;color:#777;">Người gửi báo giá (Bên A)</div>
             <br>
             Nhà cung cấp dịch vụ
             <br><br><br><br>

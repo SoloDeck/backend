@@ -1,22 +1,23 @@
 import json
-from pathlib import Path
+from typing import Any
 
 from groq import Groq
 
 from src.ai.shared.json_output import extract_json_object
+from src.ai.shared.prompt import load_prompt
+from src.ai.shared.token_usage import extract_usage
 
 from ..schemas.proposal_content import ProposalContent
 from ..schemas.proposal_generation_input import ProposalGenerationInput
 
+MODEL = "meta-llama/llama-4-scout-17b-16e-instruct"
+
 
 class ProposalGenerationService:
-
     def __init__(self, client: Groq):
         self.client = client
-
-    def _load_prompt(self) -> str:
-        prompt_path = Path(__file__).parent.parent / "prompts" / "prompts.txt"
-        return prompt_path.read_text(encoding="utf-8")
+        # Token của lần gọi gần nhất — service đọc để ghi vào ai_cost_records.
+        self.last_usage: dict[str, Any] | None = None
 
     # _clean_response() cũ chỉ cắt fence khi CẢ chuỗi bắt đầu bằng ``` — cùng bug với
     # lead_qualifier. Đã thay bằng extract_json_object() dùng chung.  #Huynh
@@ -77,7 +78,7 @@ class ProposalGenerationService:
 
     def generate(self, request: ProposalGenerationInput) -> ProposalContent:
 
-        prompt_template = self._load_prompt()
+        prompt_template = load_prompt("proposal_generator")
 
         prompt = f"{prompt_template}\n\n{self._build_context(request)}\n"
 
@@ -95,14 +96,14 @@ class ProposalGenerationService:
             response_format={"type": "json_object"},
         )
 
+        self.last_usage = extract_usage(response, model=getattr(response, "model", None) or MODEL)
+
         raw_response = response.choices[0].message.content or ""
 
         try:
             content = extract_json_object(raw_response)
 
         except json.JSONDecodeError as exc:
-            raise ValueError(
-                f"Model did not return valid JSON:\n{raw_response}"
-            ) from exc
+            raise ValueError(f"Model did not return valid JSON:\n{raw_response}") from exc
 
         return ProposalContent(**content)

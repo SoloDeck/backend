@@ -71,9 +71,12 @@ class TestBuildProposalDocument:
             "Lap trinh frontend",
             "Tich hop thanh toan",
         ]
-        # pricing là OBJECT ở shape hợp đồng, phải dựng thành văn bản đọc được
-        assert "50.000.000 VND" in doc.pricing
-        assert "Thiet ke UI" in doc.pricing
+        # pricing là OBJECT ở shape hợp đồng → giờ dựng thành BẢNG hạng mục có cấu trúc
+        # (`pricing_line_items` + `pricing_total`), để template PDF render bảng giống hệt
+        # card trên màn hình. Chuỗi `pricing` để trống khi đã có bảng.  #Huynh
+        assert doc.pricing_total == "50.000.000 VND"
+        assert any(item.description == "Thiet ke UI" for item in doc.pricing_line_items)
+        assert any(item.amount == "20.000.000 VND" for item in doc.pricing_line_items)
         # timeline cũng là object
         assert "2026-08-01" in doc.timeline
         assert "Ban giao thiet ke" in doc.timeline

@@ -89,6 +89,27 @@ class ProposalsRepository:
     async def get_user(self, user_id: uuid.UUID):
         return await self.db.scalar(select(UserModel).where(UserModel.id == user_id))
 
+    async def get_intake_for_deal(
+        self, deal_id: uuid.UUID, client_id: uuid.UUID, owner_user_id: uuid.UUID
+    ):
+        """Phiếu tiếp nhận của ĐÚNG deal này.
+
+        Trước đây tra theo client: một khách gửi Biểu mẫu tiếp nhận hai lần cho hai dự án
+        → báo giá của deal cũ được soạn bằng brief của dự án MỚI. Freelancer gửi cho khách
+        một bản báo giá cho DỰ ÁN SAI.  #Huynh
+        """
+        intake = await self.db.scalar(
+            select(DealIntakeModel).where(
+                DealIntakeModel.deal_id == deal_id,
+                DealIntakeModel.owner_user_id == owner_user_id,
+                DealIntakeModel.deleted_at.is_(None),
+            )
+        )
+        if intake is not None:
+            return intake
+
+        return await self.get_intake_by_client_id(client_id, owner_user_id)
+
     async def get_intake_by_client_id(self, client_id: uuid.UUID, owner_user_id: uuid.UUID):
         """Phiếu tiếp nhận mới nhất của khách — chứa NGUYÊN VĂN yêu cầu họ viết.
 

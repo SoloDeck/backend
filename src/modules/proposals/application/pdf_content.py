@@ -23,7 +23,10 @@ thiếu dữ liệu thì để trống chứ không nổ.  #Huynh
 
 from typing import Any
 
-from src.ai.proposal_generator.schemas.proposal_document import ProposalDocument
+from src.ai.proposal_generator.schemas.proposal_document import (
+    PricingLineItem,
+    ProposalDocument,
+)
 
 
 def _text(value: Any) -> str:
@@ -81,6 +84,69 @@ def _pricing_to_text(value: Any) -> str:
     return "\n".join(line for line in lines if line)
 
 
+def _structured_pricing(content: dict[str, Any]) -> tuple[list[PricingLineItem], str, str]:
+    """Bảng giá có cấu trúc cho template — LẤY TỪ CÙNG NGUỒN với card trên màn hình.
+
+    Trả về ``(line_items, tong_da_dinh_dang, chuoi_du_phong)``.
+
+    Nguồn ưu tiên là ``pricing_detail`` (khối do bộ định giá tính). Card render từ đúng khối
+    này, nên PDF cũng phải render từ nó thì hai bên mới khớp. Tổng = giá đã chốt
+    (`final_price`) nếu có, chưa thì giá đề xuất (`suggested`). Hạng mục được chia lại theo
+    tổng đó, và ĐỒNG LẺ do làm tròn dồn vào dòng cuối để bảng cộng ra ĐÚNG tổng — y hệt
+    frontend. Bảng cộng không ra tổng là thứ khách soi ra ngay.  #Huynh
+    """
+    detail = content.get("pricing_detail")
+    if isinstance(detail, dict):
+        raw_items = detail.get("line_items") or []
+        suggested = detail.get("suggested") or 0
+        total = detail.get("final_price") or suggested
+
+        try:
+            total_int = int(total)
+            suggested_int = int(suggested)
+        except (TypeError, ValueError):
+            total_int, suggested_int = 0, 0
+
+        if raw_items and suggested_int > 0 and total_int > 0:
+            items: list[PricingLineItem] = []
+            allocated = 0
+            ratio = total_int / suggested_int
+            cleaned = [it for it in raw_items if isinstance(it, dict)]
+            for index, it in enumerate(cleaned):
+                if index == len(cleaned) - 1:
+                    amount = total_int - allocated  # dồn phần lẻ vào dòng cuối
+                else:
+                    base = int(it.get("amount") or 0) * ratio
+                    amount = round(base / 1000) * 1000
+                    allocated += amount
+                items.append(
+                    PricingLineItem(
+                        description=_text(it.get("label") or it.get("description")),
+                        amount=_money(amount, "VND"),
+                    )
+                )
+            if items:
+                return items, _money(total_int, "VND"), ""
+
+    # Shape hợp đồng (DTO): pricing là object có line_items sẵn.
+    pricing = content.get("pricing")
+    if isinstance(pricing, dict) and pricing.get("line_items"):
+        currency = _text(pricing.get("currency")) or "VND"
+        items = [
+            PricingLineItem(
+                description=_text(it.get("description")),
+                amount=_money(it.get("amount"), currency),
+            )
+            for it in pricing["line_items"]
+            if isinstance(it, dict)
+        ]
+        total_text = _money(pricing["total"], currency) if pricing.get("total") is not None else ""
+        return items, total_text, ""
+
+    # Không có bảng: rơi về chuỗi (báo giá cũ, hoặc AI trả chuỗi "Giá sẽ báo sau...").
+    return [], "", _pricing_to_text(pricing)
+
+
 def _timeline_to_text(value: Any) -> str:
     """Shape hợp đồng cho `timeline` là object (mốc thời gian); shape AI là chuỗi.  #Huynh"""
     if not isinstance(value, dict):
@@ -110,6 +176,11 @@ def build_proposal_document(
     company_name: str | None,
     project_type: str,
     proposal_date: str,
+    freelancer_email: str = "",
+    freelancer_phone: str = "",
+    client_email: str = "",
+    client_phone: str = "",
+    valid_until: str = "",
 ) -> ProposalDocument:
     """Dựng ProposalDocument từ `content` bất kể nó theo shape nào.  #Huynh"""
     content = content or {}
@@ -129,17 +200,29 @@ def build_proposal_document(
     # `notes` (hợp đồng) và `assumptions` (AI) đóng cùng vai trò: ghi chú thêm.
     assumptions = _text(content.get("assumptions")) or _text(content.get("notes"))
 
+    line_items, pricing_total, pricing_fallback = _structured_pricing(content)
+
     return ProposalDocument(
         freelancer_name=freelancer_name,
+        freelancer_email=freelancer_email,
+        freelancer_phone=freelancer_phone,
         client_name=client_name,
+        client_email=client_email,
+        client_phone=client_phone,
         company_name=company_name,
         project_type=project_type,
         proposal_date=proposal_date,
+        valid_until=valid_until,
         project_overview=overview,
         scope_of_work=_text_list(content.get("scope_of_work")),
         deliverables=_text_list(content.get("deliverables")),
         timeline=_timeline_to_text(content.get("timeline")),
-        pricing=_pricing_to_text(content.get("pricing")),
+        pricing_line_items=line_items,
+        pricing_total=pricing_total,
+        pricing=pricing_fallback,
         payment_terms=payment_terms,
         assumptions=assumptions,
+        out_of_scope=_text_list(content.get("out_of_scope")),
+        revision_policy=_text(content.get("revision_policy"))
+        or _text(terms.get("revision_policy")),
     )

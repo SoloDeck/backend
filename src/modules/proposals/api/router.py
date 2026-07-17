@@ -13,6 +13,7 @@ from src.infrastructure.database.session import get_db_session
 from src.modules.proposals.application.service import ProposalsService
 from src.modules.proposals.schemas.request import (
     AiProposalRequest,
+    ProposalPriceRequest,
     ProposalRequest,
     ProposalStatusRequest,
 )
@@ -69,6 +70,38 @@ async def generate_proposal_from_deal(
     return ApiResponse.created(ProposalResponse.model_validate(proposal))
 
 
+@router.patch("/{proposal_id}/price", response_model=ApiResponse[ProposalResponse])
+async def set_proposal_price(
+    proposal_id: uuid.UUID,
+    payload: ProposalPriceRequest,
+    user_id: CurrentUserId,
+    db: DBSession,
+) -> ApiResponse[ProposalResponse]:
+    """Freelancer chốt giá cuối cùng. AI chỉ đề xuất khoảng — con người quyết con số."""
+    proposal = await ProposalsService(db=db).set_price(user_id, proposal_id, payload.price)
+    return ApiResponse.ok(ProposalResponse.model_validate(proposal))
+
+
+class ProposalPreviewResponse(BaseModel):
+    html: str
+
+
+@router.get("/{proposal_id}/preview", response_model=ApiResponse[ProposalPreviewResponse])
+async def preview_proposal(
+    proposal_id: uuid.UUID,
+    user_id: CurrentUserId,
+    db: DBSession,
+) -> ApiResponse[ProposalPreviewResponse]:
+    """HTML xem trước — CHÍNH XÁC bản PDF khách sẽ nhận.
+
+    Frontend nhúng HTML này vào card thay vì tự dựng lại. Cùng một template với PDF nên
+    hai bên KHÔNG THỂ lệch nhau — đó là cái gốc khiến bản trên màn hình trước đây khác bản
+    tải về, nhìn như lừa đảo.  #Huynh
+    """
+    html = await ProposalsService(db=db).render_preview_html(user_id, proposal_id)
+    return ApiResponse.ok(ProposalPreviewResponse(html=html))
+
+
 @router.get("/{proposal_id}/pdf")
 async def generate_proposal_pdf(
     proposal_id: uuid.UUID,
@@ -83,12 +116,9 @@ async def generate_proposal_pdf(
     return StreamingResponse(
         BytesIO(pdf_bytes),
         media_type="application/pdf",
-        headers={
-            "Content-Disposition": (
-                f'attachment; filename="proposal-{proposal_id}.pdf"'
-            )
-        },
+        headers={"Content-Disposition": (f'attachment; filename="proposal-{proposal_id}.pdf"')},
     )
+
 
 @router.post("", response_model=ApiResponse[ProposalResponse], status_code=201)
 async def create_proposal(
