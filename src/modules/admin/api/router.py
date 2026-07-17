@@ -183,10 +183,10 @@ async def get_plan(
 @router.post("/plans", response_model=ApiResponse[AdminPlanResponse], status_code=201)
 async def create_plan(
     payload: AdminPlanRequest,
-    _: AdminUser,
+    admin: AdminUser,
     db: DBSession,
 ) -> ApiResponse[AdminPlanResponse]:
-    plan = await AdminService(db=db).create_plan(payload)
+    plan = await AdminService(db=db).create_plan(payload, admin_id=uuid.UUID(admin.sub))
     return ApiResponse.created(AdminPlanResponse.model_validate(plan))
 
 
@@ -194,10 +194,12 @@ async def create_plan(
 async def update_plan(
     plan_id: uuid.UUID,
     payload: AdminUpdatePlanRequest,
-    _: AdminUser,
+    admin: AdminUser,
     db: DBSession,
 ) -> ApiResponse[AdminPlanResponse]:
-    plan = await AdminService(db=db).update_plan(plan_id, payload)
+    plan = await AdminService(db=db).update_plan(
+        plan_id, payload, admin_id=uuid.UUID(admin.sub)
+    )
     return ApiResponse.ok(AdminPlanResponse.model_validate(plan))
 
 

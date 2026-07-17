@@ -159,12 +159,12 @@ class AdminService:
             raise NotFoundError(f"Plan {plan_id} not found")
         return plan
 
-    async def create_plan(self, payload: AdminPlanRequest):
+    async def create_plan(self, payload: AdminPlanRequest, *, admin_id: uuid.UUID | None = None):
         if await self.repo.get_plan_by_name(payload.name) is not None:
             raise AlreadyExistsError(f"Plan name '{payload.name}' is already in use")
         if await self.repo.get_plan_by_slug(payload.slug) is not None:
             raise AlreadyExistsError(f"Plan slug '{payload.slug}' is already in use")
-        return await self.repo.create_plan(
+        plan = await self.repo.create_plan(
             name=payload.name,
             slug=payload.slug,
             price_monthly=payload.price_monthly,
@@ -175,8 +175,22 @@ class AdminService:
             max_deals=payload.max_deals,
             max_ai_generations_per_month=payload.max_ai_generations_per_month,
         )
+        await self.repo.create_audit_log(
+            event_type="plan.created",
+            actor_user_id=admin_id,
+            target_type="plan",
+            target_id=plan.id,
+            description=f"Admin tạo gói '{plan.name}' ({plan.slug})",
+        )
+        return plan
 
-    async def update_plan(self, plan_id: uuid.UUID, payload: AdminUpdatePlanRequest):
+    async def update_plan(
+        self,
+        plan_id: uuid.UUID,
+        payload: AdminUpdatePlanRequest,
+        *,
+        admin_id: uuid.UUID | None = None,
+    ):
         plan = await self.repo.get_plan(plan_id)
         if plan is None:
             raise NotFoundError(f"Plan {plan_id} not found")
@@ -191,7 +205,16 @@ class AdminService:
 
         for field in fields:
             setattr(plan, field, getattr(payload, field))
-        return await self.repo.save(plan)
+        plan = await self.repo.save(plan)
+
+        await self.repo.create_audit_log(
+            event_type="plan.updated",
+            actor_user_id=admin_id,
+            target_type="plan",
+            target_id=plan_id,
+            description=f"Admin sửa gói '{plan.name}': {', '.join(sorted(fields))}",
+        )
+        return plan
 
     # -------------------------------------------------------------------------
     # Subscriptions
@@ -232,6 +255,21 @@ class AdminService:
         sub.override_by_admin_id = admin_id
         sub = await self.repo.save(sub)
         plan = await self.repo.get_plan(sub.plan_id)
+
+        # Freelancer KHÔNG tự nâng cấp gói được (tự nâng cấp đòi cổng thanh toán thật).
+        # Admin thu tiền ngoài hệ thống rồi kích hoạt tay. Mô hình đó chỉ đứng vững nếu
+        # MỌI lần kích hoạt đều để lại dấu vết: ai làm, cho ai, lúc nào. Không có nhật ký
+        # thì "admin kích hoạt thủ công" chỉ là một cái cửa sau.  #Huynh
+        await self.repo.create_audit_log(
+            event_type="subscription.overridden",
+            actor_user_id=admin_id,
+            target_type="subscription",
+            target_id=subscription_id,
+            description=(
+                f"Admin đổi gói của user {sub.user_id} sang "
+                f"'{plan.name if plan else sub.plan_id}'"
+            ),
+        )
         if plan is None:
             raise NotFoundError(f"Plan {sub.plan_id} not found")
         return sub, plan
