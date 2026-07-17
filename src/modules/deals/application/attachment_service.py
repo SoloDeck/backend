@@ -2,7 +2,7 @@
 
 import asyncio
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,6 +11,7 @@ from src.infrastructure.database.models import DealAttachmentModel, DealModel
 from src.infrastructure.storage.object_storage import (
     ALLOWED_CONTENT_TYPES,
     MAX_FILE_SIZE_BYTES,
+    ObjectStorage,
     object_storage,
     resolve_content_type,
 )
@@ -22,6 +23,19 @@ from src.shared.exceptions.domain import BusinessRuleError, NotFoundError, Valid
 class DealAttachmentService:
     db: AsyncSession
 
+    # Kho file TIÊM VÀO, không import thẳng singleton nữa.
+    #
+    # Trước đây service gọi `object_storage.upload(...)` — bám cứng vào một instance
+    # dựng sẵn ở tầng module. Hệ quả: muốn test chuyện gì đụng tới file là phải có MinIO
+    # thật đang chạy, hoặc phải monkeypatch tên module. Đó là lý do tính năng đính kèm
+    # tới giờ KHÔNG CÓ TEST NÀO.
+    #
+    # Cùng lối với `DealsService.usage`: tiêm được, mặc định vẫn là instance dùng chung
+    # nên chỗ gọi trong router không phải đổi một chữ.
+    #
+    # `default_factory` chứ không gán thẳng: `ObjectStorage` là dataclass nên không
+    # hashable, đặt làm default trực tiếp là dataclass ném "mutable default".  #Huynh
+    storage: ObjectStorage = field(default_factory=lambda: object_storage)
 
     async def upload(
         self,
@@ -51,12 +65,12 @@ class DealAttachmentService:
                 f"Tối đa {MAX_FILE_SIZE_BYTES // 1024 // 1024} MB."
             )
 
-        if not object_storage.enabled:
+        if not self.storage.enabled:
             raise BusinessRuleError(
                 "Object storage chưa được cấu hình (thiếu STORAGE_ENDPOINT/ACCESS_KEY)."
             )
 
-        storage_key = await object_storage.upload(
+        storage_key = await self.storage.upload(
             data=data,
             content_type=content_type,
             prefix=f"deals/{deal_id}",
@@ -111,12 +125,12 @@ class DealAttachmentService:
     ) -> tuple[bytes, str, str]:
         """Trả về (bytes, content_type, filename)."""
         attachment = await self._get_owned(user_id, attachment_id)
-        data, content_type = await object_storage.download(attachment.storage_key)
+        data, content_type = await self.storage.download(attachment.storage_key)
         return data, content_type or attachment.content_type, attachment.filename
 
     async def delete(self, user_id: uuid.UUID, attachment_id: uuid.UUID) -> None:
         attachment = await self._get_owned(user_id, attachment_id)
-        await object_storage.delete(attachment.storage_key)
+        await self.storage.delete(attachment.storage_key)
         await self.db.delete(attachment)
         await self.db.flush()
 
