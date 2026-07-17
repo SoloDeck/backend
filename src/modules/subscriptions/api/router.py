@@ -7,8 +7,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.infrastructure.database.session import get_db_session
 from src.modules.subscriptions.application.service import SubscriptionsService
-from src.modules.subscriptions.schemas.response import PlanResponse, SubscriptionResponse
+from src.modules.subscriptions.domain.entities.subscription_payment import PaymentProvider
+from src.modules.subscriptions.schemas.request import CreateSubscriptionCheckoutRequest
+from src.modules.subscriptions.schemas.response import (
+    PaymentIntentResponse,
+    PlanResponse,
+    SubscriptionResponse,
+)
 from src.shared.dependencies.auth import CurrentUserId
+from src.shared.dependencies.payments import MomoClientDep
 from src.shared.responses.response import ApiResponse
 
 router = APIRouter()
@@ -31,3 +38,16 @@ async def get_my_subscription(
 ) -> ApiResponse[SubscriptionResponse]:
     sub = await SubscriptionsService(db=db).get_my_subscription(user_id)
     return ApiResponse.ok(sub)
+
+
+@router.post("/checkout", response_model=ApiResponse[PaymentIntentResponse], status_code=201)
+async def create_checkout(
+    payload: CreateSubscriptionCheckoutRequest,
+    user_id: CurrentUserId,
+    db: DBSession,
+    momo_client: MomoClientDep,
+) -> ApiResponse[PaymentIntentResponse]:
+    payment = await SubscriptionsService(db=db, momo_client=momo_client).initiate_checkout(
+        user_id, payload.plan_id, PaymentProvider(payload.provider)
+    )
+    return ApiResponse.created(PaymentIntentResponse.from_model(payment))

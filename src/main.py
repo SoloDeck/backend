@@ -27,6 +27,8 @@ from src.modules.intake_form.api.public_router import router as public_intake_fo
 from src.modules.intake_form.api.router import router as intake_form_router
 from src.modules.invoices.api.public_router import router as public_invoices_router
 from src.modules.invoices.api.router import router as invoices_router
+from src.modules.payments.api.public_router import router as public_payments_router
+from src.modules.payments.api.router import router as payments_router
 from src.modules.projects.api.router import router as projects_router
 from src.modules.proposals.api.router import router as proposals_router
 from src.modules.reminders.api.router import router as reminders_router
@@ -124,6 +126,10 @@ app.include_router(proposals_router, prefix=f"{API_V1}/proposals", tags=["Propos
 app.include_router(contracts_router, prefix=f"{API_V1}/contracts", tags=["Contracts"])
 app.include_router(public_invoices_router, prefix=f"{API_V1}/invoices/public", tags=["Public"])
 app.include_router(invoices_router, prefix=f"{API_V1}/invoices", tags=["Invoices"])
+app.include_router(
+    public_payments_router, prefix=f"{API_V1}/payments/webhooks", tags=["Public"]
+)
+app.include_router(payments_router, prefix=f"{API_V1}/payments", tags=["Payments"])
 app.include_router(reminders_router, prefix=f"{API_V1}/reminders", tags=["Reminders"])
 app.include_router(projects_router, prefix=f"{API_V1}/projects", tags=["Projects"])
 # Tasks use polymorphic paths (/projects/.../tasks, /deals/.../tasks,

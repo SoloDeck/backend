@@ -4,7 +4,12 @@ from dataclasses import dataclass
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.infrastructure.database.models import PlanModel, SubscriptionModel
+from src.infrastructure.database.models import (
+    BillingEventModel,
+    PlanModel,
+    SubscriptionModel,
+    SubscriptionPaymentModel,
+)
 
 
 @dataclass
@@ -22,3 +27,26 @@ class SubscriptionsRepository:
 
     async def get_plan(self, plan_id: uuid.UUID):
         return await self.db.scalar(select(PlanModel).where(PlanModel.id == plan_id))
+
+    async def create_payment(self, **values):
+        payment = SubscriptionPaymentModel(**values)
+        self.db.add(payment)
+        await self.db.flush()
+        await self.db.refresh(payment)
+        return payment
+
+    async def get_payment_by_id(self, payment_id: uuid.UUID):
+        return await self.db.scalar(
+            select(SubscriptionPaymentModel).where(SubscriptionPaymentModel.id == payment_id)
+        )
+
+    async def create_billing_event(self, **values):
+        event = BillingEventModel(**values)
+        self.db.add(event)
+        await self.db.flush()
+        return event
+
+    async def save(self, obj):
+        await self.db.flush()
+        await self.db.refresh(obj)
+        return obj

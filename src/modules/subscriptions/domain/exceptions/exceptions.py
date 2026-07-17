@@ -1,4 +1,5 @@
 from src.modules.subscriptions.domain.value_objects.entitlement import SubscriptionStatus
+from src.shared.exceptions.domain import DomainError
 
 
 class SubscriptionDomainError(Exception):
@@ -19,4 +20,20 @@ class DuplicateSubscriptionError(SubscriptionDomainError):
 
 class EntitlementViolationError(SubscriptionDomainError):
     def __init__(self, message: str) -> None:
+        super().__init__(message)
+
+
+# Payment errors subclass the shared DomainError (not SubscriptionDomainError
+# above) so they get real HTTP translation via src/shared/exceptions/http.py's
+# generic DomainError fallback (400) — SubscriptionDomainError isn't wired to
+# any exception handler.
+
+
+class PlanNotPurchasableError(DomainError):
+    def __init__(self, message: str = "This plan cannot be purchased") -> None:
+        super().__init__(message)
+
+
+class InvalidPaymentSignatureError(DomainError):
+    def __init__(self, message: str = "Payment callback signature verification failed") -> None:
         super().__init__(message)

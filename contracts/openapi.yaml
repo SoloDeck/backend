@@ -20,6 +20,7 @@ info:
     intentional_gaps:
       - 'None outstanding for Phase 6 Package 2 endpoints.'
       - 'Phase 6 Package 3: GET /intake/{share_token}/config, GET /intake-form, PUT /intake-form added.'
+      - 'Unreviewed addition (not yet contract-keeper verified): POST /subscriptions/checkout, and PaymentIntentResponse widened with nullable subscription_id/plan_id (invoice_id now optional) to support subscription-targeted payment intents alongside invoice ones. Backing implementation is a mock MoMo integration only; GET/POST /payments/intents/{id}[/cancel] and POST /payments/webhooks/{provider} currently only resolve subscription-targeted intents (invoice payment-links are not implemented yet).'
 
 servers:
   - url: https://api.solodesk.space/api/v1
@@ -851,6 +852,39 @@ paths:
                     properties:
                       data:
                         $ref: '#/components/schemas/UsageRecordResponse'
+
+  /subscriptions/checkout:
+    post:
+      tags: [Subscriptions, Payments]
+      summary: Create a payment link to upgrade the current subscription
+      description: |
+        Creates a `PaymentIntentResponse` targeting the given plan. Unlike
+        `/subscriptions/me/upgrade`, the plan switch does not happen immediately —
+        it is applied by `POST /payments/webhooks/{provider}` once the provider
+        confirms payment. Poll `GET /payments/intents/{payment_intent_id}` for status.
+        Only the `momo` provider is currently supported.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateSubscriptionCheckoutRequest'
+      responses:
+        '201':
+          description: Payment intent created
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/PaymentIntentResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
 
   # -------------------------------------------------------------------------
   # CLIENTS
@@ -5999,6 +6033,21 @@ components:
           nullable: true
           description: Optional reminder message shown beside the payment instructions.
 
+    CreateSubscriptionCheckoutRequest:
+      type: object
+      required: [plan_id, provider]
+      properties:
+        plan_id:
+          type: string
+          format: uuid
+          description: Target plan to upgrade to. Amount/currency are taken from the plan, not client-supplied.
+        provider:
+          $ref: '#/components/schemas/PaymentProvider'
+        return_url:
+          type: string
+          format: uri
+          nullable: true
+
     PaymentLinkResponse:
       type: object
       required: [type]
@@ -6020,7 +6069,11 @@ components:
 
     PaymentIntentResponse:
       type: object
-      required: [id, invoice_id, provider, status, amount, currency, payment_link, created_at]
+      required: [id, provider, status, amount, currency, payment_link, created_at]
+      description: |
+        A payment intent targets exactly one of `invoice_id` (client paying a freelancer's
+        invoice) or `subscription_id`+`plan_id` (freelancer paying to change their SoloDesk
+        plan) — the other target field(s) are null.
       properties:
         id:
           type: string
@@ -6028,6 +6081,16 @@ components:
         invoice_id:
           type: string
           format: uuid
+          nullable: true
+        subscription_id:
+          type: string
+          format: uuid
+          nullable: true
+        plan_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: Target plan being purchased, when this intent is subscription-targeted.
         provider:
           $ref: '#/components/schemas/PaymentProvider'
         status:
