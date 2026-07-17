@@ -2,7 +2,6 @@
 
 import asyncio
 import json
-import os
 from typing import Any
 
 import structlog
@@ -14,10 +13,14 @@ from src.ai.contract_generator.schemas.contract_content import (
 )
 from src.ai.shared.base import BaseAIChain
 from src.ai.shared.json_output import extract_json_object
+from src.ai.shared.prompt import load_prompt
+from src.ai.shared.token_usage import extract_usage
 from src.config.settings import settings
 from src.shared.exceptions.domain import AIOutputParseError
 
 log = structlog.get_logger()
+
+MODEL = "meta-llama/llama-4-scout-17b-16e-instruct"
 
 # openapi.yaml khai ContractContentDTO.governing_law có default là "Vietnam".
 # Đây là hằng số, không phải thứ để model đoán.  #Huynh
@@ -37,6 +40,8 @@ class ContractGenerator(BaseAIChain):
 
     module_name = "contract_generator"
     _client: Groq | None = None
+    # Token của lần gọi gần nhất — service đọc để ghi vào ai_cost_records.
+    last_usage: dict[str, Any] | None = None
 
     def _get_client(self) -> Groq:
         if self._client is not None:
@@ -82,6 +87,8 @@ class ContractGenerator(BaseAIChain):
             response_format={"type": "json_object"},
         )
 
+        self.last_usage = extract_usage(response, model=getattr(response, "model", None) or MODEL)
+
         return response.choices[0].message.content or ""
 
     async def run(self, **kwargs: Any) -> dict[str, Any]:
@@ -124,14 +131,7 @@ class ContractGenerator(BaseAIChain):
             raise
 
     def _load_system_prompt(self) -> str:
-        prompt_path = os.path.join(os.path.dirname(__file__), "prompts", "system.txt")
-        try:
-            with open(prompt_path, encoding="utf-8") as f:
-                return f.read()
-        except FileNotFoundError:
-            log.warning("ai.contract_generator.prompt_missing", path=prompt_path)
-            return (
-                "Soạn điều khoản hợp đồng dịch vụ bằng tiếng Việt. Trả JSON với các khóa: "
-                "scope_of_work, payment_terms, revision_policy, ip_ownership, "
-                "termination_clause, custom_clauses. Mọi giá trị là chuỗi."
-            )
+        # KHÔNG có prompt dự phòng. Trước đây thiếu file thì rơi về vài dòng viết vội và hệ
+        # thống VẪN CHẠY — soạn ra một văn bản gửi cho khách hàng thật, bằng một prompt
+        # không ai rà soát. Thà nổ to lúc khởi động còn hơn.  #Huynh
+        return load_prompt("contract_generator")

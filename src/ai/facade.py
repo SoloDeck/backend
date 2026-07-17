@@ -100,3 +100,16 @@ class AIFacade:
             communication_history=communication_history,
             reminder_type=reminder_type,
         )
+
+    def last_usage(self, module: str) -> dict[str, Any] | None:
+        """Token của lần gọi gần nhất cho một module.
+
+        Facade được dựng MỚI mỗi request (xem `get_ai_facade`), nên đọc state trên
+        instance là an toàn — không có chuyện lẫn token của request khác.  #Huynh
+        """
+        chain = getattr(self, module, None)
+        if chain is None:
+            return None
+        # proposal_generator bọc một service riêng, token nằm ở tầng trong.
+        inner = getattr(chain, "generation_service", None)
+        return getattr(inner or chain, "last_usage", None)

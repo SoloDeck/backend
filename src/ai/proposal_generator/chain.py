@@ -8,7 +8,6 @@ from src.ai.proposal_generator.schemas.proposal_generation_input import (
 
 
 class ProposalGenerator:
-
     def __init__(self, generation_service: ProposalGenerationService):
         self.generation_service = generation_service
 

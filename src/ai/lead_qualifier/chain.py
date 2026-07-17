@@ -2,7 +2,6 @@
 
 import asyncio
 import json
-import os
 from typing import Any
 
 import structlog
@@ -10,15 +9,21 @@ from groq import Groq
 
 from src.ai.shared.base import BaseAIChain
 from src.ai.shared.json_output import extract_json_object
+from src.ai.shared.prompt import load_prompt, prompt_version
+from src.ai.shared.token_usage import extract_usage
 from src.config.settings import settings
 from src.shared.exceptions.domain import AIOutputParseError
 
 log = structlog.get_logger()
 
+MODEL = "meta-llama/llama-4-scout-17b-16e-instruct"
+
 
 class LeadQualifier(BaseAIChain):
     module_name = "lead_qualifier"
     _client: Groq | None = None
+    # Token của lần gọi gần nhất — service đọc để ghi vào ai_cost_records.
+    last_usage: dict[str, Any] | None = None
 
     def _get_client(self) -> Groq:
         if self._client is not None:
@@ -66,13 +71,26 @@ class LeadQualifier(BaseAIChain):
                     "content": full_prompt,
                 }
             ],
-            temperature=0.2,
+            # Chấm điểm phải LẶP LẠI ĐƯỢC. Ở 0.2, chấm cùng một deal hai lần ra 70 rồi 52
+            # — cùng dữ liệu, khác kết quả. Không ai tin nổi một thang điểm như thế, và khi
+            # bảo vệ đồ án mà chấm lại ra số khác là hỏng.
+            #
+            # 0 không đảm bảo tuyệt đối giống nhau (model vẫn có sai số nội tại), nhưng loại
+            # bỏ phần ngẫu nhiên do ta tự thêm vào. Các module khác (soạn hợp đồng 0.1, viết
+            # tin nhắn nhắc 0.3) thì cần chút biến thiên vì đó là VIẾT VĂN — còn đây là ĐO
+            # LƯỜNG.  #Huynh
+            temperature=0,
+            # Cùng đầu vào -> cùng đầu ra, kể cả khi Groq gom batch khác nhau giữa hai lần
+            # gọi. Chỉ temperature=0 thôi vẫn thấy chấm 70 rồi 80 trên cùng một deal.  #Huynh
+            seed=42,
             # Buộc model trả JSON thuần. Thiếu cờ này, llama-4-scout bọc câu trả lời
             # trong văn bản ("Here is the draft qualification result:") và parser vỡ.
             # Prompt vốn đã yêu cầu trả JSON, nhưng chỉ cờ này mới khiến API BẢO ĐẢM
             # điều đó.  #Huynh
             response_format={"type": "json_object"},
         )
+
+        self.last_usage = extract_usage(response, model=getattr(response, "model", None) or MODEL)
 
         return response.choices[0].message.content or ""
 
@@ -81,20 +99,10 @@ class LeadQualifier(BaseAIChain):
         if not inquiry_text:
             raise ValueError("inquiry_text is required for LeadQualifier")
 
-        prompt_path = os.path.join(
-            os.path.dirname(__file__),
-            "prompts",
-            "prompts.txt",
-        )
-
-        try:
-            with open(prompt_path, encoding="utf-8") as f:
-                prompt_template = f.read()
-        except FileNotFoundError:
-            prompt_template = (
-                "Qualify the following lead as JSON with keys: "
-                "score (0-100), qualified (bool), reasoning (str)."
-            )
+        # KHÔNG có prompt dự phòng. Trước đây thiếu file thì rơi về một prompt rác 2 dòng
+        # ("Qualify the following lead as JSON...") và hệ thống VẪN CHẤM ĐIỂM — sai bét mà
+        # không ai biết. Thà nổ to còn hơn âm thầm chấm sai.  #Huynh
+        prompt_template = load_prompt("lead_qualifier")
 
         full_prompt = f"""{prompt_template}
 
@@ -108,7 +116,10 @@ Client Inquiry:
                 full_prompt,
             )
 
-            return self._parse_output(raw_response)
+            result = self._parse_output(raw_response)
+            # Truy nguồn: bản ghi này sinh ra bởi prompt phiên bản nào.  #Huynh
+            result["prompt_version"] = prompt_version("lead_qualifier")
+            return result
 
         except Exception as exc:
             log.error(
