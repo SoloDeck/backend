@@ -47,8 +47,10 @@ def qualify_deal_async_by_id(self, user_id: str, deal_id: str) -> dict:  # type:
     """
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+    from src.ai.lead_qualifier.scoring import level_from_score
     from src.config.settings import settings
     from src.modules.deals.application.service import DealsService
+    from src.modules.notifications.application.service import NotificationService
     from src.shared.dependencies.ai import get_ai_facade
 
     async def _run() -> dict:
@@ -63,6 +65,24 @@ def qualify_deal_async_by_id(self, user_id: str, deal_id: str) -> dict:  # type:
                     user_id=_uuid.UUID(user_id),
                     deal_id=_uuid.UUID(deal_id),
                 )
+
+                # Báo cho freelancer BIẾT là AI đã chấm xong.
+                #
+                # Chỉ bắn thông báo ở nhánh CHẠY NỀN này, không bắn trong `qualify_deal()`.
+                # Khi người dùng tự bấm "Đánh giá deal" thì họ đang nhìn thẳng vào kết quả
+                # — thêm một cái chuông đỏ nữa chỉ là nhiễu. Còn ở đây, việc chấm điểm
+                # xảy ra lúc khách gửi form, freelancer có thể đang không mở web.  #Huynh
+                deal = await service.repo.get_by_id(_uuid.UUID(deal_id), _uuid.UUID(user_id))
+                score = result.get("ai_qualification_score") if result else None
+                if deal is not None and score is not None:
+                    await NotificationService(db=session).notify_deal_qualified(
+                        owner_user_id=_uuid.UUID(user_id),
+                        deal_id=_uuid.UUID(deal_id),
+                        deal_title=deal.title,
+                        score=int(score),
+                        level=level_from_score(int(score)),
+                    )
+
                 await session.commit()
                 return result or {}
         finally:
@@ -121,9 +141,7 @@ def qualify_deal_async_by_job_id(self, job_id: str) -> dict:  # type: ignore[mis
                     await session.commit()
 
                 try:
-                    result = await DealsService(
-                        db=session, ai_facade=get_ai_facade()
-                    ).qualify_deal(
+                    result = await DealsService(db=session, ai_facade=get_ai_facade()).qualify_deal(
                         user_id=job.owner_user_id,
                         deal_id=job.entity_id,
                     )

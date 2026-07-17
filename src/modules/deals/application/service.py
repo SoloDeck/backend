@@ -155,6 +155,21 @@ class DealsService:
             source="inbound",
         )
 
+        # Báo cho freelancer biết có khách mới. Thiếu bước này thì deal nằm im trong cột
+        # "Deal Mới" cho tới khi freelancer tự mở ra xem — deal nóng để vài ngày là mất
+        # khách, mà cả điểm mạnh của sản phẩm là "AI chấm điểm NGAY khi khách gửi form".
+        #
+        # Ghi vào cùng transaction với deal: hoặc cả hai cùng có, hoặc cả hai cùng không.
+        # Không thể có deal mà không có thông báo.  #Huynh
+        from src.modules.notifications.application.service import NotificationService
+
+        await NotificationService(db=self.db).notify_intake_submitted(
+            owner_user_id=owner.id,
+            deal_id=deal.id,
+            client_name=payload.name,
+            project_name=payload.project_name,
+        )
+
         from src.workers.ai_jobs.tasks import qualify_deal_async_by_id
 
         qualify_deal_async_by_id.delay(str(owner.id), str(deal.id))

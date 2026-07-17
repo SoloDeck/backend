@@ -1331,3 +1331,41 @@ ProjectModel.done_count = column_property(
     .scalar_subquery(),
     deferred=False,
 )
+
+
+class NotificationModel(UUIDMixin, TimestampMixin, Base):
+    """Thông báo trong ứng dụng cho freelancer (cái chuông trên thanh tiêu đề).
+
+    Vì sao cần: khách gửi Biểu mẫu tiếp nhận → hệ thống tạo deal mới, nhưng freelancer
+    KHÔNG hề biết cho tới khi tự mở cột "Deal Mới" ra xem. Deal nóng nằm im vài ngày là
+    mất khách — mà cả điểm mạnh của sản phẩm là "AI chấm điểm ngay khi khách gửi form".
+
+    KHÔNG gửi email ở đây. Email là việc của module reminders (có hàng đợi, có retry, có
+    ghi nhận gửi thành công/thất bại). Bảng này chỉ là hộp thư trong ứng dụng: rẻ, đọc
+    nhanh, không phụ thuộc dịch vụ ngoài.
+
+    `entity_type` + `entity_id` để bấm vào thông báo là nhảy thẳng tới deal/hoá đơn liên
+    quan, thay vì bắt người dùng tự đi tìm.  #Huynh
+    """
+
+    __tablename__ = "notifications"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    type: Mapped[str] = mapped_column(String(50), nullable=False)
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    body: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    entity_type: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    entity_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+
+    is_read: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        # Truy vấn nóng nhất là "chuông có mấy cái chưa đọc của TÔI" — chạy mỗi lần đổi
+        # trang. Index kép user_id + is_read để không phải quét cả bảng.  #Huynh
+        Index("idx_notifications_user_unread", "user_id", "is_read"),
+        Index("idx_notifications_user_created", "user_id", "created_at"),
+    )
