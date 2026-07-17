@@ -24,6 +24,7 @@ from src.modules.deals.domain.value_objects.deal_stage import (
 )
 from src.modules.deals.infrastructure.repository import DealsRepository
 from src.modules.deals.schemas.request import DealRequest, DealStageRequest, PublicIntakeRequest
+from src.modules.subscriptions.application.ai_usage import AiUsageService
 from src.shared.exceptions.domain import (
     BusinessRuleError,
     InvalidStateTransitionError,
@@ -62,10 +63,14 @@ class DealsService:
     db: AsyncSession
     ai_facade: AIFacade | None = None
     repo: DealsRepository | None = None
+    # Tiêm được như repo/ai_facade để test không phải dựng DB thật.
+    usage: AiUsageService | None = None
 
     def __post_init__(self) -> None:
         if self.repo is None:
             self.repo = DealsRepository(self.db)
+        if self.usage is None:
+            self.usage = AiUsageService(db=self.db)
 
     async def _get_deal(self, user_id: uuid.UUID, deal_id: uuid.UUID):  # type: ignore[return]
         deal = await self.repo.get_by_id(deal_id, user_id)
@@ -266,9 +271,25 @@ class DealsService:
 
     async def _run_ai_qualification(self, deal_model, inquiry_context: str) -> dict:
         """Run AI lead qualification against inquiry_context and persist scores on deal_model."""
+        # Trước đây chỗ này truyền thẳng `user_can_use_ai=True` kèm `# TODO: get from
+        # subscriptions`. Nghĩa là AI chấm điểm deal MIỄN PHÍ cho mọi user, kể cả gói
+        # `free` (can_use_ai = false). Lỗ thủng doanh thu, và hạn mức 50 lượt/tháng của
+        # gói Pro cũng không ai đếm.
+        #
+        # `consume()` làm cả ba việc: kiểm tra gói (402), kiểm tra hạn mức (429), và GHI
+        # NHẬN lượt dùng vào usage_records.  #Huynh
+        await self.usage.consume(deal_model.owner_user_id)  # type: ignore[union-attr]
+
         result = await self.ai_facade.qualify_lead(  # type: ignore[union-attr]
             inquiry_text=inquiry_context,
-            user_can_use_ai=True,  # TODO: get from subscriptions
+            user_can_use_ai=True,  # đã kiểm tra ở consume() ngay trên
+        )
+
+        # Ghi token + chi phí ước tính vào ai_cost_records (màn hình admin đọc bảng này).
+        await self.usage.record_cost(  # type: ignore[union-attr]
+            deal_model.owner_user_id,
+            ai_module="lead_qualifier",
+            usage=self.ai_facade.last_usage("lead_qualifier"),  # type: ignore[union-attr]
         )
 
         missing_keys = sorted(
