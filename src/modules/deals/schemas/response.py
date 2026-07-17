@@ -4,6 +4,8 @@ from decimal import Decimal
 
 from pydantic import BaseModel, ConfigDict, computed_field
 
+from src.ai.lead_qualifier.scoring import COLD_THRESHOLD, level_from_score
+
 
 class DealResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -42,18 +44,23 @@ class DealResponse(BaseModel):
     @computed_field  # type: ignore[prop-decorator]
     @property
     def ai_level(self) -> str | None:
+        """HOT/WARM/COLD — DÙNG CHUNG ngưỡng với bộ chấm điểm.
+
+        Trước đây chỗ này tự hardcode ngưỡng riêng (>=80 hot, >=50 warm), lệch hẳn với
+        `scoring.py` (HOT=75, COLD=45). Deal 78 điểm: bảng chấm điểm kết luận HOT, còn API
+        trả về "warm" — hai nguồn sự thật đá nhau, và người dùng nhìn thấy cả hai.  #Huynh
+        """
         if self.ai_qualification_score is None:
             return None
-        if self.ai_qualification_score >= 80:
-            return "hot"
-        if self.ai_qualification_score >= 50:
-            return "warm"
-        return "cold"
+        return level_from_score(self.ai_qualification_score).lower()
 
     @computed_field  # type: ignore[prop-decorator]
     @property
     def is_ai_qualified(self) -> bool:
-        return self.ai_qualification_score is not None and self.ai_qualification_score >= 60
+        """Đủ điều kiện báo giá = không phải COLD (cùng ngưỡng với bảng chấm điểm)."""
+        if self.ai_qualification_score is None:
+            return False
+        return self.ai_qualification_score >= COLD_THRESHOLD
 
 
 class IntakeResponse(BaseModel):
@@ -62,6 +69,10 @@ class IntakeResponse(BaseModel):
     id: uuid.UUID
     owner_user_id: uuid.UUID
     client_id: uuid.UUID
+    # Phiếu này thuộc deal nào. Frontend TRƯỚC ĐÂY ghép phiếu vào deal theo `client_id` —
+    # cùng cái bug với backend: một khách gửi form hai lần thì deal cũ hiện mô tả của dự
+    # án mới. Nullable vì phiếu cũ không biết thuộc deal nào.  #Huynh
+    deal_id: uuid.UUID | None = None
     inquiry_text: str
     estimated_budget: str | None
     desired_timeline: str | None
@@ -81,3 +92,37 @@ class PublicIntakeResponse(BaseModel):
     id: uuid.UUID
     submitted_at: datetime
     message: str = "Thank you — your inquiry has been received."
+
+
+class LeadScoreHistoryResponse(BaseModel):
+    """Một lần chấm điểm đã lưu — kèm PHẦN CHỨNG MINH, không chỉ con số.
+
+    Trước đây bảng "Căn cứ chấm điểm" chỉ nằm ở localStorage của trình duyệt: đổi máy hay
+    xoá cache là deal vẫn hiện điểm nhưng mất sạch căn cứ. Giờ đọc từ server.  #Huynh
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    score: int
+    reasoning: str
+    generated_at: datetime
+    model_version: str
+
+    project_type: str | None = None
+    budget_signal: str | None = None
+    timeline_signal: str | None = None
+    urgency_signal: str | None = None
+    red_flags: list | None = None
+
+    # Bản ghi CŨ (trước khi thêm mấy cột này) không có -> None. Giao diện phải chịu được.
+    breakdown: list | None = None
+    next_step: str | None = None
+    detected_signals: list | None = None
+    prompt_version: str | None = None
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def level(self) -> str:
+        """HOT/WARM/COLD suy từ điểm — dùng CHUNG ngưỡng với bộ chấm điểm."""
+        return level_from_score(self.score).lower()

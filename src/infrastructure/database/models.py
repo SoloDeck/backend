@@ -707,6 +707,26 @@ class LeadScoreModel(Base):
     urgency_signal: Mapped[str | None] = mapped_column(String(200), nullable=True)
     red_flags: Mapped[list | None] = mapped_column(JSONB, nullable=True)
 
+    # --- Bốn cột dưới đây thêm sau: đây là phần CHỨNG MINH của kết quả chấm điểm ---
+    #
+    # Bảng này vốn đã lưu lịch sử append-only (mỗi lần chấm một dòng) — nhưng chỉ lưu CON SỐ
+    # mà vứt phần chứng minh. Bảng "Căn cứ chấm điểm" (5 tiêu chí, điểm từng mục, lý do, dữ
+    # kiện trích từ lời khách) chỉ nằm ở **localStorage của trình duyệt**.
+    #
+    # Hệ quả: đổi máy/xoá cache là deal vẫn hiện "78/100" nhưng KHÔNG còn căn cứ nào — điểm
+    # rơi từ trên trời, đúng cái bệnh mà bảng căn cứ sinh ra để chữa. Căn cứ ra quyết định
+    # tiền bạc thì không thể để ở chỗ mất lúc nào không hay.
+    #
+    # Nullable vì các bản ghi CŨ (84 dòng đã có) không có mấy trường này — đọc bản cũ vẫn
+    # phải chạy, không được nổ.  #Huynh
+    breakdown: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    next_step: Mapped[str | None] = mapped_column(Text, nullable=True)
+    detected_signals: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+
+    # Prompt nào sinh ra bản chấm này. Sửa prompt là đổi hành vi AI — không lưu phiên bản
+    # thì không trả lời được "sao deal này 52 mà deal kia 80".  #Huynh
+    prompt_version: Mapped[str | None] = mapped_column(String(16), nullable=True)
+
     __table_args__ = (
         Index("idx_lead_scores_deal", "deal_id"),
         CheckConstraint("score BETWEEN 0 AND 100", name="ck_lead_scores_score_range"),

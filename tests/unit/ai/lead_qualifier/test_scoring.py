@@ -5,6 +5,7 @@ from src.ai.lead_qualifier.scoring import (
     compute_readiness,
     compute_win_likelihood,
     level_from_score,
+    normalize_price_range,
 )
 
 FULL_MARKS = {
@@ -151,3 +152,24 @@ class TestComputeWinLikelihood:
         for factor in win["factors"]:
             assert factor["reason"].strip()
             assert factor["impact"] in {"positive", "neutral", "negative"}
+
+
+class TestNormalizePriceRange:
+    """Model viết tắt "30 triệu" thành 30 → giao diện in ra "30 ₫". Chặn ở backend."""
+
+    def test_viet_tat_theo_trieu_thi_nhan_len(self) -> None:
+        assert normalize_price_range(30, 50) == (30_000_000, 50_000_000)
+
+    def test_so_day_du_thi_giu_nguyen(self) -> None:
+        assert normalize_price_range(30_000_000, 45_000_000) == (30_000_000, 45_000_000)
+
+    def test_so_lung_chung_thi_tra_0_chu_khong_doan(self) -> None:
+        """1.000–500.000: không đoán nổi ý model. Thà không hiện gì còn hơn hiện sai."""
+        assert normalize_price_range(50_000, 90_000) == (0, 0)
+
+    def test_khong_uoc_luong_duoc_thi_van_la_0(self) -> None:
+        assert normalize_price_range(0, 0) == (0, 0)
+        assert normalize_price_range(None, None) == (0, 0)
+
+    def test_model_tra_rac_thi_ve_0_chu_khong_no(self) -> None:
+        assert normalize_price_range("ba muoi trieu", []) == (0, 0)

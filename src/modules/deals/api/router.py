@@ -14,7 +14,11 @@ from src.infrastructure.database.session import get_db_session
 from src.modules.deals.application.attachment_service import DealAttachmentService
 from src.modules.deals.application.service import DealsService
 from src.modules.deals.schemas.request import DealRequest, DealStageRequest
-from src.modules.deals.schemas.response import DealResponse, IntakeResponse
+from src.modules.deals.schemas.response import (
+    DealResponse,
+    IntakeResponse,
+    LeadScoreHistoryResponse,
+)
 from src.shared.dependencies.ai import AIFacadeDep
 from src.shared.dependencies.auth import CurrentUserId
 from src.shared.responses.response import ApiResponse, PaginatedResponse
@@ -119,6 +123,24 @@ async def delete_deal(
 ) -> ApiResponse[MsgResp]:
     await DealsService(db=db).delete(user_id, deal_id)
     return ApiResponse.ok(MsgResp(detail="Deal deleted"))
+
+
+@router.get(
+    "/{deal_id}/qualifications",
+    response_model=ApiResponse[list[LeadScoreHistoryResponse]],
+)
+async def list_deal_qualifications(
+    deal_id: uuid.UUID,
+    user_id: CurrentUserId,
+    db: DBSession,
+) -> ApiResponse[list[LeadScoreHistoryResponse]]:
+    """Lịch sử chấm điểm của deal — mới nhất trước, kèm bảng căn cứ.
+
+    Thay cho localStorage: kết quả chấm điểm là căn cứ ra quyết định tiền bạc, để ở trình
+    duyệt là đổi máy/xoá cache thì mất.  #Huynh
+    """
+    rows = await DealsService(db=db).list_qualifications(user_id, deal_id)
+    return ApiResponse.ok([LeadScoreHistoryResponse.model_validate(r) for r in rows])
 
 
 @router.post("/{deal_id}/qualify")

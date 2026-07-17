@@ -274,6 +274,10 @@ class DealsRepository:
         timeline_signal: str | None = None,
         urgency_signal: str | None = None,
         red_flags: list | None = None,
+        breakdown: list | None = None,
+        next_step: str | None = None,
+        detected_signals: list | None = None,
+        prompt_version: str | None = None,
     ):
         model = LeadScoreModel(
             id=id,
@@ -288,6 +292,10 @@ class DealsRepository:
             timeline_signal=timeline_signal,
             urgency_signal=urgency_signal,
             red_flags=red_flags,
+            breakdown=breakdown,
+            next_step=next_step,
+            detected_signals=detected_signals,
+            prompt_version=prompt_version,
         )
         self.db.add(model)
         await self.db.flush()
@@ -297,3 +305,21 @@ class DealsRepository:
         await self.db.flush()
         await self.db.refresh(obj)
         return obj
+
+    async def list_lead_scores(self, deal_id: uuid.UUID, owner_user_id: uuid.UUID) -> list:
+        """Lịch sử chấm điểm của một deal — mới nhất trước.
+
+        JOIN sang `deals` để lọc theo chủ sở hữu ngay trong WHERE. `lead_scores` không có
+        cột `owner_user_id`, nên nếu chỉ lọc theo `deal_id` thì ai biết id deal của người
+        khác là đọc được kết quả chấm điểm của họ.  #Huynh
+        """
+        rows = await self.db.scalars(
+            select(LeadScoreModel)
+            .join(DealModel, DealModel.id == LeadScoreModel.deal_id)
+            .where(
+                LeadScoreModel.deal_id == deal_id,
+                DealModel.owner_user_id == owner_user_id,
+            )
+            .order_by(LeadScoreModel.generated_at.desc())
+        )
+        return list(rows)

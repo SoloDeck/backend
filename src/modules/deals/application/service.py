@@ -12,6 +12,7 @@ from src.ai.lead_qualifier.scoring import (
     compute_readiness,
     compute_win_likelihood,
     level_from_score,
+    normalize_price_range,
 )
 from src.modules.deals.domain.aggregates.deal_aggregate import DealAggregate
 from src.modules.deals.domain.entities.deal import Deal
@@ -337,6 +338,15 @@ class DealsService:
             model_version=model_version,
         )
 
+        detected_signals_raw = result.get("detected_signals")
+        detected_signals = (
+            [s if isinstance(s, dict) else s.model_dump() for s in detected_signals_raw]
+            if detected_signals_raw
+            else None
+        )
+
+        # Lưu CẢ PHẦN CHỨNG MINH vào lịch sử, không chỉ con số. `breakdown` (bảng căn cứ
+        # chấm điểm) trước đây chỉ nằm ở localStorage của trình duyệt — đổi máy là mất.
         await self.repo.create_lead_score(
             id=lead_score.id,
             deal_id=lead_score.deal_id,
@@ -350,13 +360,10 @@ class DealsService:
             timeline_signal=result.get("timeline_signal"),
             urgency_signal=result.get("urgency_signal"),
             red_flags=result.get("red_flags"),
-        )
-
-        detected_signals_raw = result.get("detected_signals")
-        detected_signals = (
-            [s if isinstance(s, dict) else s.model_dump() for s in detected_signals_raw]
-            if detected_signals_raw
-            else None
+            breakdown=result.get("score_breakdown"),
+            next_step=result.get("next_step"),
+            detected_signals=detected_signals,
+            prompt_version=result.get("prompt_version"),
         )
 
         deal_model.ai_qualification_score = lead_score.score
@@ -371,8 +378,14 @@ class DealsService:
         deal_model.ai_qualification_next_step = result.get("next_step")
         deal_model.ai_qualification_detected_signals = detected_signals
         deal_model.ai_qualification_suggested_actions = result.get("suggested_actions")
-        deal_model.ai_qualification_price_range_min = result.get("price_range_min") or None
-        deal_model.ai_qualification_price_range_max = result.get("price_range_max") or None
+        # Model hay viết tắt "30 triệu" thành 30 → giao diện in ra "30 ₫". Chữa ở đây.
+        price_low, price_high = normalize_price_range(
+            result.get("price_range_min"), result.get("price_range_max")
+        )
+        result["price_range_min"] = price_low
+        result["price_range_max"] = price_high
+        deal_model.ai_qualification_price_range_min = price_low or None
+        deal_model.ai_qualification_price_range_max = price_high or None
         await self.repo.save(deal_model)
 
         return {
@@ -381,6 +394,15 @@ class DealsService:
             "ai_qualification_score": score,
             "ai_qualification_recommendation": aggregate.deal.ai_recommendation,
         }
+
+    async def list_qualifications(self, user_id: uuid.UUID, deal_id: uuid.UUID) -> list:
+        """Lịch sử chấm điểm của deal — mới nhất trước.
+
+        Mỗi lần chấm là một dòng RIÊNG, không ghi đè. Sửa deal rồi chấm lại thì bản cũ vẫn
+        còn nguyên để đối chiếu — đó là lý do có bảng lịch sử.  #Huynh
+        """
+        await self._get_deal(user_id, deal_id)  # 404 nếu deal không phải của người này
+        return await self.repo.list_lead_scores(deal_id, user_id)
 
     async def qualify_deal(
         self,

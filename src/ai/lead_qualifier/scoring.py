@@ -74,9 +74,11 @@ def compute_readiness(raw_breakdown: Any) -> tuple[int, list[dict[str, Any]]]:
         if isinstance(entry, dict):
             points = _clamp(entry.get("points"), 0, max_points)
             reason = str(entry.get("reason") or "").strip()
+            evidence = str(entry.get("evidence") or "").strip()
         else:
             points = _clamp(entry, 0, max_points)
             reason = ""
+            evidence = ""
 
         total += points
         breakdown.append(
@@ -86,6 +88,19 @@ def compute_readiness(raw_breakdown: Any) -> tuple[int, list[dict[str, Any]]]:
                 "points": points,
                 "max_points": max_points,
                 "reason": reason,
+                # DỮ KIỆN THẬT lấy từ lời khách — "trước 30/09/2026", "120 triệu", chứ không
+                # phải nhận xét của AI. `reason` trả lời "vì sao được ngần này điểm";
+                # `evidence` trả lời "khách đã nói ĐÚNG CÁI GÌ".
+                #
+                # Đây là thứ freelancer thật sự cần: nắm được các mốc quan trọng mà KHÔNG
+                # phải mở file PDF ra đọc. Rỗng = khách không hề nhắc tới, và giao diện phải
+                # nói thẳng điều đó thay vì để trống.
+                #
+                # 0 điểm thì ÉP evidence về None ngay tại đây, không tin model tự giữ luật:
+                # 0 điểm nghĩa là khách không nói gì — mà không nói gì thì lấy đâu ra dữ kiện
+                # để trích. Model đôi lúc vẫn điền một câu suy đoán vào, và một câu bịa nằm
+                # ngay dưới dòng "Ngân sách 0/25" thì còn tệ hơn là để trống.  #Huynh
+                "evidence": (evidence or None) if points > 0 else None,
             }
         )
 
@@ -214,10 +229,18 @@ def compute_win_likelihood(
     )
 
     # 3. Nguồn deal (0–25): khách được giới thiệu dễ chốt hơn khách lạ.
-    source_points, source_impact, source_reason = _source_signal(source)
+    source_points, source_impact, source_reason, source_evidence = _source_signal(source)
     total += source_points
     factors.append(
-        _factor("source", "Nguồn deal", source_points, 25, source_impact, source_reason)
+        _factor(
+            "source",
+            "Nguồn deal",
+            source_points,
+            25,
+            source_impact,
+            source_reason,
+            evidence=source_evidence,
+        )
     )
 
     # 4. Độ chi tiết khách tự mô tả (0–20): người bỏ công mô tả kỹ là người nghiêm túc.
@@ -264,7 +287,13 @@ def _impact(points: int, max_points: int) -> str:
 
 
 def _factor(
-    key: str, label: str, points: int, max_points: int, impact: str, reason: str
+    key: str,
+    label: str,
+    points: int,
+    max_points: int,
+    impact: str,
+    reason: str,
+    evidence: str | None = None,
 ) -> dict[str, Any]:
     """``key`` để frontend GHÉP yếu tố này với đúng tiêu chí bên thang sẵn sàng.
 
@@ -278,19 +307,35 @@ def _factor(
         "label": label,
         "points": points,
         "max_points": max_points,
+        # Chỉ `source` có evidence riêng ở thang này — nó là yếu tố DUY NHẤT không lấy dữ
+        # kiện từ lời khách mà từ chính hệ thống (deal vào qua kênh nào). Các yếu tố còn lại
+        # (budget/timeline/detail) dùng chung evidence với thang sẵn sàng, nên không lặp
+        # lại ở đây.  #Huynh
+        "evidence": evidence,
         "impact": impact,
         "reason": reason,
     }
 
 
-def _source_signal(source: str | None) -> tuple[int, str, str]:
+# Nhãn tiếng Việt cho từng kênh — dùng làm `evidence` của yếu tố "Nguồn deal".
+SOURCE_LABELS: dict[str, str] = {
+    "referral": "Được người khác giới thiệu",
+    "inbound": "Khách tự tìm đến (biểu mẫu tiếp nhận, website)",
+    "outreach": "Bạn chủ động tiếp cận khách",
+    "platform": "Qua nền tảng freelance",
+    "other": "Kênh khác",
+}
+
+
+def _source_signal(source: str | None) -> tuple[int, str, str, str | None]:
+    evidence = SOURCE_LABELS.get(source or "")
     if source == "referral":
-        return 25, "positive", "Khách được giới thiệu — tỉ lệ chốt thường cao hơn."
+        return 25, "positive", "Khách được giới thiệu — tỉ lệ chốt thường cao hơn.", evidence
     if source == "inbound":
-        return 15, "neutral", "Khách tự tìm đến — đã có nhu cầu sẵn."
+        return 15, "neutral", "Khách tự tìm đến — đã có nhu cầu sẵn.", evidence
     if source == "outreach":
-        return 5, "negative", "Bạn chủ động tiếp cận — khách chưa chắc đã có nhu cầu."
-    return 10, "neutral", "Chưa rõ nguồn deal."
+        return 5, "negative", "Bạn chủ động tiếp cận — khách chưa chắc đã có nhu cầu.", evidence
+    return 10, "neutral", "Chưa rõ nguồn deal.", evidence
 
 
 def _to_number(value: Any) -> float | None:
@@ -301,3 +346,39 @@ def _to_number(value: Any) -> float | None:
     except (TypeError, ValueError):
         return None
     return number if number > 0 else None
+
+
+# Dự án freelance thật không bao giờ dưới 500.000 VNĐ. Con số nhỏ hơn thế gần như chắc
+# chắn là model viết tắt theo "triệu".
+_MIN_REALISTIC_PRICE = 500_000
+_SHORTHAND_THRESHOLD = 1_000
+
+
+def normalize_price_range(low: Any, high: Any) -> tuple[int, int]:
+    """Chữa lại khoảng giá khi model viết tắt đơn vị.
+
+    llama-4-scout trả về ``price_range_min: 30, price_range_max: 50`` — nó đang nghĩ
+    "30–50 triệu" nhưng viết mỗi con số. Giao diện in ra thành "30 ₫ - 50 ₫", nhìn là
+    buồn cười, và freelancer không tin nổi cái gì nữa.
+
+    Prompt đã siết (bắt viết đủ chữ số, nêu ví dụ, nói rõ dự án thật không dưới 500.000).
+    Nhưng prompt là lời khuyên, không phải ràng buộc — nên chặn thêm ở đây.
+
+    Quy tắc: giá trị nằm trong (0, 1000) thì CHẮC CHẮN là viết tắt theo triệu — nhân lên.
+    Giá trị 1.000–500.000 thì đáng ngờ nhưng không đoán được ý model, nên trả 0: **thà
+    không hiện gì còn hơn hiện một con số sai** rồi freelancer báo giá theo.  #Huynh
+    """
+    def _one(value: Any) -> int:
+        try:
+            number = float(value or 0)
+        except (TypeError, ValueError):
+            return 0
+        if number <= 0:
+            return 0
+        if number < _SHORTHAND_THRESHOLD:
+            return int(number * 1_000_000)
+        if number < _MIN_REALISTIC_PRICE:
+            return 0
+        return int(number)
+
+    return _one(low), _one(high)
