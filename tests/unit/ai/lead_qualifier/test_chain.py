@@ -20,37 +20,39 @@ VALID_MOCK_DATA = {
 }
 
 
-class FakeMessage:
+class MockMessage:
     def __init__(self, content):
         self.content = content
 
 
-class FakeChoice:
+class MockChoice:
     def __init__(self, content):
-        self.message = FakeMessage(content)
+        self.message = MockMessage(content)
 
 
-class FakeCompletionResponse:
+class MockCompletion:
     def __init__(self, content):
-        self.choices = [FakeChoice(content)]
+        self.choices = [MockChoice(content)]
 
 
-class FakeCompletions:
+class MockCompletions:
     def __init__(self, content):
         self._content = content
 
     def create(self, *args, **kwargs):
-        return FakeCompletionResponse(self._content)
+        return MockCompletion(self._content)
 
 
-class FakeChat:
+class MockChat:
     def __init__(self, content):
-        self.completions = FakeCompletions(content)
+        self.completions = MockCompletions(content)
 
 
 class FakeClient:
+    """Mimics the shape of a Groq client's `client.chat.completions.create(...)`."""
+
     def __init__(self, content):
-        self.chat = FakeChat(content)
+        self.chat = MockChat(content)
 
 
 def _make_qualifier(data: dict) -> LeadQualifier:
@@ -72,7 +74,7 @@ class TestGetClient:
         q = LeadQualifier()
         # Clear existing cached client if any
         q._client = None
-        with pytest.raises(RuntimeError, match="GROQ_API_KEY is not set in settings"):
+        with pytest.raises(RuntimeError, match="GROQ_API_KEY is not configured"):
             q._get_client()
 
     def test_success_returns_client(self, monkeypatch):
@@ -120,13 +122,13 @@ class TestParseOutput:
 class TestRun:
     async def test_success_returns_dict(self):
         q = _make_qualifier(VALID_MOCK_DATA)
-        result = await q.run(inquiry_text="Need a website")
+        result = await q.run(profession="software-developer", inquiry_context="Need a website")
         assert result["project_type"] == "E-commerce website"
         assert result["suggested_lead_score"] == "HOT"
 
     async def test_all_fields_present(self):
         q = _make_qualifier(VALID_MOCK_DATA)
-        result = await q.run(inquiry_text="Need a website")
+        result = await q.run(profession="software-developer", inquiry_context="Need a website")
         for field in (
             "project_type",
             "budget_signal",
@@ -138,31 +140,31 @@ class TestRun:
         ):
             assert field in result
 
-    async def test_missing_inquiry_text_raises(self):
+    async def test_missing_inquiry_context_raises(self):
         q = _make_qualifier(VALID_MOCK_DATA)
-        with pytest.raises(ValueError, match="inquiry_text is required"):
-            await q.run()
+        with pytest.raises(ValueError, match="inquiry_context is required"):
+            await q.run(profession=None, inquiry_context="")
 
-    async def test_empty_inquiry_text_raises(self):
+    async def test_empty_inquiry_context_raises(self):
         q = _make_qualifier(VALID_MOCK_DATA)
-        with pytest.raises(ValueError, match="inquiry_text is required"):
-            await q.run(inquiry_text="")
+        with pytest.raises(ValueError, match="inquiry_context is required"):
+            await q.run(profession=None, inquiry_context="")
 
     async def test_markdown_response_cleaned(self):
         q = LeadQualifier()
         raw_md = f"```json\n{json.dumps(VALID_MOCK_DATA)}\n```"
         q.set_client_for_tests(FakeClient(raw_md))
-        result = await q.run(inquiry_text="Need a website")
+        result = await q.run(profession="software-developer", inquiry_context="Need a website")
         assert result["suggested_lead_score"] == "HOT"
 
     async def test_invalid_json_from_model_raises(self):
         q = LeadQualifier()
         q.set_client_for_tests(FakeClient("not json"))
         with pytest.raises(AIOutputParseError):
-            await q.run(inquiry_text="Need a website")
+            await q.run(profession="software-developer", inquiry_context="Need a website")
 
     async def test_red_flags_populated(self):
         data = {**VALID_MOCK_DATA, "red_flags": ["No clear scope", "Unrealistic deadline"]}
         q = _make_qualifier(data)
-        result = await q.run(inquiry_text="Need a website")
+        result = await q.run(profession="software-developer", inquiry_context="Need a website")
         assert len(result["red_flags"]) == 2

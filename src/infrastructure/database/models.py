@@ -24,7 +24,7 @@ from sqlalchemy import (
     UniqueConstraint,
     func,
     select,
-    text,
+    text, JSON,
 )
 from sqlalchemy.dialects.postgresql import ARRAY, INET, JSONB, UUID
 from sqlalchemy.dialects.postgresql import ENUM as PgEnum  # noqa: N811
@@ -511,6 +511,8 @@ class DealModel(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     project_type: Mapped[str | None] = mapped_column(String(200), nullable=True)
     service_category: Mapped[str | None] = mapped_column(String(200), nullable=True)
     pricing_tier: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    profession = mapped_column(String(100), nullable=True)
+    profession_fields = mapped_column(JSON, nullable=True)
     ai_qualification_score: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
     ai_qualification_confidence: Mapped[float | None] = mapped_column(nullable=True)
     ai_qualification_recommendation: Mapped[str | None] = mapped_column(

@@ -103,6 +103,8 @@ class DealsService:
             project_type=payload.project_type,
             service_category=payload.service_category,
             pricing_tier=payload.pricing_tier,
+            profession=payload.profession,
+            profession_fields=payload.profession_fields,
         )
 
     async def create_public_intake(self, share_token: str, payload: PublicIntakeRequest):
@@ -143,6 +145,8 @@ class DealsService:
             stage="new_lead",
             source="inbound",
             currency=owner.currency,
+            profession=payload.profession,
+            profession_fields=payload.profession_fields,
         )
         intake = await self.repo.create_intake(
             owner_user_id=owner.id,
@@ -197,6 +201,8 @@ class DealsService:
             "project_type",
             "service_category",
             "pricing_tier",
+            "profession",
+            "profession_fields",
         ):
             value = getattr(payload, field, None)
             if value is not None:
@@ -281,7 +287,8 @@ class DealsService:
 
     async def _run_ai_qualification(self, deal_model, inquiry_context: str) -> dict:
         """Run AI lead qualification against inquiry_context and persist scores on deal_model."""
-        result = await self.ai_facade.qualify_lead(  # type: ignore[union-attr]
+        result = await self.ai_facade.qualify_lead(
+            profession=deal_model.profession,# type: ignore[union-attr]
             inquiry_text=inquiry_context,
             user_can_use_ai=True,  # TODO: get from subscriptions
         )
@@ -389,7 +396,7 @@ class DealsService:
             raise RuntimeError("AIFacade not initialized")
 
         # Build inquiry context from all available deal fields, then layer in intake if present
-        parts = [f"Project: {deal_model.title}"]
+        parts = [f"Profession: {deal_model.profession}",f"Project: {deal_model.title}"]
         if deal_model.source:
             parts.append(f"Source: {deal_model.source}")
         if deal_model.project_type:
@@ -404,6 +411,11 @@ class DealsService:
             parts.append(f"Desired timeline: {deal_model.desired_timeline}")
         if deal_model.notes:
             parts.append(f"Notes: {deal_model.notes}")
+        if deal_model.profession_fields:
+            parts.append("Structured Intake:")
+
+            for key, value in deal_model.profession_fields.items():
+                parts.append(f"{key}: {value}")
 
         intake = await self.repo.get_intake_by_client_id(deal_model.client_id, user_id)
         if intake is not None:

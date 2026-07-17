@@ -299,6 +299,8 @@ class DealModelStub:
     project_type: str | None = None
     service_category: str | None = None
     pricing_tier: str | None = None
+    profession: str | None = None
+    profession_fields: dict | None = None
     ai_qualification_score: int | None = None
     ai_qualification_confidence: float | None = None
     ai_qualification_recommendation: str | None = None
