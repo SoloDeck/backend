@@ -62,6 +62,8 @@ tags:
     description: Read-only derived metrics — revenue, pipeline, win rate, top clients, and AI usage.
   - name: AI
     description: Standalone AI endpoints for lead qualification, proposal/contract generation, and follow-up drafts. All require an AI-enabled subscription.
+  - name: AI Jobs
+    description: Background-tracked AI generation runs (lead qualification, proposal/contract generation) dispatched to a Celery worker and polled for status — use this instead of the synchronous `AI` endpoints when the caller cannot block on the request.
   - name: Admin
     description: Platform administration — user management, subscription overrides, plan catalog, templates, feature flags, AI cost monitoring, and audit logs. Requires `role=admin`.
   - name: Intake Form
@@ -572,8 +574,10 @@ paths:
       tags: [Users]
       summary: Update current user identity fields
       description: |
-        Partial update — only provided fields are changed. Changing `email` triggers a
-        uniqueness check across all users and returns 409 if the address is already taken.
+        Partial update — only provided fields are changed. Email cannot be changed via this
+        endpoint (no re-verification flow exists yet); use an admin action if it must change.
+        Changing `phone` triggers a uniqueness check across all users and returns 409 if the
+        number is already taken.
       requestBody:
         required: true
         content:
@@ -595,11 +599,7 @@ paths:
         '400':
           $ref: '#/components/responses/BadRequest'
         '409':
-          description: Email already in use
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
+          $ref: '#/components/responses/Conflict'
     delete:
       tags: [Users]
       summary: Request soft-deletion of own account
@@ -611,6 +611,42 @@ paths:
           description: Account scheduled for deletion
         '401':
           $ref: '#/components/responses/Unauthorized'
+
+  /users/me/avatar:
+    post:
+      tags: [Users]
+      summary: Upload a new profile picture
+      description: |
+        Accepts a single image file (`image/jpeg`, `image/png`, or `image/webp`, max 5MB)
+        as multipart form data, stores it in object storage, and sets `avatar_url` to the
+        resulting public URL.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        '200':
+          description: Updated user with new avatar_url
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/UserResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
 
   /users/me/professional-profile:
     patch:
@@ -1253,6 +1289,51 @@ paths:
         '204':
           description: Deal deleted
 
+  /deals/{deal_id}/document:
+    parameters:
+      - $ref: '#/components/parameters/DealId'
+    post:
+      tags: [Deals]
+      summary: Upload a PDF document to a deal
+      description: |
+        Accepts a single PDF file (`application/pdf`, max 20MB) as multipart form data,
+        stores it in object storage, and sets `document_url`/`document_filename` on the
+        deal. Re-uploading replaces the previously stored document. Also appends a
+        `document_attached` entry to the deal's activity log.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        '200':
+          description: Updated deal with new document_url
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/DealResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          description: Not a PDF, empty, or exceeds 20MB (VALIDATION_FAILED)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+
   /deals/{deal_id}/stage:
     parameters:
       - $ref: '#/components/parameters/DealId'
@@ -1605,6 +1686,34 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+
+  /proposals/{proposal_id}/pdf:
+    parameters:
+      - $ref: '#/components/parameters/ProposalId'
+    get:
+      tags: [Proposals]
+      summary: Download proposal as PDF
+      description: |
+        Renders the proposal content as an A4 PDF using WeasyPrint and returns it as a
+        binary download. The PDF is generated on the fly — no file is stored server-side.
+        Requires the proposal to belong to the authenticated user.
+      responses:
+        '200':
+          description: PDF file stream
+          content:
+            application/pdf:
+              schema:
+                type: string
+                format: binary
+          headers:
+            Content-Disposition:
+              schema:
+                type: string
+              example: 'attachment; filename="proposal-<id>.pdf"'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
 
   /proposals/{proposal_id}/generate:
     parameters:
@@ -3007,6 +3116,137 @@ paths:
           $ref: '#/components/responses/PaymentRequired'
 
   # -------------------------------------------------------------------------
+  # AI JOBS — background-tracked counterparts to the synchronous AI endpoints
+  # -------------------------------------------------------------------------
+  /ai/jobs:
+    get:
+      tags: [AI Jobs]
+      summary: List AI jobs
+      description: |
+        Returns jobs owned by the authenticated user, optionally filtered by
+        entity. Used by the client to restore in-progress job state after a
+        page refresh or when returning to an entity's detail view.
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - name: entity_type
+          in: query
+          schema:
+            $ref: '#/components/schemas/AiJobEntityType'
+        - name: entity_id
+          in: query
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Paginated AI job list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AiJobPage'
+    post:
+      tags: [AI Jobs]
+      summary: Create a background AI generation job
+      description: |
+        Creates an `AiJob` row and dispatches it to a Celery worker; returns
+        immediately with `status=queued` rather than blocking on the LLM call.
+
+        `entity_type` must match `type`: `lead_qualifier` and
+        `proposal_generator` target `entity_type=deal`; `contract_generator`
+        targets `entity_type=contract` (the contract must already exist in
+        `draft` status — created from an accepted proposal via `/contracts`).
+
+        Pass `idempotency_key` to make retried client requests safe — a
+        second request with the same key returns the original job instead of
+        creating a duplicate. Even without a key, a request for the same
+        `(type, entity_type, entity_id)` while an active (`queued`/`running`)
+        job already exists returns that job instead of enqueuing a second one.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateAiJobRequest'
+      responses:
+        '201':
+          description: Job created (or an existing queued/running/idempotent-replay job returned)
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/AiJobResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: entity_type does not match what `type` requires
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /ai/jobs/{job_id}:
+    parameters:
+      - $ref: '#/components/parameters/AiJobId'
+    get:
+      tags: [AI Jobs]
+      summary: Poll an AI job's status/result
+      description: |
+        Returns 404 if the job does not exist or belongs to another user.
+        `result` and `error` are `null` until the job reaches a terminal
+        status (`succeeded`/`failed`/`cancelled`).
+      responses:
+        '200':
+          description: Job detail
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/AiJobResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /ai/jobs/{job_id}/cancel:
+    parameters:
+      - $ref: '#/components/parameters/AiJobId'
+    post:
+      tags: [AI Jobs]
+      summary: Cancel a queued or running AI job (best-effort)
+      description: |
+        Only valid while `status` is `queued` or `running` — returns 409
+        otherwise. This is best-effort: a job already mid-LLM-call cannot be
+        forcibly interrupted, but the worker checks for cancellation before
+        writing its result and will not overwrite `status=cancelled`.
+      responses:
+        '200':
+          description: Job cancelled
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/AiJobResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Job is already in a terminal status (succeeded/failed/cancelled)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # -------------------------------------------------------------------------
   # ADMIN — requires role: admin
   # -------------------------------------------------------------------------
   /admin/users:
@@ -3074,8 +3314,11 @@ paths:
           $ref: '#/components/responses/NotFound'
     patch:
       tags: [Admin]
-      summary: Update user role or status
-      description: Changes `role` or `status`. Demoting the last admin account is blocked with 409. Every change is written to the audit log.
+      summary: Update user identity, role, or status
+      description: |
+        Changes `role`, `status`, `full_name`, `email`, or `phone`. Changing `email` or
+        `phone` triggers a uniqueness check across all users and returns 409 if already
+        taken by someone else. Every change is written to the audit log.
       requestBody:
         required: true
         content:
@@ -3094,6 +3337,10 @@ paths:
                     properties:
                       data:
                         $ref: '#/components/schemas/AdminUserResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
 
   /admin/users/{user_id}/suspend:
     parameters:
@@ -3242,7 +3489,10 @@ paths:
     post:
       tags: [Admin]
       summary: Create a new subscription plan
-      description: Creates a new plan. Existing subscribers are not affected — they remain on their current plan until they explicitly change it.
+      description: |
+        Creates a new plan, always active. Existing subscribers are not affected — they
+        remain on their current plan until they explicitly change it. To deactivate a plan,
+        use PATCH /admin/plans/{plan_id}.
       requestBody:
         required: true
         content:
@@ -3261,14 +3511,36 @@ paths:
                     properties:
                       data:
                         $ref: '#/components/schemas/SubscriptionPlanResponse'
+        '409':
+          $ref: '#/components/responses/Conflict'
 
   /admin/plans/{plan_id}:
     parameters:
       - $ref: '#/components/parameters/PlanId'
+    get:
+      tags: [Admin]
+      summary: Get a single plan by ID
+      responses:
+        '200':
+          description: Plan detail
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/SubscriptionPlanResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
     patch:
       tags: [Admin]
-      summary: Update a plan (deactivate or change limits; existing subscribers unaffected)
-      description: Deactivating (`is_active=false`) hides the plan from the public catalog but does not cancel existing subscriptions on that plan.
+      summary: Update a plan (partial — name, pricing, limits, or active state)
+      description: |
+        Partial update — only provided fields are changed. Deactivating (`is_active=false`)
+        hides the plan from the public catalog but does not cancel existing subscriptions
+        on that plan. Changing `name` or `slug` returns 409 if already used by another plan.
       requestBody:
         required: true
         content:
@@ -3287,6 +3559,10 @@ paths:
                     properties:
                       data:
                         $ref: '#/components/schemas/SubscriptionPlanResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
 
   /admin/ai-costs:
     get:
@@ -4015,6 +4291,13 @@ components:
       schema:
         type: string
         format: uuid
+    AiJobId:
+      name: job_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
     ContractId:
       name: contract_id
       in: path
@@ -4148,7 +4431,7 @@ components:
 
     NotificationChannel:
       type: string
-      enum: [email, in_app, both]
+      enum: [email, in_app, both, zalo]
 
     ThemePreference:
       type: string
@@ -4404,10 +4687,15 @@ components:
         email:
           type: string
           format: email
+          example: admin@solodesk.dev
         password:
           type: string
           format: password
           minLength: 8
+          example: Admin@SoloDesk2025!
+      example:
+        email: admin@solodesk.dev
+        password: Admin@SoloDesk2025!
 
     RefreshRequest:
       type: object
@@ -4866,9 +5154,6 @@ components:
       properties:
         full_name:
           type: string
-        email:
-          type: string
-          format: email
         avatar_url:
           type: string
           format: uri
@@ -5209,6 +5494,14 @@ components:
           type: string
           format: date-time
           nullable: true
+        document_url:
+          type: string
+          nullable: true
+          description: Public URL of the most recently uploaded PDF document, if any.
+        document_filename:
+          type: string
+          nullable: true
+          description: Original filename of the most recently uploaded PDF document.
         project_id:
           type: string
           format: uuid
@@ -5243,16 +5536,40 @@ components:
         title:
           type: string
           maxLength: 500
+        stage:
+          $ref: '#/components/schemas/DealStage'
         source:
           $ref: '#/components/schemas/DealSource'
+        project_type:
+          type: string
+          maxLength: 200
+          example: "E-commerce Website"
+        service_category:
+          type: string
+          maxLength: 200
+          example: "Web Development"
+        pricing_tier:
+          type: string
+          maxLength: 100
+          example: "standard"
         estimated_value:
+          type: number
+          format: decimal
+          example: 50000000
+        actual_value:
           type: number
           format: decimal
         currency:
           type: string
           default: VND
+        desired_timeline:
+          type: string
+          maxLength: 255
+          description: Estimated project duration (free text, e.g. "2 tháng", "6 tuần")
+          example: "2 tháng"
         notes:
           type: string
+          example: "Khách cần website bán hàng tích hợp thanh toán VNPay và MOMO"
         profession:
           type: string
           nullable: true
@@ -5260,14 +5577,38 @@ components:
           type: object
           additionalProperties: true
           nullable: true
+      example:
+        client_id: "e1f881a5-fe2a-4f62-bcda-c0371077a924"
+        title: "Xây dựng website bán hàng"
+        stage: "new_lead"
+        source: "referral"
+        project_type: "E-commerce Website"
+        service_category: "Web Development"
+        pricing_tier: "standard"
+        estimated_value: 50000000
+        currency: "VND"
+        desired_timeline: "2 tháng"
+        notes: "Khách cần website bán hàng tích hợp thanh toán VNPay và MOMO"
 
     UpdateDealRequest:
       type: object
       properties:
+        client_id:
+          type: string
+          format: uuid
         title:
           type: string
         source:
           $ref: '#/components/schemas/DealSource'
+        project_type:
+          type: string
+          maxLength: 200
+        service_category:
+          type: string
+          maxLength: 200
+        pricing_tier:
+          type: string
+          maxLength: 100
         estimated_value:
           type: number
           format: decimal
@@ -5276,6 +5617,10 @@ components:
           format: decimal
         currency:
           type: string
+        desired_timeline:
+          type: string
+          maxLength: 255
+          description: Estimated project duration (free text, e.g. "2 tháng", "6 tuần")
         notes:
           type: string
         profession:
@@ -5487,6 +5832,89 @@ components:
           enum: [accepted, rejected]
         note:
           type: string
+
+    AiJobType:
+      type: string
+      enum: [lead_qualifier, proposal_generator, contract_generator]
+      description: Same vocabulary as `ai_module` on AI cost records.
+
+    AiJobEntityType:
+      type: string
+      enum: [deal, contract]
+
+    AiJobStatus:
+      type: string
+      enum: [queued, running, succeeded, failed, cancelled]
+
+    AiJobError:
+      type: object
+      required: [code, message, retryable]
+      properties:
+        code:
+          type: string
+          description: One of the standard ErrorCode values (see ErrorResponse).
+        message:
+          type: string
+        retryable:
+          type: boolean
+          description: True if creating a new job for the same entity could plausibly succeed (transient failure); false if it will fail again until something changes.
+
+    CreateAiJobRequest:
+      type: object
+      required: [entity_id, type, entity_type]
+      properties:
+        entity_id:
+          type: string
+          format: uuid
+        type:
+          $ref: '#/components/schemas/AiJobType'
+        entity_type:
+          $ref: '#/components/schemas/AiJobEntityType'
+        idempotency_key:
+          type: string
+          maxLength: 255
+          nullable: true
+
+    AiJobResponse:
+      type: object
+      required: [id, type, entity_type, entity_id, status, created_at, updated_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        type:
+          $ref: '#/components/schemas/AiJobType'
+        entity_type:
+          $ref: '#/components/schemas/AiJobEntityType'
+        entity_id:
+          type: string
+          format: uuid
+        status:
+          $ref: '#/components/schemas/AiJobStatus'
+        result:
+          type: object
+          nullable: true
+          description: 'Shape depends on `type`, e.g. {"proposal_id": "..."} or {"contract_id": "..."}.'
+        error:
+          allOf:
+            - $ref: '#/components/schemas/AiJobError'
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    AiJobPage:
+      allOf:
+        - $ref: '#/components/schemas/PaginatedResponse'
+        - type: object
+          properties:
+            data:
+              type: array
+              items:
+                $ref: '#/components/schemas/AiJobResponse'
 
     PublicProposalResponse:
       type: object
@@ -6664,7 +7092,8 @@ components:
         - type: object
           properties:
             subscription:
-              $ref: '#/components/schemas/SubscriptionResponse'
+              $ref: '#/components/schemas/AdminSubscriptionResponse'
+              nullable: true
             deleted_at:
               type: string
               format: date-time
@@ -6687,6 +7116,13 @@ components:
           $ref: '#/components/schemas/UserRole'
         status:
           $ref: '#/components/schemas/UserStatus'
+        full_name:
+          type: string
+        email:
+          type: string
+          format: email
+        phone:
+          type: string
 
     AdminSubscriptionPage:
       allOf:
@@ -6696,7 +7132,46 @@ components:
             data:
               type: array
               items:
-                $ref: '#/components/schemas/SubscriptionResponse'
+                $ref: '#/components/schemas/AdminSubscriptionResponse'
+
+    AdminSubscriptionResponse:
+      type: object
+      required: [id, user_id, plan_id, plan_name, plan_slug, status, current_period_start, current_period_end, cancel_at_period_end, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        plan_id:
+          type: string
+          format: uuid
+        plan_name:
+          type: string
+        plan_slug:
+          type: string
+        status:
+          $ref: '#/components/schemas/SubscriptionStatus'
+        current_period_start:
+          type: string
+          format: date-time
+        current_period_end:
+          type: string
+          format: date-time
+        cancel_at_period_end:
+          type: boolean
+        cancelled_at:
+          type: string
+          format: date-time
+          nullable: true
+        override_expires_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
 
     AdminSubscriptionOverrideRequest:
       type: object
@@ -6744,7 +7219,17 @@ components:
 
     AdminUpdatePlanRequest:
       type: object
+      description: Partial update — only provided fields are changed. `name`/`slug` are checked for uniqueness against other plans (409 if taken).
       properties:
+        name:
+          type: string
+        slug:
+          type: string
+        price_monthly:
+          type: number
+          format: decimal
+        currency:
+          type: string
         max_ai_generations_per_month:
           type: integer
         can_use_ai:

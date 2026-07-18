@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.infrastructure.database.models import (
     ClientModel,
+    DealActivityEntryModel,
     DealIntakeModel,
     DealModel,
     InvoiceModel,
@@ -171,6 +172,7 @@ class DealsRepository:
         owner_user_id: uuid.UUID,
         title: str | None = None,
         stage: str | None = None,
+        client_id: uuid.UUID | None = None,
         page: int = 1,
         page_size: int = 20,
     ) -> tuple[list, int]:
@@ -179,6 +181,8 @@ class DealsRepository:
             conditions.append(DealModel.title.ilike(f"%{title}%"))
         if stage is not None:
             conditions.append(DealModel.stage == stage)
+        if client_id is not None:
+            conditions.append(DealModel.client_id == client_id)
         total = (
             await self.db.scalar(select(func.count()).select_from(DealModel).where(*conditions))
             or 0
@@ -231,3 +235,21 @@ class DealsRepository:
         await self.db.flush()
         await self.db.refresh(obj)
         return obj
+
+    async def create_activity_entry(
+        self,
+        *,
+        deal_id: uuid.UUID,
+        owner_user_id: uuid.UUID,
+        entry_type: str,
+        description: str,
+    ):
+        entry = DealActivityEntryModel(
+            deal_id=deal_id,
+            owner_user_id=owner_user_id,
+            entry_type=entry_type,
+            description=description,
+        )
+        self.db.add(entry)
+        await self.db.flush()
+        return entry

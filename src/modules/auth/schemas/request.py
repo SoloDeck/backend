@@ -24,6 +24,15 @@ class RegisterRequest(BaseModel):
 
 
 class LoginRequest(BaseModel):
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "email": "admin@solodesk.dev",
+                "password": "Admin@SoloDesk2025!",
+            }
+        }
+    }
+
     email: EmailStr
     password: str
 

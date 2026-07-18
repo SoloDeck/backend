@@ -4,11 +4,14 @@ import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
+import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.ai.facade import AIFacade
+from src.integrations.storage.client import StorageClient
 from src.modules.deals.domain.aggregates.deal_aggregate import DealAggregate
 from src.modules.deals.domain.entities.deal import Deal
+from src.modules.deals.domain.entities.deal_activity import DealActivityType
 from src.modules.deals.domain.value_objects.ai_confidence import AIConfidence
 from src.modules.deals.domain.value_objects.deal_stage import (
     STAGE_TRANSITIONS,
@@ -21,13 +24,36 @@ from src.shared.exceptions.domain import (
     BusinessRuleError,
     InvalidStateTransitionError,
     NotFoundError,
+    ValidationError,
 )
 from src.shared.rate_limit import FixedWindowRateLimiter
+
+log = structlog.get_logger(__name__)
+
+DOCUMENT_MAX_SIZE_BYTES = 20 * 1024 * 1024  # 20 MB
 
 # Basic per-link guard for the public, unauthenticated intake form. Process-local;
 # a generous window so legitimate submissions are unaffected while a flood of
 # automated posts to a single share link is throttled (returns HTTP 429).
 _public_intake_limiter = FixedWindowRateLimiter(max_requests=20, window_seconds=60)
+
+# Fields the lead_qualifier prompt's schema requires (see src/ai/lead_qualifier/
+# prompts/prompts.txt) but that _parse_output never validates the LLM actually
+# returned — logged here so an incomplete AI response is visible, not silent.
+_EXPECTED_QUALIFICATION_KEYS = frozenset(
+    {
+        "project_type",
+        "budget_signal",
+        "timeline_signal",
+        "urgency_signal",
+        "red_flags",
+        "next_step",
+        "detected_signals",
+        "suggested_actions",
+        "price_range_min",
+        "price_range_max",
+    }
+)
 
 
 @dataclass
@@ -35,6 +61,7 @@ class DealsService:
     db: AsyncSession
     ai_facade: AIFacade | None = None
     repo: DealsRepository | None = None
+    storage: StorageClient | None = None
 
     def __post_init__(self) -> None:
         if self.repo is None:
@@ -141,11 +168,12 @@ class DealsService:
         user_id: uuid.UUID,
         title: str | None = None,
         stage: str | None = None,
+        client_id: uuid.UUID | None = None,
         page: int = 1,
         page_size: int = 20,
     ) -> tuple[list, int]:
         return await self.repo.list_all(
-            user_id, title=title, stage=stage, page=page, page_size=page_size
+            user_id, title=title, stage=stage, client_id=client_id, page=page, page_size=page_size
         )
 
     async def list_intakes(
@@ -185,6 +213,39 @@ class DealsService:
         deal = await self._get_deal(user_id, deal_id)
         deal.deleted_at = datetime.now(UTC)
         await self.repo.save(deal)
+
+    async def upload_document(
+        self,
+        user_id: uuid.UUID,
+        deal_id: uuid.UUID,
+        *,
+        filename: str,
+        content: bytes,
+        content_type: str,
+    ):  # type: ignore[return]
+        if self.storage is None:
+            raise RuntimeError("Storage client not initialized")
+        if content_type != "application/pdf":
+            raise ValidationError(f"Unsupported file type '{content_type}'. Only PDF is allowed.")
+        if not content:
+            raise ValidationError("Document file is empty")
+        if len(content) > DOCUMENT_MAX_SIZE_BYTES:
+            raise ValidationError("Document must be 20MB or smaller")
+
+        deal = await self._get_deal(user_id, deal_id)
+        key = f"deals/{deal_id}/documents/{uuid.uuid4().hex}.pdf"
+        deal.document_url = await self.storage.upload(
+            key=key, content=content, content_type=content_type
+        )
+        deal.document_filename = filename
+        saved = await self.repo.save(deal)
+        await self.repo.create_activity_entry(
+            deal_id=deal_id,
+            owner_user_id=user_id,
+            entry_type=DealActivityType.DOCUMENT_ATTACHED.value,
+            description=f"Document attached: {filename}",
+        )
+        return saved
 
     async def transition_stage(
         self, user_id: uuid.UUID, deal_id: uuid.UUID, payload: DealStageRequest
@@ -231,6 +292,16 @@ class DealsService:
             inquiry_text=inquiry_context,
             user_can_use_ai=True,  # TODO: get from subscriptions
         )
+
+        missing_keys = sorted(
+            key for key in _EXPECTED_QUALIFICATION_KEYS if result.get(key) is None
+        )
+        if missing_keys:
+            log.warning(
+                "deals.qualify_deal.incomplete_ai_output",
+                deal_id=str(deal_model.id),
+                missing_keys=missing_keys,
+            )
 
         _score_map = {"HOT": 80, "WARM": 50, "COLD": 20}
         _confidence_map = {

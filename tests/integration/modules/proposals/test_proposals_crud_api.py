@@ -1,6 +1,7 @@
 """Integration tests for proposals CRUD and list filters."""
 
 import uuid
+from unittest.mock import patch
 
 from httpx import AsyncClient
 
@@ -34,10 +35,12 @@ async def _make_deal(client: AsyncClient, headers: dict, title: str = "Deal") ->
     return d.json()["data"]["id"]
 
 
-async def _create_proposal(client: AsyncClient, headers: dict, deal_id: str) -> dict:
+async def _create_proposal(
+    client: AsyncClient, headers: dict, deal_id: str, content: dict | None = None
+) -> dict:
     resp = await client.post(
         "/api/v1/proposals",
-        json={"deal_id": deal_id, "content": {"summary": "Proposal text"}},
+        json={"deal_id": deal_id, "content": content or {"summary": "Proposal text"}},
         headers=headers,
     )
     assert resp.status_code == 201, resp.text
@@ -334,3 +337,64 @@ class TestUpdateProposal:
             json={"deal_id": str(uuid.uuid4()), "content": {}},
         )
         assert resp.status_code == 401
+
+
+_FAKE_PDF = b"%PDF-1.4 fake pdf bytes"
+
+_FULL_CONTENT = {
+    "project_overview": "Build an e-commerce platform.",
+    "scope_of_work": ["Frontend", "Backend", "Deployment"],
+    "deliverables": ["Source code", "Documentation"],
+    "timeline": "8 weeks",
+    "pricing": "50,000,000 VND",
+    "payment_terms": "50% upfront, 50% on delivery",
+    "assumptions": "Client provides brand assets.",
+}
+
+
+class TestProposalPdf:
+    """GET /api/v1/proposals/{id}/pdf"""
+
+    async def test_returns_pdf_bytes(self, client: AsyncClient) -> None:
+        headers = await _auth(client)
+        deal_id = await _make_deal(client, headers)
+        proposal = await _create_proposal(client, headers, deal_id, content=_FULL_CONTENT)
+
+        with patch(
+            "src.ai.proposal_generator.application.render.ProposalPdfRenderer.render_pdf",
+            return_value=_FAKE_PDF,
+        ):
+            resp = await client.get(f"/api/v1/proposals/{proposal['id']}/pdf", headers=headers)
+
+        assert resp.status_code == 200
+        assert resp.headers["content-type"] == "application/pdf"
+        assert f"proposal-{proposal['id']}.pdf" in resp.headers["content-disposition"]
+        assert resp.content == _FAKE_PDF
+
+    async def test_unauthenticated_returns_401(self, client: AsyncClient) -> None:
+        resp = await client.get(f"/api/v1/proposals/{uuid.uuid4()}/pdf")
+        assert resp.status_code == 401
+
+    async def test_unknown_proposal_returns_404(self, client: AsyncClient) -> None:
+        headers = await _auth(client)
+        with patch(
+            "src.ai.proposal_generator.application.render.ProposalPdfRenderer.render_pdf",
+            return_value=_FAKE_PDF,
+        ):
+            resp = await client.get(f"/api/v1/proposals/{uuid.uuid4()}/pdf", headers=headers)
+        assert resp.status_code == 404
+
+    async def test_other_users_proposal_returns_404(self, client: AsyncClient) -> None:
+        headers_a = await _auth(client)
+        headers_b = await _auth(client)
+        deal_id = await _make_deal(client, headers_a)
+        proposal = await _create_proposal(client, headers_a, deal_id, content=_FULL_CONTENT)
+
+        with patch(
+            "src.ai.proposal_generator.application.render.ProposalPdfRenderer.render_pdf",
+            return_value=_FAKE_PDF,
+        ):
+            resp = await client.get(
+                f"/api/v1/proposals/{proposal['id']}/pdf", headers=headers_b
+            )
+        assert resp.status_code == 404

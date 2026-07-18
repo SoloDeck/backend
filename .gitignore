@@ -58,7 +58,10 @@ Dockerfile.local
 compose.override.yml
 
 # Temporary image storage
-temp_img/
+temp_docs/
+
+# Private docs — instructions/info not meant for the repo
+private_docs/
 
 # Alembic — migrations are intentionally tracked in version control
 

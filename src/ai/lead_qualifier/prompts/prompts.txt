@@ -41,3 +41,9 @@ in this casing, with no extra or renamed keys:
   "price_range_min": 0,
   "price_range_max": 0
 }
+
+Rules for new fields:
+- detected_signals: list 3-5 specific signals found (or not found) in the inquiry. Each item MUST have "text" (string) and "is_positive" (boolean).
+- suggested_actions: exactly 3 concrete, actionable next steps the freelancer should take.
+- next_step: the single highest-priority action from suggested_actions, written as a full sentence.
+- price_range_min and price_range_max: the FREELANCER'S fair market price estimate for the described scope and complexity — NOT the client's stated budget. Estimate based on what a professional freelancer in Vietnam should charge for this project. If the client's budget is unrealistic, your estimate should still reflect the real market rate. Use the same currency as the inquiry. Use 0 for both only if the scope is too vague to estimate at all.
