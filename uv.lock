@@ -3410,7 +3410,6 @@ requires-dist = [
     { name = "google-api-core", specifier = ">=2.20.0" },
     { name = "google-auth", extras = ["requests"], specifier = ">=2.53.0" },
     { name = "google-genai", specifier = ">=2.0.0" },
-    { name = "groq", specifier = ">=0.13" },
     { name = "groq", specifier = ">=1.5.0" },
     { name = "httpx", specifier = ">=0.28" },
     { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.28" },

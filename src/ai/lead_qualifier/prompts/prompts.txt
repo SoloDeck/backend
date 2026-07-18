@@ -24,20 +24,48 @@ Never infer:
 
 If required information is missing, state that it is insufficient rather than guessing.
 
+Lead Score Guidelines:
+
+HOT
+- Clear project request
+- Budget explicitly stated
+- Timeline explicitly stated
+
+WARM
+- Some important information missing
+- Budget or timeline unclear
+
+COLD
+- Extremely vague request
+- No meaningful project details
+- Unrealistic expectations explicitly stated
+
+Important:
+
+The lead score reflects only inquiry quality and qualification readiness.
+It is NOT a prediction of project success.
+
 Return ONLY valid JSON matching exactly this schema — use these field names verbatim,
 in this casing, with no extra or renamed keys:
 
 {
-  "project_type": "string",
-  "budget_signal": "string",
-  "timeline_signal": "string",
-  "urgency_signal": "string",
-  "red_flags": ["string"],
-  "suggested_lead_score": "HOT | WARM | COLD",
-  "reasoning": "string",
-  "next_step": "string",
-  "detected_signals": [{"text": "string", "is_positive": true}],
-  "suggested_actions": ["string"],
+  "project_type": "...",
+  "budget_signal": "...",
+  "timeline_signal": "...",
+  "urgency_signal": "...",
+  "red_flags": [],
+  "suggested_lead_score": "HOT|WARM|COLD",
+  "reasoning": "One or two sentences summarising why this score was given.",
+  "next_step": "Single most important action the freelancer should take right now.",
+  "detected_signals": [
+    {"text": "Human-readable signal description", "is_positive": true},
+    {"text": "Missing or negative signal description", "is_positive": false}
+  ],
+  "suggested_actions": [
+    "Concrete next action 1",
+    "Concrete next action 2",
+    "Concrete next action 3"
+  ],
   "price_range_min": 0,
   "price_range_max": 0
 }
