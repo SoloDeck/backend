@@ -218,6 +218,10 @@ class UserModel(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     professional_title: Mapped[str | None] = mapped_column(String(255), nullable=True)
     service_categories: Mapped[list[str] | None] = mapped_column(ARRAY(Text), nullable=True)
     is_listed: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+    # Nghề chuẩn hoá — slug trong src/modules/intake_form/professions.py. Dùng làm ngữ cảnh cho
+    # lead qualifier (chủ deal làm nghề gì). Khác professional_title (headline tự do): đây là MỘT
+    # trong N nghề cố định. Nullable = freelancer chưa chọn.  #Huynh
+    profession: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     # Payment info
     momo_phone_number: Mapped[str | None] = mapped_column(String(20), nullable=True)
