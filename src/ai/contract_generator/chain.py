@@ -20,7 +20,7 @@ from src.shared.exceptions.domain import AIOutputParseError
 
 log = structlog.get_logger()
 
-MODEL = "meta-llama/llama-4-scout-17b-16e-instruct"
+MODEL = "llama-3.3-70b-versatile"
 
 # openapi.yaml khai ContractContentDTO.governing_law có default là "Vietnam".
 # Đây là hằng số, không phải thứ để model đoán.  #Huynh
@@ -77,7 +77,7 @@ class ContractGenerator(BaseAIChain):
         client = self._get_client()
 
         response = client.chat.completions.create(
-            model="meta-llama/llama-4-scout-17b-16e-instruct",
+            model="llama-3.3-70b-versatile",
             messages=[{"role": "user", "content": full_prompt}],
             # Hợp đồng là văn bản pháp lý: cần bám sát dữ liệu, không cần "sáng tạo".
             # Để thấp hơn báo giá (0.2) cho model bớt tự bịa điều khoản.  #Huynh

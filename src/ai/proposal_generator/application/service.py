@@ -10,7 +10,7 @@ from src.ai.shared.token_usage import extract_usage
 from ..schemas.proposal_content import ProposalContent
 from ..schemas.proposal_generation_input import ProposalGenerationInput
 
-MODEL = "meta-llama/llama-4-scout-17b-16e-instruct"
+MODEL = "llama-3.3-70b-versatile"
 
 
 class ProposalGenerationService:
@@ -83,7 +83,7 @@ class ProposalGenerationService:
         prompt = f"{prompt_template}\n\n{self._build_context(request)}\n"
 
         response = self.client.chat.completions.create(
-            model="meta-llama/llama-4-scout-17b-16e-instruct",
+            model="llama-3.3-70b-versatile",
             messages=[
                 {
                     "role": "user",

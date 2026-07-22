@@ -17,7 +17,7 @@ from src.shared.exceptions.domain import AIOutputParseError
 
 log = structlog.get_logger()
 
-MODEL = "meta-llama/llama-4-scout-17b-16e-instruct"
+MODEL = "llama-3.3-70b-versatile"
 
 
 class FollowUpGenerator(BaseAIChain):
@@ -67,7 +67,7 @@ class FollowUpGenerator(BaseAIChain):
         client = self._get_client()
 
         response = client.chat.completions.create(
-            model="meta-llama/llama-4-scout-17b-16e-instruct",
+            model="llama-3.3-70b-versatile",
             messages=[{"role": "user", "content": full_prompt}],
             # Tin nhắn gửi cho khách: cần bám dữ liệu, không cần "sáng tạo". Nhưng để
             # thấp như contract_generator (0.1) thì tin nhắn cứng đờ, đọc như văn mẫu.
