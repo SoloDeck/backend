@@ -227,6 +227,53 @@ class ContractsService:
     async def terminate(self, user_id: uuid.UUID, contract_id: uuid.UUID):  # type: ignore[return]
         return await self.transition_status(user_id, contract_id, "terminated")
 
+    async def _build_document(self, user_id: uuid.UUID, contract_id: uuid.UUID):
+        """Dựng ContractDocument — DÙNG CHUNG cho HTML preview và (sau này) PDF.
+
+        Tách riêng để bản trên màn hình và bản khách nhận render từ ĐÚNG MỘT document.
+        Nếu hai bên tự dựng lấy thì kiểu gì cũng có ngày lệch — mà tờ hợp đồng trên màn
+        hình khác tờ khách ký là thứ khiến hệ thống nhìn như lừa đảo. Cùng khuôn mẫu với
+        proposals._build_document.  #Huynh
+        """
+        from src.modules.contracts.application.contract_content import (
+            build_contract_document,
+        )
+
+        contract = await self._get_contract(user_id, contract_id)
+        deal = await self.repo.get_deal(contract.deal_id)
+        client = await self.repo.get_client(contract.client_id)
+        user = await self.repo.get_user(user_id)
+        milestones = await self.repo.get_milestones(contract.id)
+
+        return build_contract_document(
+            contract, deal=deal, client=client, user=user, milestones=milestones
+        )
+
+    async def render_preview_html(
+        self, user_id: uuid.UUID, contract_id: uuid.UUID, *, editable: bool = False
+    ) -> str:
+        """HTML xem trước — CHÍNH XÁC những gì bản PDF sẽ in ra. Frontend nhúng iframe.
+
+        `editable=True` (bản nháp): render thêm ô rỗng cho các điều khoản chưa có, để sửa
+        tại chỗ. Bản đọc-only/PDF thì để False.  #Huynh
+        """
+        from src.ai.contract_generator.application.render import ContractPdfRenderer
+
+        document = await self._build_document(user_id, contract_id)
+        return ContractPdfRenderer().render_html(document, editable=editable)
+
+    async def generate_pdf(self, user_id: uuid.UUID, contract_id: uuid.UUID) -> bytes:
+        """Kết xuất PDF NGAY (đồng bộ) từ CÙNG document với bản xem trước — để freelancer
+        tải về gửi khách. Cùng khuôn với proposals.generate_pdf (weasyprint).
+
+        Khác `export_pdf` cũ: cái đó đẩy task Celery `render_contract_pdf` (đang là stub
+        NotImplementedError) nên chưa chạy được. Ở đây render thẳng, không qua worker.  #Huynh
+        """
+        from src.ai.contract_generator.application.render import ContractPdfRenderer
+
+        document = await self._build_document(user_id, contract_id)
+        return ContractPdfRenderer().render_pdf(document)
+
     async def export_pdf(self, user_id: uuid.UUID, contract_id: uuid.UUID) -> dict:
         from src.workers.pdf_jobs.tasks import render_contract_pdf
 

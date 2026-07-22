@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.infrastructure.database.models import (
     ClientModel,
     ContractModel,
+    ContractPaymentMilestoneModel,
     DealModel,
     PlanModel,
     ProposalModel,
@@ -82,6 +83,16 @@ class ContractsRepository:
 
     async def get_user(self, user_id: uuid.UUID):
         return await self.db.scalar(select(UserModel).where(UserModel.id == user_id))
+
+    async def get_milestones(self, contract_id: uuid.UUID) -> list:
+        """Lịch thanh toán của hợp đồng, theo đúng thứ tự sort_order — để in vào bản
+        render. Cùng nguồn với danh sách 'Mốc thanh toán' trên màn hình.  #Huynh"""
+        result = await self.db.execute(
+            select(ContractPaymentMilestoneModel)
+            .where(ContractPaymentMilestoneModel.contract_id == contract_id)
+            .order_by(ContractPaymentMilestoneModel.sort_order)
+        )
+        return list(result.scalars().all())
 
     async def get_subscription(self, user_id: uuid.UUID):
         return await self.db.scalar(
