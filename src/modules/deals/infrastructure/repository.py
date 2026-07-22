@@ -32,6 +32,12 @@ class DealsRepository:
             )
         )
 
+    async def get_owner_profession(self, owner_user_id: uuid.UUID) -> str | None:
+        """Slug nghề của chủ deal — để lead qualifier ước giá + cảnh báo scam theo nghề."""
+        return await self.db.scalar(
+            select(UserModel.profession).where(UserModel.id == owner_user_id)
+        )
+
     async def get_owner_by_intake_token(self, share_token: str):
         return await self.db.scalar(
             select(UserModel).where(

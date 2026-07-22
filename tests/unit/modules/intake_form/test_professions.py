@@ -10,6 +10,7 @@ from src.modules.intake_form.professions import (
     all_professions,
     is_valid_profession,
     profession_label,
+    profession_scam_hint,
 )
 
 
@@ -39,3 +40,12 @@ def test_lay_nhan_tieng_viet():
     assert profession_label("graphic-design") == "Thiết kế đồ hoạ"
     assert profession_label(None) is None
     assert profession_label("khong-co-slug-nay") is None
+
+
+def test_scam_hint_theo_nghe():
+    # Mỗi nghề trong danh mục đều có gợi ý scam đặc thù (để lead qualifier cảnh báo).
+    for item in all_professions():
+        assert profession_scam_hint(item["value"])
+    # Chưa chọn / không tồn tại -> None.
+    assert profession_scam_hint(None) is None
+    assert profession_scam_hint("khong-co-slug-nay") is None

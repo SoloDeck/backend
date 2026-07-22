@@ -24,6 +24,7 @@ from src.modules.deals.domain.value_objects.deal_stage import (
 )
 from src.modules.deals.infrastructure.repository import DealsRepository
 from src.modules.deals.schemas.request import DealRequest, DealStageRequest, PublicIntakeRequest
+from src.modules.intake_form.professions import profession_label, profession_scam_hint
 from src.modules.subscriptions.application.ai_usage import AiUsageService
 from src.shared.exceptions.domain import (
     BusinessRuleError,
@@ -303,9 +304,18 @@ class DealsService:
         # NHẬN lượt dùng vào usage_records.  #Huynh
         await self.usage.consume(deal_model.owner_user_id)  # type: ignore[union-attr]
 
+        # Nghề của freelancer (chủ deal) → ngữ cảnh cho AI: ước giá đúng nghề + cảnh báo
+        # scam đặc thù nghề. Đổi slug -> nhãn + gợi ý scam Ở ĐÂY (tầng business) rồi mới
+        # truyền chuỗi xuống AI — src/ai/ không được import ngược lên src/modules/.  #Huynh
+        profession_slug = await self.repo.get_owner_profession(  # type: ignore[union-attr]
+            deal_model.owner_user_id
+        )
+
         result = await self.ai_facade.qualify_lead(  # type: ignore[union-attr]
             inquiry_text=inquiry_context,
             user_can_use_ai=True,  # đã kiểm tra ở consume() ngay trên
+            profession=profession_label(profession_slug),
+            scam_hint=profession_scam_hint(profession_slug),
         )
 
         # Ghi token + chi phí ước tính vào ai_cost_records (màn hình admin đọc bảng này).

@@ -40,6 +40,16 @@ You MUST NOT infer:
 If information is not present, return:
 "Không đủ thông tin"
 
+NGỮ CẢNH NGHỀ (nếu đầu vào có):
+Đầu vào có thể kèm 2 dòng: "Nghề của freelancer: ..." và "Mẫu lừa đảo phổ biến của
+nghề này: ...". Cách dùng:
+1. price_range: ước theo GIÁ THỊ TRƯỜNG của ĐÚNG nghề đó (mỗi nghề một khung giá khác).
+2. red_flags: ĐỐI CHIẾU mẫu lừa đảo với những gì KHÁCH THỰC SỰ NÓI. Khớp thì thêm vào
+   red_flags kèm trích lời khách. KHÔNG khớp thì THÔI — tuyệt đối không bịa cờ đỏ chỉ vì
+   nghề đó hay bị lừa kiểu này.
+3. Nghề KHÔNG được làm phồng hay tụt điểm 5 tiêu chí — điểm vẫn chấm theo độ rõ của yêu cầu.
+Không có 2 dòng đó thì bỏ qua phần này.
+
 THANG CHẤM ĐIỂM (score_breakdown):
 
 Chấm TỪNG tiêu chí dưới đây. KHÔNG cộng tổng — backend tự cộng.
@@ -207,10 +217,17 @@ Schema:
 Rules for new fields:
 - score_breakdown: BẮT BUỘC có đủ 5 khoá (scope, budget, timeline, detail, context).
   "points" là số nguyên, không vượt quá mức tối đa của tiêu chí. "reason" bằng tiếng Việt,
-  một câu ngắn nói VÌ SAO chấm mức đó — người dùng sẽ đọc câu này để kiểm chứng.
+  BẮT BUỘC gồm 2 phần:
+    (1) Vì sao được mức điểm này (bám dữ kiện khách đã nói).
+    (2) NẾU chưa đạt tối đa của tiêu chí: thêm MỘT câu bắt đầu bằng "Để lên tối đa: " nêu
+        CỤ THỂ freelancer cần HỎI hoặc THU THẬP thêm gì. Đã đạt tối đa thì bỏ phần (2).
+  Ví dụ (scope 20/30): "Biết loại việc và vài hạng mục nhưng chưa đủ để báo giá chắc. Để lên
+  tối đa: hỏi khách liệt kê đầy đủ tính năng và sản phẩm bàn giao."
+  Ví dụ (budget 0/25): "Khách chưa nhắc gì về tiền. Để lên tối đa: hỏi khách ngân sách dự kiến."
 - suggested_lead_score: cứ ước lượng, nhưng backend sẽ TÍNH LẠI từ score_breakdown.
 - detected_signals: list 3-5 specific signals found (or not found) in the inquiry. Each item MUST have "text" (string) and "is_positive" (boolean).
 - suggested_actions: exactly 3 concrete next steps. Xưng "bạn", giọng khuyên trực tiếp.
+  ƯU TIÊN tiêu chí đang MẤT NHIỀU ĐIỂM NHẤT — khuyên bạn hỏi/làm rõ đúng chỗ đang thiếu.
 - next_step: the single highest-priority action, written as a full sentence.
   XƯNG HÔ VỚI NGƯỜI ĐỌC LÀ "BẠN", KHÔNG PHẢI "freelancer". Người đọc CHÍNH LÀ freelancer —
   nói "freelancer nên làm X" nghe như đang nói về người thứ ba. Viết như một lời khuyên
@@ -218,7 +235,8 @@ Rules for new fields:
   thông tin, gợi ý bạn nên BỔ SUNG gì (hỏi ngân sách, hỏi mốc thời gian, làm rõ phạm vi).
 - price_range_min / price_range_max: giá THỊ TRƯỜNG mà một freelancer Việt nên tính cho
   khối lượng công việc này — KHÔNG PHẢI ngân sách khách đưa ra. Ngân sách khách phi thực
-  tế thì ước lượng vẫn phải bám giá thị trường thật.
+  tế thì ước lượng vẫn phải bám giá thị trường thật. Nếu đầu vào có "Nghề của freelancer",
+  bám khung giá thị trường của ĐÚNG nghề đó.
 
   ĐƠN VỊ — BẮT BUỘC: số nguyên VNĐ ĐẦY ĐỦ, viết hết chữ số. KHÔNG viết tắt theo "triệu".
 

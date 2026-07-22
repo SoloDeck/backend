@@ -16,7 +16,31 @@ from src.shared.exceptions.domain import AIOutputParseError
 
 log = structlog.get_logger()
 
-MODEL = "meta-llama/llama-4-scout-17b-16e-instruct"
+MODEL = "llama-3.3-70b-versatile"
+
+
+def build_qualifier_prompt(
+    prompt_template: str,
+    inquiry_text: str,
+    profession: str | None = None,
+    scam_hint: str | None = None,
+) -> str:
+    """Ghép prompt cuối gửi Groq: template tĩnh + ngữ cảnh nghề (nếu có) + inquiry.
+
+    Tách riêng để test được mà không cần gọi Groq. ``profession``/``scam_hint`` là DỮ LIỆU
+    đầu vào theo request, không nằm trong system.txt nên KHÔNG đổi prompt_version.
+    """
+    context_lines = ""
+    if profession:
+        context_lines += f"Nghề của freelancer: {profession}\n"
+    if scam_hint:
+        context_lines += f"Mẫu lừa đảo phổ biến của nghề này: {scam_hint}\n"
+
+    return f"""{prompt_template}
+
+{context_lines}Client Inquiry:
+{inquiry_text}
+"""
 
 
 class LeadQualifier(BaseAIChain):
@@ -64,7 +88,7 @@ class LeadQualifier(BaseAIChain):
         client = self._get_client()
 
         response = client.chat.completions.create(
-            model="meta-llama/llama-4-scout-17b-16e-instruct",
+            model="llama-3.3-70b-versatile",
             messages=[
                 {
                     "role": "user",
@@ -99,16 +123,19 @@ class LeadQualifier(BaseAIChain):
         if not inquiry_text:
             raise ValueError("inquiry_text is required for LeadQualifier")
 
+        # Ngữ cảnh nghề của freelancer (nếu có): nhãn nghề để ước giá đúng nghề, và mẫu
+        # lừa đảo đặc thù nghề để đối chiếu. Đây là DỮ LIỆU đầu vào (như inquiry_text) nên
+        # KHÔNG tính vào prompt_version — version chỉ băm system.txt tĩnh.  #Huynh
+        profession = kwargs.get("profession")
+        scam_hint = kwargs.get("scam_hint")
+
         # KHÔNG có prompt dự phòng. Trước đây thiếu file thì rơi về một prompt rác 2 dòng
         # ("Qualify the following lead as JSON...") và hệ thống VẪN CHẤM ĐIỂM — sai bét mà
         # không ai biết. Thà nổ to còn hơn âm thầm chấm sai.  #Huynh
         prompt_template = load_prompt("lead_qualifier")
-
-        full_prompt = f"""{prompt_template}
-
-Client Inquiry:
-{inquiry_text}
-"""
+        full_prompt = build_qualifier_prompt(
+            prompt_template, inquiry_text, profession, scam_hint
+        )
 
         try:
             raw_response = await asyncio.to_thread(
