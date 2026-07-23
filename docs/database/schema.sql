@@ -440,6 +440,8 @@ CREATE TABLE deals (
     ai_qualification_score          SMALLINT,
     ai_qualification_recommendation ai_recommendation,
     closed_at                       TIMESTAMPTZ,
+    document_url                    VARCHAR(2048),
+    document_filename               VARCHAR(255),
     created_at                      TIMESTAMPTZ         NOT NULL DEFAULT NOW(),
     updated_at                      TIMESTAMPTZ         NOT NULL DEFAULT NOW(),
     deleted_at                      TIMESTAMPTZ,

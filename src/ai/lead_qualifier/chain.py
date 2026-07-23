@@ -1,13 +1,18 @@
-"""LeadQualifier Groq chain."""
+"""LeadQualifier Groq Chain."""
 
 import asyncio
 import json
-import os
 from typing import Any
 
 import structlog
 from groq import Groq
 
+from src.ai.lead_qualifier.prompt_builder import (
+    LeadQualificationPromptBuilder,
+)
+from src.ai.lead_qualifier.retriever import (
+    LeadQualificationRetriever,
+)
 from src.ai.shared.base import BaseAIChain
 from src.ai.shared.json_output import extract_json_object
 from src.config.settings import settings
@@ -18,26 +23,40 @@ log = structlog.get_logger()
 
 class LeadQualifier(BaseAIChain):
     module_name = "lead_qualifier"
+
     _client: Groq | None = None
 
+    # Loaded once for the application's lifetime
+    _retriever = LeadQualificationRetriever()
+    _prompt_builder = LeadQualificationPromptBuilder()
+
+    # ---------------------------------------------------------
+    # Groq Client
+    # ---------------------------------------------------------
+
     def _get_client(self) -> Groq:
+
         if self._client is not None:
             return self._client
 
-        api_key = settings.groq_api_key
-        if not api_key:
-            raise RuntimeError("GROQ_API_KEY is not set in settings")
+        if not settings.groq_api_key:
+            raise RuntimeError("GROQ_API_KEY is not configured")
 
-        self._client = Groq(api_key=api_key)
+        self._client = Groq(
+            api_key=settings.groq_api_key,
+        )
+
         return self._client
 
     def set_client_for_tests(self, client: Any) -> None:
-        """ONLY used in unit tests."""
         self._client = client
 
     def _build_chain(self) -> Any:
-        """Required by BaseAIChain."""
         return None
+
+    # ---------------------------------------------------------
+    # Output Parser
+    # ---------------------------------------------------------
 
     def _parse_output(self, raw: str) -> dict[str, Any]:
         """Bóc khối JSON ra khỏi câu trả lời của model.
@@ -50,23 +69,30 @@ class LeadQualifier(BaseAIChain):
         except json.JSONDecodeError as exc:
             log.error("ai.lead_qualifier.parse_failed", raw=raw, error=str(exc))
             raise AIOutputParseError(
-                f"Failed to parse lead qualification output: {exc}",
+                f"Unable to parse LeadQualifier output: {exc}",
                 raw_output=raw,
             ) from exc
 
-    def _call_groq(self, full_prompt: str) -> str:
-        """Blocking Groq API call executed in a worker thread."""
+    # ---------------------------------------------------------
+    # LLM Call
+    # ---------------------------------------------------------
+
+    def _call_groq(
+        self,
+        prompt: str,
+    ) -> str:
+
         client = self._get_client()
 
         response = client.chat.completions.create(
             model="meta-llama/llama-4-scout-17b-16e-instruct",
+            temperature=0.2,
             messages=[
                 {
                     "role": "user",
-                    "content": full_prompt,
+                    "content": prompt,
                 }
             ],
-            temperature=0.2,
             # Buộc model trả JSON thuần. Thiếu cờ này, llama-4-scout bọc câu trả lời
             # trong văn bản ("Here is the draft qualification result:") và parser vỡ.
             # Prompt vốn đã yêu cầu trả JSON, nhưng chỉ cờ này mới khiến API BẢO ĐẢM
@@ -76,43 +102,47 @@ class LeadQualifier(BaseAIChain):
 
         return response.choices[0].message.content or ""
 
-    async def run(self, **kwargs: Any) -> dict[str, Any]:
-        inquiry_text = kwargs.get("inquiry_text")
-        if not inquiry_text:
-            raise ValueError("inquiry_text is required for LeadQualifier")
+    # ---------------------------------------------------------
+    # Public API
+    # ---------------------------------------------------------
 
-        prompt_path = os.path.join(
-            os.path.dirname(__file__),
-            "prompts",
-            "prompts.txt",
+    async def run(
+        self,
+        *,
+        profession: str | None,
+        inquiry_context: str,
+    ) -> dict[str, Any]:
+
+        if not inquiry_context:
+            raise ValueError("inquiry_context is required")
+
+        # Retrieve framework + profession knowledge
+        retrieved_knowledge = self._retriever.retrieve(
+            profession=profession,
+            query=inquiry_context,
+        )
+
+        # Build prompt
+        full_prompt = self._prompt_builder.build(
+            profession=profession,
+            inquiry_context=inquiry_context,
+            retrieved_knowledge=retrieved_knowledge,
         )
 
         try:
-            with open(prompt_path, encoding="utf-8") as f:
-                prompt_template = f.read()
-        except FileNotFoundError:
-            prompt_template = (
-                "Qualify the following lead as JSON with keys: "
-                "score (0-100), qualified (bool), reasoning (str)."
-            )
 
-        full_prompt = f"""{prompt_template}
-
-Client Inquiry:
-{inquiry_text}
-"""
-
-        try:
-            raw_response = await asyncio.to_thread(
+            raw = await asyncio.to_thread(
                 self._call_groq,
                 full_prompt,
             )
 
-            return self._parse_output(raw_response)
+            return self._parse_output(raw)
 
         except Exception as exc:
+
             log.error(
                 "ai.lead_qualifier.failed",
                 error=str(exc),
             )
+
             raise

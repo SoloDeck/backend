@@ -8,8 +8,10 @@ import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.ai.facade import AIFacade
+from src.integrations.storage.client import StorageClient
 from src.modules.deals.domain.aggregates.deal_aggregate import DealAggregate
 from src.modules.deals.domain.entities.deal import Deal
+from src.modules.deals.domain.entities.deal_activity import DealActivityType
 from src.modules.deals.domain.value_objects.ai_confidence import AIConfidence
 from src.modules.deals.domain.value_objects.deal_stage import (
     STAGE_TRANSITIONS,
@@ -22,10 +24,13 @@ from src.shared.exceptions.domain import (
     BusinessRuleError,
     InvalidStateTransitionError,
     NotFoundError,
+    ValidationError,
 )
 from src.shared.rate_limit import FixedWindowRateLimiter
 
 log = structlog.get_logger(__name__)
+
+DOCUMENT_MAX_SIZE_BYTES = 20 * 1024 * 1024  # 20 MB
 
 # Basic per-link guard for the public, unauthenticated intake form. Process-local;
 # a generous window so legitimate submissions are unaffected while a flood of
@@ -56,6 +61,7 @@ class DealsService:
     db: AsyncSession
     ai_facade: AIFacade | None = None
     repo: DealsRepository | None = None
+    storage: StorageClient | None = None
 
     def __post_init__(self) -> None:
         if self.repo is None:
@@ -97,6 +103,8 @@ class DealsService:
             project_type=payload.project_type,
             service_category=payload.service_category,
             pricing_tier=payload.pricing_tier,
+            profession=payload.profession,
+            profession_fields=payload.profession_fields,
         )
 
     async def create_public_intake(self, share_token: str, payload: PublicIntakeRequest):
@@ -137,6 +145,8 @@ class DealsService:
             stage="new_lead",
             source="inbound",
             currency=owner.currency,
+            profession=payload.profession,
+            profession_fields=payload.profession_fields,
         )
         intake = await self.repo.create_intake(
             owner_user_id=owner.id,
@@ -191,6 +201,8 @@ class DealsService:
             "project_type",
             "service_category",
             "pricing_tier",
+            "profession",
+            "profession_fields",
         ):
             value = getattr(payload, field, None)
             if value is not None:
@@ -201,6 +213,39 @@ class DealsService:
         deal = await self._get_deal(user_id, deal_id)
         deal.deleted_at = datetime.now(UTC)
         await self.repo.save(deal)
+
+    async def upload_document(
+        self,
+        user_id: uuid.UUID,
+        deal_id: uuid.UUID,
+        *,
+        filename: str,
+        content: bytes,
+        content_type: str,
+    ):  # type: ignore[return]
+        if self.storage is None:
+            raise RuntimeError("Storage client not initialized")
+        if content_type != "application/pdf":
+            raise ValidationError(f"Unsupported file type '{content_type}'. Only PDF is allowed.")
+        if not content:
+            raise ValidationError("Document file is empty")
+        if len(content) > DOCUMENT_MAX_SIZE_BYTES:
+            raise ValidationError("Document must be 20MB or smaller")
+
+        deal = await self._get_deal(user_id, deal_id)
+        key = f"deals/{deal_id}/documents/{uuid.uuid4().hex}.pdf"
+        deal.document_url = await self.storage.upload(
+            key=key, content=content, content_type=content_type
+        )
+        deal.document_filename = filename
+        saved = await self.repo.save(deal)
+        await self.repo.create_activity_entry(
+            deal_id=deal_id,
+            owner_user_id=user_id,
+            entry_type=DealActivityType.DOCUMENT_ATTACHED.value,
+            description=f"Document attached: {filename}",
+        )
+        return saved
 
     async def transition_stage(
         self, user_id: uuid.UUID, deal_id: uuid.UUID, payload: DealStageRequest
@@ -242,7 +287,8 @@ class DealsService:
 
     async def _run_ai_qualification(self, deal_model, inquiry_context: str) -> dict:
         """Run AI lead qualification against inquiry_context and persist scores on deal_model."""
-        result = await self.ai_facade.qualify_lead(  # type: ignore[union-attr]
+        result = await self.ai_facade.qualify_lead(
+            profession=deal_model.profession,# type: ignore[union-attr]
             inquiry_text=inquiry_context,
             user_can_use_ai=True,  # TODO: get from subscriptions
         )
@@ -350,7 +396,7 @@ class DealsService:
             raise RuntimeError("AIFacade not initialized")
 
         # Build inquiry context from all available deal fields, then layer in intake if present
-        parts = [f"Project: {deal_model.title}"]
+        parts = [f"Profession: {deal_model.profession}",f"Project: {deal_model.title}"]
         if deal_model.source:
             parts.append(f"Source: {deal_model.source}")
         if deal_model.project_type:
@@ -365,6 +411,11 @@ class DealsService:
             parts.append(f"Desired timeline: {deal_model.desired_timeline}")
         if deal_model.notes:
             parts.append(f"Notes: {deal_model.notes}")
+        if deal_model.profession_fields:
+            parts.append("Structured Intake:")
+
+            for key, value in deal_model.profession_fields.items():
+                parts.append(f"{key}: {value}")
 
         intake = await self.repo.get_intake_by_client_id(deal_model.client_id, user_id)
         if intake is not None:

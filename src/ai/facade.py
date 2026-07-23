@@ -44,11 +44,13 @@ class AIFacade:
         self,
         *,
         inquiry_text: str,
+        profession: str | None,
         user_can_use_ai: bool,
     ) -> dict[str, Any]:
         self._check_entitlement(user_can_use_ai)
 
-        return await self.lead_qualifier.run(inquiry_text=inquiry_text)
+        return await self.lead_qualifier.run(profession=profession,
+                                             inquiry_context=inquiry_text)
 
     async def generate_proposal(
         self,

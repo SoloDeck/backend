@@ -1,6 +1,7 @@
 import uuid
 from datetime import datetime
 from decimal import Decimal
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, computed_field
 
@@ -22,6 +23,10 @@ class DealResponse(BaseModel):
     project_type: str | None
     service_category: str | None
     pricing_tier: str | None
+    # Profession-specific qualification
+    profession: str | None = None
+    profession_fields: dict[str, Any] | None = None
+
     ai_qualification_score: int | None
     ai_qualification_recommendation: str | None
     ai_qualification_reasoning: str | None
@@ -36,6 +41,8 @@ class DealResponse(BaseModel):
     ai_qualification_price_range_min: int | None
     ai_qualification_price_range_max: int | None
     closed_at: datetime | None
+    document_url: str | None
+    document_filename: str | None
     created_at: datetime
     updated_at: datetime
 

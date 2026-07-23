@@ -611,6 +611,42 @@ paths:
         '401':
           $ref: '#/components/responses/Unauthorized'
 
+  /users/me/avatar:
+    post:
+      tags: [Users]
+      summary: Upload a new profile picture
+      description: |
+        Accepts a single image file (`image/jpeg`, `image/png`, or `image/webp`, max 5MB)
+        as multipart form data, stores it in object storage, and sets `avatar_url` to the
+        resulting public URL.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        '200':
+          description: Updated user with new avatar_url
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/UserResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+
   /users/me/professional-profile:
     patch:
       tags: [Users]
@@ -1218,6 +1254,51 @@ paths:
       responses:
         '204':
           description: Deal deleted
+
+  /deals/{deal_id}/document:
+    parameters:
+      - $ref: '#/components/parameters/DealId'
+    post:
+      tags: [Deals]
+      summary: Upload a PDF document to a deal
+      description: |
+        Accepts a single PDF file (`application/pdf`, max 20MB) as multipart form data,
+        stores it in object storage, and sets `document_url`/`document_filename` on the
+        deal. Re-uploading replaces the previously stored document. Also appends a
+        `document_attached` entry to the deal's activity log.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        '200':
+          description: Updated deal with new document_url
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/DealResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          description: Not a PDF, empty, or exceeds 20MB (VALIDATION_FAILED)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
 
   /deals/{deal_id}/stage:
     parameters:
@@ -4257,6 +4338,12 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/ApiError'
+    UnprocessableEntity:
+      description: Request body failed validation (VALIDATION_FAILED)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
     Unauthorized:
       description: Missing or invalid authentication token (UNAUTHORIZED)
       content:
@@ -4891,7 +4978,7 @@ components:
 
     PublicIntakeFormConfigResponse:
       type: object
-      required: [title, freelancer_name, fields]
+      required: [title, freelancer_name, fields, professions]
       properties:
         title:
           type: string
@@ -4904,6 +4991,49 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/PublicIntakeFormFieldResponse'
+        professions:
+          type: array
+          description: >-
+            The 6 supported professions and their qualification questions.
+            Client picks one, which reveals its `fields` on the form; the
+            answers are submitted as `profession_fields` on PublicIntakeRequest.
+          items:
+            $ref: '#/components/schemas/ProfessionOptionResponse'
+
+    ProfessionOptionResponse:
+      type: object
+      required: [value, label, fields]
+      properties:
+        value:
+          type: string
+          description: Canonical profession slug, submitted back as `profession`.
+        label:
+          type: string
+        fields:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProfessionFieldOptionResponse'
+
+    ProfessionFieldOptionResponse:
+      type: object
+      required: [field_key, label, field_type, is_required]
+      properties:
+        field_key:
+          type: string
+          description: Key to use in `profession_fields` when submitting.
+        label:
+          type: string
+        field_type:
+          type: string
+          enum: [text, select, multiselect]
+        options:
+          type: array
+          items:
+            type: string
+          nullable: true
+          description: Choices for `select`/`multiselect` fields; null for `text`.
+        is_required:
+          type: boolean
 
     PublicIntakeRequest:
       type: object
@@ -4933,6 +5063,19 @@ components:
           type: string
           maxLength: 255
           nullable: true
+        profession:
+          type: string
+          nullable: true
+          description: >-
+            Selected profession slug, one of the `value`s returned by
+            GET /intake/{share_token}/config in `professions`.
+        profession_fields:
+          type: object
+          additionalProperties: true
+          nullable: true
+          description: >-
+            Answers to the selected profession's qualification questions,
+            keyed by `field_key`.
 
     IntakeResponse:
       type: object
@@ -5303,6 +5446,25 @@ components:
         notes:
           type: string
           nullable: true
+        desired_timeline:
+          type: string
+          nullable: true
+        project_type:
+          type: string
+          nullable: true
+        service_category:
+          type: string
+          nullable: true
+        pricing_tier:
+          type: string
+          nullable: true
+        profession:
+          type: string
+          nullable: true
+        profession_fields:
+          type: object
+          additionalProperties: true
+          nullable: true
         ai_qualification_score:
           type: integer
           minimum: 0
@@ -5312,10 +5474,67 @@ components:
           type: string
           enum: [qualify, pass]
           nullable: true
+        ai_qualification_reasoning:
+          type: string
+          nullable: true
+        ai_qualification_project_type:
+          type: string
+          nullable: true
+        ai_qualification_budget_signal:
+          type: string
+          nullable: true
+        ai_qualification_timeline_signal:
+          type: string
+          nullable: true
+        ai_qualification_urgency_signal:
+          type: string
+          nullable: true
+        ai_qualification_red_flags:
+          type: array
+          items:
+            type: string
+          nullable: true
+        ai_qualification_detected_signals:
+          type: array
+          items:
+            $ref: '#/components/schemas/DealDetectedSignal'
+          nullable: true
+        ai_qualification_suggested_actions:
+          type: array
+          items:
+            type: string
+          nullable: true
+        ai_qualification_next_step:
+          type: string
+          nullable: true
+        ai_qualification_price_range_min:
+          type: integer
+          nullable: true
+        ai_qualification_price_range_max:
+          type: integer
+          nullable: true
+        ai_level:
+          type: string
+          enum: [hot, warm, cold]
+          nullable: true
+          readOnly: true
+          description: Derived from `ai_qualification_score` (>=80 hot, >=50 warm, else cold).
+        is_ai_qualified:
+          type: boolean
+          readOnly: true
+          description: 'True when `ai_qualification_score >= 60`.'
         closed_at:
           type: string
           format: date-time
           nullable: true
+        document_url:
+          type: string
+          nullable: true
+          description: Public URL of the most recently uploaded PDF document, if any.
+        document_filename:
+          type: string
+          nullable: true
+          description: Original filename of the most recently uploaded PDF document.
         project_id:
           type: string
           format: uuid
@@ -5329,6 +5548,15 @@ components:
         updated_at:
           type: string
           format: date-time
+
+    DealDetectedSignal:
+      type: object
+      required: [text, is_positive]
+      properties:
+        text:
+          type: string
+        is_positive:
+          type: boolean
 
     DealPage:
       allOf:
@@ -5384,6 +5612,13 @@ components:
         notes:
           type: string
           example: "Khách cần website bán hàng tích hợp thanh toán VNPay và MOMO"
+        profession:
+          type: string
+          nullable: true
+        profession_fields:
+          type: object
+          additionalProperties: true
+          nullable: true
       example:
         client_id: "e1f881a5-fe2a-4f62-bcda-c0371077a924"
         title: "Xây dựng website bán hàng"
@@ -5430,6 +5665,13 @@ components:
           description: Estimated project duration (free text, e.g. "2 tháng", "6 tuần")
         notes:
           type: string
+        profession:
+          type: string
+          nullable: true
+        profession_fields:
+          type: object
+          additionalProperties: true
+          nullable: true
 
     StageTransitionRequest:
       type: object

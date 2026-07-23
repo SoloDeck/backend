@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.infrastructure.database.models import (
     ClientModel,
+    DealActivityEntryModel,
     DealIntakeModel,
     DealModel,
     InvoiceModel,
@@ -234,3 +235,21 @@ class DealsRepository:
         await self.db.flush()
         await self.db.refresh(obj)
         return obj
+
+    async def create_activity_entry(
+        self,
+        *,
+        deal_id: uuid.UUID,
+        owner_user_id: uuid.UUID,
+        entry_type: str,
+        description: str,
+    ):
+        entry = DealActivityEntryModel(
+            deal_id=deal_id,
+            owner_user_id=owner_user_id,
+            entry_type=entry_type,
+            description=description,
+        )
+        self.db.add(entry)
+        await self.db.flush()
+        return entry

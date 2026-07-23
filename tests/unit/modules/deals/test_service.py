@@ -11,6 +11,7 @@ from src.shared.exceptions.domain import (
     BusinessRuleError,
     InvalidStateTransitionError,
     NotFoundError,
+    ValidationError,
 )
 
 
@@ -19,6 +20,8 @@ class DealStub:
     id: uuid.UUID
     stage: str
     closed_at: object | None = None
+    document_url: str | None = None
+    document_filename: str | None = None
 
 
 @dataclass
@@ -91,6 +94,113 @@ async def test_transition_from_terminal_stage_is_rejected() -> None:
         await service.transition_stage(
             uuid.uuid4(), uuid.uuid4(), DealStageRequest(target_stage="active")
         )
+
+
+# ---------------------------------------------------------------------------
+# upload_document
+# ---------------------------------------------------------------------------
+
+
+class TestUploadDocument:
+    async def test_uploads_and_sets_document_url(self) -> None:
+        deal_id = uuid.uuid4()
+        owner_id = uuid.uuid4()
+        deal = DealStub(id=deal_id, stage="new_lead")
+        repo = AsyncMock()
+        repo.get_by_id.return_value = deal
+        repo.save.side_effect = lambda d: d
+        storage = AsyncMock()
+        storage.upload.return_value = "https://cdn.example.com/deals/x/y.pdf"
+        service = DealsService(db=AsyncMock(), repo=repo, storage=storage)
+
+        result = await service.upload_document(
+            owner_id,
+            deal_id,
+            filename="brief.pdf",
+            content=b"%PDF-1.4 fake",
+            content_type="application/pdf",
+        )
+
+        storage.upload.assert_awaited_once()
+        assert result.document_url == "https://cdn.example.com/deals/x/y.pdf"
+        assert result.document_filename == "brief.pdf"
+        repo.create_activity_entry.assert_awaited_once()
+        activity_kwargs = repo.create_activity_entry.await_args.kwargs
+        assert activity_kwargs["entry_type"] == "document_attached"
+        assert activity_kwargs["deal_id"] == deal_id
+        assert activity_kwargs["owner_user_id"] == owner_id
+
+    async def test_rejects_non_pdf_content_type(self) -> None:
+        repo = AsyncMock()
+        storage = AsyncMock()
+        service = DealsService(db=AsyncMock(), repo=repo, storage=storage)
+
+        with pytest.raises(ValidationError):
+            await service.upload_document(
+                uuid.uuid4(),
+                uuid.uuid4(),
+                filename="image.png",
+                content=b"fake-bytes",
+                content_type="image/png",
+            )
+        storage.upload.assert_not_awaited()
+
+    async def test_rejects_empty_file(self) -> None:
+        repo = AsyncMock()
+        storage = AsyncMock()
+        service = DealsService(db=AsyncMock(), repo=repo, storage=storage)
+
+        with pytest.raises(ValidationError):
+            await service.upload_document(
+                uuid.uuid4(),
+                uuid.uuid4(),
+                filename="brief.pdf",
+                content=b"",
+                content_type="application/pdf",
+            )
+
+    async def test_rejects_oversized_file(self) -> None:
+        repo = AsyncMock()
+        storage = AsyncMock()
+        service = DealsService(db=AsyncMock(), repo=repo, storage=storage)
+        oversized = b"x" * (20 * 1024 * 1024 + 1)
+
+        with pytest.raises(ValidationError):
+            await service.upload_document(
+                uuid.uuid4(),
+                uuid.uuid4(),
+                filename="brief.pdf",
+                content=oversized,
+                content_type="application/pdf",
+            )
+
+    async def test_raises_not_found_for_unknown_deal(self) -> None:
+        repo = AsyncMock()
+        repo.get_by_id.return_value = None
+        storage = AsyncMock()
+        service = DealsService(db=AsyncMock(), repo=repo, storage=storage)
+
+        with pytest.raises(NotFoundError):
+            await service.upload_document(
+                uuid.uuid4(),
+                uuid.uuid4(),
+                filename="brief.pdf",
+                content=b"%PDF-1.4",
+                content_type="application/pdf",
+            )
+
+    async def test_raises_runtime_error_when_storage_not_initialized(self) -> None:
+        repo = AsyncMock()
+        service = DealsService(db=AsyncMock(), repo=repo)
+
+        with pytest.raises(RuntimeError):
+            await service.upload_document(
+                uuid.uuid4(),
+                uuid.uuid4(),
+                filename="brief.pdf",
+                content=b"%PDF-1.4",
+                content_type="application/pdf",
+            )
 
 
 def _intake_payload(**overrides) -> PublicIntakeRequest:
@@ -189,6 +299,8 @@ class DealModelStub:
     project_type: str | None = None
     service_category: str | None = None
     pricing_tier: str | None = None
+    profession: str | None = None
+    profession_fields: dict | None = None
     ai_qualification_score: int | None = None
     ai_qualification_confidence: float | None = None
     ai_qualification_recommendation: str | None = None
