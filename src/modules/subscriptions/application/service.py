@@ -3,6 +3,7 @@
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -23,6 +24,8 @@ from src.shared.exceptions.domain import NotFoundError
 
 _CHECKOUT_TTL_MINUTES = 15
 _BILLING_PERIOD_DAYS = 30
+# Matches the "perpetual" free-plan period used at registration (AuthService).
+_FREE_PLAN_PERIOD_DAYS = 36500
 # The provider's real server would call this notify_url — meaningless for the
 # mock (nothing calls it), kept realistic for parity with a real integration.
 _NOTIFY_URL = "https://api.solodesk.space/api/v1/payments/webhooks/momo"
@@ -234,8 +237,8 @@ class SubscriptionsService:
     async def cancel_subscription(self, user_id: uuid.UUID) -> SubscriptionResponse:
         """Schedule the caller's subscription to lapse at the end of the current
         billing period — access and entitlements are unaffected until then.
-        Actually downgrading the plan once `current_period_end` passes is not
-        implemented yet (no renewal/expiry job exists)."""
+        `expire_lapsed_subscriptions` is what actually downgrades the plan
+        once `current_period_end` passes."""
         sub = await self.repo.get_subscription(user_id)
         if sub is None:
             raise NotFoundError("No subscription found")
@@ -252,6 +255,40 @@ class SubscriptionsService:
         sub.cancelled_at = datetime.now(UTC)
         sub = await self.repo.save(sub)
         return self._to_subscription_response(sub, plan)
+
+    async def expire_lapsed_subscriptions(self) -> int:
+        """Downgrade every subscription whose paid period has ended back to
+        the free plan. There's no recurring auto-charge — MoMo checkout is a
+        one-time, user-initiated action — so staying on a paid plan requires a
+        fresh checkout before `current_period_end`, whether or not the user
+        explicitly cancelled. Meant to be run periodically by Celery Beat.
+        """
+        free_plan = await self.repo.get_free_plan()
+        if free_plan is None:
+            return 0
+
+        now = datetime.now(UTC)
+        lapsed = await self.repo.list_lapsed_subscriptions(free_plan_id=free_plan.id, now=now)
+
+        for sub in lapsed:
+            await self.repo.create_billing_event(
+                user_id=sub.user_id,
+                subscription_id=sub.id,
+                event_type=(
+                    "subscription_cancelled" if sub.cancel_at_period_end else "subscription_expired"
+                ),
+                amount=Decimal("0"),
+                currency="VND",
+                event_metadata={"previous_plan_id": str(sub.plan_id)},
+            )
+            sub.plan_id = free_plan.id
+            sub.status = "active"
+            sub.cancel_at_period_end = False
+            sub.current_period_start = now
+            sub.current_period_end = now + timedelta(days=_FREE_PLAN_PERIOD_DAYS)
+            await self.repo.save(sub)
+
+        return len(lapsed)
 
     @staticmethod
     def _to_subscription_response(sub, plan) -> SubscriptionResponse:

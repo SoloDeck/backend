@@ -10,6 +10,7 @@ celery_app = Celery(
         "src.workers.ai_jobs.tasks",
         "src.workers.pdf_jobs.tasks",
         "src.workers.reminder_jobs.tasks",
+        "src.workers.subscription_jobs.tasks",
     ],
 )
 
@@ -37,6 +38,10 @@ celery_app.conf.update(
         "refresh-analytics-snapshots": {
             "task": "src.workers.reminder_jobs.tasks.refresh_analytics_snapshots",
             "schedule": 86400.0,  # nightly
+        },
+        "expire-lapsed-subscriptions": {
+            "task": "src.workers.subscription_jobs.tasks.expire_lapsed_subscriptions",
+            "schedule": 3600.0,  # every hour
         },
     },
 )

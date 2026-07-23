@@ -6,9 +6,10 @@ from httpx import AsyncClient
 from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.infrastructure.database.models import SubscriptionPaymentModel
+from src.infrastructure.database.models import SubscriptionModel, SubscriptionPaymentModel
 from src.infrastructure.database.seeders.plans import PlansSeeder
 from src.integrations.momo.client import MockMomoClient
+from src.modules.subscriptions.application.service import SubscriptionsService
 from tests.integration.modules.clients.test_clients_api import _auth_headers
 
 
@@ -193,3 +194,91 @@ async def test_cancel_subscription_on_free_plan_is_rejected(
 
     cancel_resp = await client.post("/api/v1/subscriptions/cancel", headers=headers)
     assert cancel_resp.status_code == 400
+
+
+async def test_expire_lapsed_subscriptions_downgrades_scheduled_cancellation(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """End-to-end: upgrade via MoMo, schedule cancellation, let the period
+    lapse, then run the Beat job that's supposed to enforce it."""
+    await PlansSeeder(db_session).run()
+    headers = await _auth_headers(client)
+    plan = await _pro_plan(client, headers)
+    payment = await _create_checkout(client, headers, plan["id"])
+
+    ipn_payload = MockMomoClient().sign_ipn(
+        order_id=payment["id"], amount=int(float(plan["price_monthly"]))
+    )
+    await client.post("/api/v1/payments/webhooks/momo", json=ipn_payload)
+    await client.post("/api/v1/subscriptions/cancel", headers=headers)
+
+    me_resp = await client.get("/api/v1/subscriptions/me", headers=headers)
+    subscription_id = me_resp.json()["data"]["id"]
+
+    # Backdate as if the billing period already ended.
+    await db_session.execute(
+        update(SubscriptionModel)
+        .where(SubscriptionModel.id == subscription_id)
+        .values(current_period_end=datetime.now(UTC) - timedelta(minutes=1))
+    )
+    await db_session.flush()
+
+    count = await SubscriptionsService(db=db_session).expire_lapsed_subscriptions()
+    assert count == 1
+
+    me_resp = await client.get("/api/v1/subscriptions/me", headers=headers)
+    body = me_resp.json()["data"]
+    assert body["plan_slug"] == "free"
+    assert body["cancel_at_period_end"] is False
+
+
+async def test_expire_lapsed_subscriptions_also_expires_without_explicit_cancel(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """No recurring auto-charge exists — a paid period that lapses without a
+    fresh checkout expires too, even if the user never called /cancel."""
+    await PlansSeeder(db_session).run()
+    headers = await _auth_headers(client)
+    plan = await _pro_plan(client, headers)
+    payment = await _create_checkout(client, headers, plan["id"])
+
+    ipn_payload = MockMomoClient().sign_ipn(
+        order_id=payment["id"], amount=int(float(plan["price_monthly"]))
+    )
+    await client.post("/api/v1/payments/webhooks/momo", json=ipn_payload)
+
+    me_resp = await client.get("/api/v1/subscriptions/me", headers=headers)
+    subscription_id = me_resp.json()["data"]["id"]
+
+    await db_session.execute(
+        update(SubscriptionModel)
+        .where(SubscriptionModel.id == subscription_id)
+        .values(current_period_end=datetime.now(UTC) - timedelta(minutes=1))
+    )
+    await db_session.flush()
+
+    count = await SubscriptionsService(db=db_session).expire_lapsed_subscriptions()
+    assert count == 1
+
+    me_resp = await client.get("/api/v1/subscriptions/me", headers=headers)
+    assert me_resp.json()["data"]["plan_slug"] == "free"
+
+
+async def test_expire_lapsed_subscriptions_leaves_current_subscriptions_alone(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    await PlansSeeder(db_session).run()
+    headers = await _auth_headers(client)
+    plan = await _pro_plan(client, headers)
+    payment = await _create_checkout(client, headers, plan["id"])
+
+    ipn_payload = MockMomoClient().sign_ipn(
+        order_id=payment["id"], amount=int(float(plan["price_monthly"]))
+    )
+    await client.post("/api/v1/payments/webhooks/momo", json=ipn_payload)
+
+    count = await SubscriptionsService(db=db_session).expire_lapsed_subscriptions()
+    assert count == 0
+
+    me_resp = await client.get("/api/v1/subscriptions/me", headers=headers)
+    assert me_resp.json()["data"]["plan_slug"] == "pro"

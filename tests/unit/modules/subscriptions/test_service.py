@@ -357,3 +357,63 @@ async def test_cancel_subscription_missing_subscription_raises_not_found() -> No
 
     with pytest.raises(NotFoundError):
         await service.cancel_subscription(uuid.uuid4())
+
+
+# ---------------------------------------------------------------------------
+# expire_lapsed_subscriptions
+# ---------------------------------------------------------------------------
+
+
+async def test_expire_lapsed_subscriptions_downgrades_and_records_expired_event() -> None:
+    free_plan = PlanStub(id=uuid.uuid4(), slug="free", price_monthly=Decimal("0"))
+    sub = SubscriptionStub(
+        id=uuid.uuid4(), user_id=uuid.uuid4(), plan_id=uuid.uuid4(), cancel_at_period_end=False
+    )
+    repo = _repo(get_free_plan=free_plan, list_lapsed_subscriptions=[sub])
+    repo.create_billing_event = AsyncMock()
+    service = SubscriptionsService(db=AsyncMock(), repo=repo, momo_client=MockMomoClient())
+
+    count = await service.expire_lapsed_subscriptions()
+
+    assert count == 1
+    assert sub.plan_id == free_plan.id
+    assert sub.status == "active"
+    assert sub.cancel_at_period_end is False
+    repo.create_billing_event.assert_awaited_once()
+    assert repo.create_billing_event.await_args.kwargs["event_type"] == "subscription_expired"
+
+
+async def test_expire_lapsed_subscriptions_uses_cancelled_event_when_flagged() -> None:
+    free_plan = PlanStub(id=uuid.uuid4(), slug="free", price_monthly=Decimal("0"))
+    sub = SubscriptionStub(
+        id=uuid.uuid4(), user_id=uuid.uuid4(), plan_id=uuid.uuid4(), cancel_at_period_end=True
+    )
+    repo = _repo(get_free_plan=free_plan, list_lapsed_subscriptions=[sub])
+    repo.create_billing_event = AsyncMock()
+    service = SubscriptionsService(db=AsyncMock(), repo=repo, momo_client=MockMomoClient())
+
+    await service.expire_lapsed_subscriptions()
+
+    assert repo.create_billing_event.await_args.kwargs["event_type"] == "subscription_cancelled"
+
+
+async def test_expire_lapsed_subscriptions_noop_when_none_lapsed() -> None:
+    free_plan = PlanStub(id=uuid.uuid4(), slug="free", price_monthly=Decimal("0"))
+    repo = _repo(get_free_plan=free_plan, list_lapsed_subscriptions=[])
+    repo.create_billing_event = AsyncMock()
+    service = SubscriptionsService(db=AsyncMock(), repo=repo, momo_client=MockMomoClient())
+
+    count = await service.expire_lapsed_subscriptions()
+
+    assert count == 0
+    repo.create_billing_event.assert_not_awaited()
+
+
+async def test_expire_lapsed_subscriptions_noop_when_no_free_plan_configured() -> None:
+    repo = _repo(get_free_plan=None)
+    service = SubscriptionsService(db=AsyncMock(), repo=repo, momo_client=MockMomoClient())
+
+    count = await service.expire_lapsed_subscriptions()
+
+    assert count == 0
+    repo.list_lapsed_subscriptions.assert_not_awaited()

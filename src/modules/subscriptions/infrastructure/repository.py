@@ -1,5 +1,6 @@
 import uuid
 from dataclasses import dataclass
+from datetime import datetime
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -27,6 +28,25 @@ class SubscriptionsRepository:
 
     async def get_plan(self, plan_id: uuid.UUID):
         return await self.db.scalar(select(PlanModel).where(PlanModel.id == plan_id))
+
+    async def get_free_plan(self):
+        return await self.db.scalar(select(PlanModel).where(PlanModel.name == "Free"))
+
+    async def list_lapsed_subscriptions(self, *, free_plan_id: uuid.UUID, now: datetime):
+        """Paid subscriptions whose current billing period has already ended.
+
+        Locked for update — a concurrent checkout webhook extending one of
+        these subscriptions' period must not race with this batch downgrade.
+        """
+        result = await self.db.execute(
+            select(SubscriptionModel)
+            .where(
+                SubscriptionModel.plan_id != free_plan_id,
+                SubscriptionModel.current_period_end <= now,
+            )
+            .with_for_update()
+        )
+        return list(result.scalars().all())
 
     async def create_payment(self, **values):
         payment = SubscriptionPaymentModel(**values)
