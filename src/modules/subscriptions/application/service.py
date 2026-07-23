@@ -15,6 +15,7 @@ from src.modules.subscriptions.domain.entities.subscription_payment import (
 from src.modules.subscriptions.domain.exceptions.exceptions import (
     InvalidPaymentSignatureError,
     PlanNotPurchasableError,
+    SubscriptionNotCancellableError,
 )
 from src.modules.subscriptions.infrastructure.repository import SubscriptionsRepository
 from src.modules.subscriptions.schemas.response import SubscriptionResponse
@@ -201,6 +202,32 @@ class SubscriptionsService:
         if plan is None:
             raise NotFoundError("Subscription plan not found")
 
+        return self._to_subscription_response(sub, plan)
+
+    async def cancel_subscription(self, user_id: uuid.UUID) -> SubscriptionResponse:
+        """Schedule the caller's subscription to lapse at the end of the current
+        billing period — access and entitlements are unaffected until then.
+        Actually downgrading the plan once `current_period_end` passes is not
+        implemented yet (no renewal/expiry job exists)."""
+        sub = await self.repo.get_subscription(user_id)
+        if sub is None:
+            raise NotFoundError("No subscription found")
+
+        plan = await self.repo.get_plan(sub.plan_id)
+        if plan is None:
+            raise NotFoundError("Subscription plan not found")
+        if plan.price_monthly <= 0:
+            raise SubscriptionNotCancellableError("The free plan cannot be cancelled")
+        if sub.cancel_at_period_end:
+            raise SubscriptionNotCancellableError("Subscription is already scheduled to cancel")
+
+        sub.cancel_at_period_end = True
+        sub.cancelled_at = datetime.now(UTC)
+        sub = await self.repo.save(sub)
+        return self._to_subscription_response(sub, plan)
+
+    @staticmethod
+    def _to_subscription_response(sub, plan) -> SubscriptionResponse:
         return SubscriptionResponse(
             id=sub.id,
             user_id=sub.user_id,

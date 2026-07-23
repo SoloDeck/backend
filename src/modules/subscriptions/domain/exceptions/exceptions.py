@@ -34,6 +34,11 @@ class PlanNotPurchasableError(DomainError):
         super().__init__(message)
 
 
+class SubscriptionNotCancellableError(DomainError):
+    def __init__(self, message: str = "Subscription cannot be cancelled") -> None:
+        super().__init__(message)
+
+
 class InvalidPaymentSignatureError(DomainError):
     def __init__(self, message: str = "Payment callback signature verification failed") -> None:
         super().__init__(message)

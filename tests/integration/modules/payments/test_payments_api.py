@@ -105,3 +105,38 @@ async def test_checkout_against_free_plan_is_rejected(
         headers=headers,
     )
     assert checkout_resp.status_code == 400
+
+
+async def test_cancel_subscription_after_upgrade(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    await PlansSeeder(db_session).run()
+    headers = await _auth_headers(client)
+    plan = await _pro_plan(client, headers)
+    payment = await _create_checkout(client, headers, plan["id"])
+
+    ipn_payload = MockMomoClient().sign_ipn(
+        order_id=payment["id"], amount=int(float(plan["price_monthly"]))
+    )
+    await client.post("/api/v1/payments/webhooks/momo", json=ipn_payload)
+
+    cancel_resp = await client.post("/api/v1/subscriptions/cancel", headers=headers)
+    assert cancel_resp.status_code == 200
+    body = cancel_resp.json()["data"]
+    assert body["cancel_at_period_end"] is True
+    assert body["status"] == "active"  # access continues until period end
+    assert body["plan_slug"] == "pro"
+
+    # Already scheduled — cancelling again is rejected, not a silent no-op.
+    second_cancel = await client.post("/api/v1/subscriptions/cancel", headers=headers)
+    assert second_cancel.status_code == 400
+
+
+async def test_cancel_subscription_on_free_plan_is_rejected(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    await PlansSeeder(db_session).run()
+    headers = await _auth_headers(client)
+
+    cancel_resp = await client.post("/api/v1/subscriptions/cancel", headers=headers)
+    assert cancel_resp.status_code == 400

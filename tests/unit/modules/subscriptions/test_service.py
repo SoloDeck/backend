@@ -12,6 +12,7 @@ from src.modules.subscriptions.domain.entities.subscription_payment import Payme
 from src.modules.subscriptions.domain.exceptions.exceptions import (
     InvalidPaymentSignatureError,
     PlanNotPurchasableError,
+    SubscriptionNotCancellableError,
 )
 from src.shared.exceptions.domain import InvalidStateTransitionError, NotFoundError
 
@@ -24,6 +25,8 @@ class SubscriptionStub:
     status: str = "active"
     current_period_start: datetime = datetime(2026, 1, 1, tzinfo=UTC)
     current_period_end: datetime = datetime(2026, 2, 1, tzinfo=UTC)
+    cancel_at_period_end: bool = False
+    cancelled_at: datetime | None = None
 
 
 @dataclass
@@ -237,3 +240,54 @@ async def test_cancel_checkout_rejects_already_succeeded_payment() -> None:
 
     with pytest.raises(InvalidStateTransitionError):
         await service.cancel_checkout(user_id, payment_id)
+
+
+# ---------------------------------------------------------------------------
+# cancel_subscription
+# ---------------------------------------------------------------------------
+
+
+async def test_cancel_subscription_schedules_cancellation_at_period_end() -> None:
+    user_id, plan_id = uuid.uuid4(), uuid.uuid4()
+    subscription = SubscriptionStub(id=uuid.uuid4(), user_id=user_id, plan_id=plan_id)
+    plan = PlanStub(id=plan_id, slug="pro")
+    repo = _repo(get_subscription=subscription, get_plan=plan)
+    service = SubscriptionsService(db=AsyncMock(), repo=repo, momo_client=MockMomoClient())
+
+    result = await service.cancel_subscription(user_id)
+
+    assert result.cancel_at_period_end is True
+    assert result.status == "active"  # access continues until period end
+    assert subscription.cancelled_at is not None
+
+
+async def test_cancel_subscription_rejects_free_plan() -> None:
+    user_id, plan_id = uuid.uuid4(), uuid.uuid4()
+    subscription = SubscriptionStub(id=uuid.uuid4(), user_id=user_id, plan_id=plan_id)
+    plan = PlanStub(id=plan_id, slug="free", price_monthly=Decimal("0"))
+    repo = _repo(get_subscription=subscription, get_plan=plan)
+    service = SubscriptionsService(db=AsyncMock(), repo=repo, momo_client=MockMomoClient())
+
+    with pytest.raises(SubscriptionNotCancellableError):
+        await service.cancel_subscription(user_id)
+
+
+async def test_cancel_subscription_rejects_already_scheduled() -> None:
+    user_id, plan_id = uuid.uuid4(), uuid.uuid4()
+    subscription = SubscriptionStub(
+        id=uuid.uuid4(), user_id=user_id, plan_id=plan_id, cancel_at_period_end=True
+    )
+    plan = PlanStub(id=plan_id, slug="pro")
+    repo = _repo(get_subscription=subscription, get_plan=plan)
+    service = SubscriptionsService(db=AsyncMock(), repo=repo, momo_client=MockMomoClient())
+
+    with pytest.raises(SubscriptionNotCancellableError):
+        await service.cancel_subscription(user_id)
+
+
+async def test_cancel_subscription_missing_subscription_raises_not_found() -> None:
+    repo = _repo(get_subscription=None)
+    service = SubscriptionsService(db=AsyncMock(), repo=repo, momo_client=MockMomoClient())
+
+    with pytest.raises(NotFoundError):
+        await service.cancel_subscription(uuid.uuid4())

@@ -51,3 +51,12 @@ async def create_checkout(
         user_id, payload.plan_id, PaymentProvider(payload.provider)
     )
     return ApiResponse.created(PaymentIntentResponse.from_model(payment))
+
+
+@router.post("/cancel", response_model=ApiResponse[SubscriptionResponse])
+async def cancel_subscription(
+    user_id: CurrentUserId,
+    db: DBSession,
+) -> ApiResponse[SubscriptionResponse]:
+    sub = await SubscriptionsService(db=db).cancel_subscription(user_id)
+    return ApiResponse.ok(sub)
