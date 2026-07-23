@@ -16,8 +16,28 @@ class ReminderResponse(BaseModel):
     status: str
     scheduled_at: datetime
     message_preview: str | None
+    # Để giao diện phân biệt "tôi tự đặt" với "hệ thống tự sinh, đang chờ tôi duyệt" —
+    # người dùng cần biết trước khi bấm gửi một tin nhắn tới khách hàng thật.
+    requires_approval: bool = False
+    created_by_rule: bool = False
     created_at: datetime
     updated_at: datetime
+
+
+class ReminderRuleResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    rule_type: str
+    is_enabled: bool
+    offset_days: int
+    repeat_every_days: int | None
+    channel: str
+    auto_send: bool
+    send_at_hour: int
+    # Câu mô tả lấy từ danh mục ở backend thay vì để frontend tự chế — hai nơi viết hai
+    # kiểu thì người dùng đọc tài liệu và đọc màn hình sẽ thấy khác nhau.
+    label: str = ""
+    supports_repeat: bool = False
 
 
 class ReminderDeliveryResponse(BaseModel):

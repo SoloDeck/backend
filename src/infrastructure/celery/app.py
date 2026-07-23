@@ -1,4 +1,5 @@
 from celery import Celery
+from celery.schedules import crontab
 
 from src.config.settings import settings
 
@@ -33,6 +34,13 @@ celery_app.conf.update(
         "send-pending-reminders": {
             "task": "src.workers.reminder_jobs.tasks.send_pending_reminders",
             "schedule": 60.0,  # every minute
+        },
+        # Quét quy tắc nhắc tự động, mỗi ngày một lần lúc 1h sáng (giờ VN — xem `timezone`
+        # ở trên). Chạy SAU `mark-overdue-invoices` để hoá đơn kịp chuyển sang `overdue`
+        # trước khi quy tắc "nhắc quá hạn" đi tìm chúng.  #Huynh
+        "generate-rule-reminders": {
+            "task": "src.workers.reminder_jobs.tasks.generate_rule_reminders",
+            "schedule": crontab(hour=1, minute=0),
         },
         "refresh-analytics-snapshots": {
             "task": "src.workers.reminder_jobs.tasks.refresh_analytics_snapshots",

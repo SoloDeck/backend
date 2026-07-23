@@ -164,6 +164,42 @@ def mark_overdue_invoices() -> None:
         log.info("mark_overdue_invoices.done", marked=count)
 
 
+@celery_app.task(name="src.workers.reminder_jobs.tasks.generate_rule_reminders")
+def generate_rule_reminders() -> None:
+    """Chạy mỗi ngày: quét cả hệ thống, soạn sẵn lời nhắc theo quy tắc của từng người.
+
+    Trước đây hệ thống chỉ gửi được lời nhắc do người dùng TỰ TẠO TAY — nghĩa là freelancer
+    vẫn phải tự nhớ hoá đơn nào sắp tới hạn, khách nào chưa phản hồi báo giá. Phiếu đòi
+    "nhắc nhở TỰ ĐỘNG", và đây là phần đó.
+
+    Task này CHỈ TẠO lời nhắc `pending`; việc gửi vẫn do `send_pending_reminders` lo. Chưa
+    bật "tự gửi" thì lời nhắc mang cờ `requires_approval` và nằm im chờ người duyệt.  #Huynh
+    """
+    import asyncio
+
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+
+    from src.config.settings import settings
+    from src.modules.reminders.application.auto_scheduler import AutoReminderScheduler
+
+    async def _run() -> dict[str, int]:
+        engine = create_async_engine(str(settings.database_url))
+        factory = async_sessionmaker(
+            engine, class_=AsyncSession, expire_on_commit=False, autoflush=False
+        )
+        try:
+            async with factory() as session:
+                counts = await AutoReminderScheduler(db=session).run()
+                await session.commit()
+                return counts
+        finally:
+            await engine.dispose()
+
+    counts = asyncio.run(_run())
+    if counts["created"]:
+        log.info("generate_rule_reminders.done", **counts)
+
+
 @celery_app.task(name="src.workers.reminder_jobs.tasks.refresh_analytics_snapshots")
 def refresh_analytics_snapshots() -> None:
     """Beat task: nightly refresh of revenue and pipeline snapshots."""

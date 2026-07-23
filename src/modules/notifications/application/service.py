@@ -24,6 +24,7 @@ TYPE_INVOICE_OVERDUE = "invoice_overdue"
 TYPE_REMINDER_DUE = "reminder_due"
 TYPE_REMINDER_SENT = "reminder_sent"
 TYPE_REMINDER_FAILED = "reminder_failed"
+TYPE_REMINDER_DRAFTED = "reminder_drafted"
 
 
 @dataclass

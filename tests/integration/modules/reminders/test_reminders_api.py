@@ -28,9 +28,7 @@ async def _auth(client: AsyncClient) -> dict:
     return {"Authorization": f"Bearer {resp.json()['data']['access_token']}"}
 
 
-async def _make_deal_id(
-    client: AsyncClient, headers: dict, client_email: str | None = None
-) -> str:
+async def _make_deal_id(client: AsyncClient, headers: dict, client_email: str | None = None) -> str:
     payload: dict = {"name": "Client", "status": "prospect"}
     if client_email:
         payload["email"] = client_email
@@ -285,9 +283,7 @@ class TestSendReminderNow:
         reminder = await _create_reminder(client, headers, deal_id)
 
         with patch(SEND_EMAIL, new=AsyncMock()) as send_email:
-            resp = await client.post(
-                f"/api/v1/reminders/{reminder['id']}/send", headers=headers
-            )
+            resp = await client.post(f"/api/v1/reminders/{reminder['id']}/send", headers=headers)
 
         assert resp.status_code == 200, resp.text
         data = resp.json()["data"]
@@ -305,9 +301,7 @@ class TestSendReminderNow:
         reminder = await _create_reminder(client, headers, deal_id)
 
         with patch(SEND_EMAIL, new=AsyncMock()) as send_email:
-            resp = await client.post(
-                f"/api/v1/reminders/{reminder['id']}/send", headers=headers
-            )
+            resp = await client.post(f"/api/v1/reminders/{reminder['id']}/send", headers=headers)
 
         assert resp.status_code == 200, resp.text
         data = resp.json()["data"]
@@ -324,17 +318,13 @@ class TestSendReminderNow:
 
         with patch(SEND_EMAIL, new=AsyncMock()) as send_email:
             await client.post(f"/api/v1/reminders/{reminder['id']}/send", headers=headers)
-            resp = await client.post(
-                f"/api/v1/reminders/{reminder['id']}/send", headers=headers
-            )
+            resp = await client.post(f"/api/v1/reminders/{reminder['id']}/send", headers=headers)
 
         assert resp.status_code == 200
         assert resp.json()["data"]["delivered"] is False
         assert send_email.await_count == 1
 
-    async def test_kenh_zalo_ra_skipped_chu_khong_gia_vo_da_gui(
-        self, client: AsyncClient
-    ) -> None:
+    async def test_kenh_zalo_ra_skipped_chu_khong_gia_vo_da_gui(self, client: AsyncClient) -> None:
         headers = await _auth(client)
         deal_id = await _make_deal_id(client, headers, client_email="khach@example.com")
         payload = _reminder_payload(deal_id)
@@ -372,9 +362,7 @@ class TestSendReminderNow:
         await client.delete(f"/api/v1/reminders/{reminder['id']}", headers=headers)
 
         with patch(SEND_EMAIL, new=AsyncMock()) as send_email:
-            resp = await client.post(
-                f"/api/v1/reminders/{reminder['id']}/send", headers=headers
-            )
+            resp = await client.post(f"/api/v1/reminders/{reminder['id']}/send", headers=headers)
 
         assert resp.json()["data"]["status"] == "cancelled"
         send_email.assert_not_awaited()
@@ -392,9 +380,7 @@ class TestSendReminderNow:
         reminder = await _create_reminder(client, headers_a, deal_id)
 
         with patch(SEND_EMAIL, new=AsyncMock()) as send_email:
-            resp = await client.post(
-                f"/api/v1/reminders/{reminder['id']}/send", headers=headers_b
-            )
+            resp = await client.post(f"/api/v1/reminders/{reminder['id']}/send", headers=headers_b)
 
         assert resp.status_code == 404
         send_email.assert_not_awaited()
@@ -402,3 +388,115 @@ class TestSendReminderNow:
     async def test_unauthenticated_returns_401(self, client: AsyncClient) -> None:
         resp = await client.post(f"/api/v1/reminders/{uuid.uuid4()}/send")
         assert resp.status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# GET/PATCH /reminders/rules — quy tắc nhắc tự động
+# ---------------------------------------------------------------------------
+
+
+class TestReminderRules:
+    async def test_lan_dau_goi_tu_sinh_du_nam_quy_tac(self, client: AsyncClient) -> None:
+        """Sinh lười ở đây chứ không backfill trong migration — user đăng ký hôm nay vẫn
+        có đủ quy tắc mà không ai phải nhớ chạy lại script."""
+        headers = await _auth(client)
+        resp = await client.get("/api/v1/reminders/rules", headers=headers)
+
+        assert resp.status_code == 200, resp.text
+        rules = resp.json()["data"]
+        assert [r["rule_type"] for r in rules] == [
+            "proposal_follow_up",
+            "contract_signing_nudge",
+            "payment_due",
+            "payment_overdue",
+            "re_engagement",
+        ]
+
+    async def test_tai_ket_noi_mac_dinh_tat_con_lai_bat(self, client: AsyncClient) -> None:
+        headers = await _auth(client)
+        rules = (await client.get("/api/v1/reminders/rules", headers=headers)).json()["data"]
+        by_type = {r["rule_type"]: r for r in rules}
+
+        assert by_type["re_engagement"]["is_enabled"] is False
+        assert by_type["payment_due"]["is_enabled"] is True
+
+    async def test_moi_quy_tac_mac_dinh_CHO_DUYET(self, client: AsyncClient) -> None:
+        """Bật tự gửi phải là hành động có ý thức — nó cho phép email khách hàng thật."""
+        headers = await _auth(client)
+        rules = (await client.get("/api/v1/reminders/rules", headers=headers)).json()["data"]
+
+        assert all(r["auto_send"] is False for r in rules)
+
+    async def test_goi_hai_lan_khong_sinh_trung(self, client: AsyncClient) -> None:
+        headers = await _auth(client)
+        await client.get("/api/v1/reminders/rules", headers=headers)
+        rules = (await client.get("/api/v1/reminders/rules", headers=headers)).json()["data"]
+
+        assert len(rules) == 5
+
+    async def test_sua_duoc_quy_tac(self, client: AsyncClient) -> None:
+        headers = await _auth(client)
+        resp = await client.patch(
+            "/api/v1/reminders/rules/payment_due",
+            json={"offset_days": 7, "auto_send": True, "channel": "email"},
+            headers=headers,
+        )
+
+        assert resp.status_code == 200, resp.text
+        data = resp.json()["data"]
+        assert data["offset_days"] == 7
+        assert data["auto_send"] is True
+        assert data["channel"] == "email"
+
+    async def test_sua_duoc_ngay_ca_khi_chua_tung_GET(self, client: AsyncClient) -> None:
+        """Đừng bắt người dùng GET một lần cho có rồi mới PATCH được."""
+        headers = await _auth(client)
+        resp = await client.patch(
+            "/api/v1/reminders/rules/payment_overdue", json={"is_enabled": False}, headers=headers
+        )
+
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["data"]["is_enabled"] is False
+
+    async def test_quy_tac_khong_lap_thi_tu_choi_dat_lap(self, client: AsyncClient) -> None:
+        """Nhắc mãi một báo giá khách đã lờ đi thì không phải chăm sóc mà là làm phiền."""
+        headers = await _auth(client)
+        resp = await client.patch(
+            "/api/v1/reminders/rules/proposal_follow_up",
+            json={"repeat_every_days": 3},
+            headers=headers,
+        )
+
+        # ValidationError của domain map sang 422 trong toàn bộ codebase này.
+        assert resp.status_code == 422, resp.text
+
+    async def test_so_ngay_vo_ly_bi_tu_choi(self, client: AsyncClient) -> None:
+        headers = await _auth(client)
+        resp = await client.patch(
+            "/api/v1/reminders/rules/payment_due", json={"offset_days": 9999}, headers=headers
+        )
+
+        assert resp.status_code == 422, resp.text
+
+    async def test_loai_quy_tac_khong_ton_tai(self, client: AsyncClient) -> None:
+        headers = await _auth(client)
+        resp = await client.patch(
+            "/api/v1/reminders/rules/khong_ton_tai", json={"is_enabled": False}, headers=headers
+        )
+
+        assert resp.status_code == 422, resp.text
+
+    async def test_tenant_isolation(self, client: AsyncClient) -> None:
+        """Sửa quy tắc của mình không được đụng tới quy tắc người khác."""
+        headers_a = await _auth(client)
+        headers_b = await _auth(client)
+        await client.patch(
+            "/api/v1/reminders/rules/payment_due", json={"offset_days": 30}, headers=headers_a
+        )
+
+        rules_b = (await client.get("/api/v1/reminders/rules", headers=headers_b)).json()["data"]
+        payment_due = next(r for r in rules_b if r["rule_type"] == "payment_due")
+        assert payment_due["offset_days"] == 3
+
+    async def test_unauthenticated_returns_401(self, client: AsyncClient) -> None:
+        assert (await client.get("/api/v1/reminders/rules")).status_code == 401

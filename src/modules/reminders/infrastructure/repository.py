@@ -56,6 +56,9 @@ class RemindersRepository:
             .where(
                 ReminderModel.status == "pending",
                 ReminderModel.scheduled_at <= now,
+                # Quy tắc tự động soạn nháp rồi để đây chờ người duyệt. Bỏ điều kiện này
+                # là hệ thống gửi thẳng cho khách thứ người dùng CHƯA cho phép gửi.  #Huynh
+                ReminderModel.requires_approval.is_(False),
                 # Vừa thử hỏng cách đây chưa lâu → để Celery retry lo, đừng xếp thêm.
                 (ReminderModel.retry_count == 0)
                 | (ReminderModel.updated_at <= now - RETRY_BACKOFF),
