@@ -55,6 +55,9 @@ class ContractDocument(BaseModel):
     termination_clause: str = ""
     governing_law: str = ""
     custom_clauses: str = ""
+    # Điều khoản chuẩn lấy NGUYÊN VĂN từ thư viện mẫu của admin (theo nghề). AI không sinh
+    # trường này — service gán sau khi sinh xong. Rỗng = không có mẫu khớp.
+    standard_terms: str = ""
 
     # --- Lịch thanh toán (từ contract_payment_milestones) ---
     milestones: list[ContractMilestoneLine] = []

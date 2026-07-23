@@ -43,9 +43,7 @@ async def _admin_headers(client: AsyncClient, db_session: AsyncSession) -> dict:
     )
     assert reg.status_code == 201, reg.text
 
-    await db_session.execute(
-        update(UserModel).where(UserModel.email == email).values(role="admin")
-    )
+    await db_session.execute(update(UserModel).where(UserModel.email == email).values(role="admin"))
     await db_session.flush()
 
     login = await client.post(
@@ -56,9 +54,7 @@ async def _admin_headers(client: AsyncClient, db_session: AsyncSession) -> dict:
     return {"Authorization": f"Bearer {login.json()['data']['access_token']}"}
 
 
-async def _admin_headers_with_id(
-    client: AsyncClient, db_session: AsyncSession
-) -> tuple[dict, str]:
+async def _admin_headers_with_id(client: AsyncClient, db_session: AsyncSession) -> tuple[dict, str]:
     """Return (headers, user_id) for an admin user."""
     headers = await _admin_headers(client, db_session)
     me = await client.get("/api/v1/users/me", headers=headers)
@@ -90,6 +86,7 @@ async def _create_subscription(
     """Insert a subscription directly into the DB for testing."""
     now = datetime.now(UTC)
     from datetime import timedelta
+
     stmt = insert(SubscriptionModel).values(
         user_id=uuid.UUID(user_id),
         plan_id=uuid.UUID(plan_id),
@@ -107,7 +104,9 @@ async def _create_subscription(
 
 
 class TestAdminListUsers:
-    async def test_admin_sees_all_users(self, client: AsyncClient, db_session: AsyncSession) -> None:
+    async def test_admin_sees_all_users(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
         headers = await _admin_headers(client, db_session)
         await _user_headers(client)
         await _user_headers(client)
@@ -118,7 +117,9 @@ class TestAdminListUsers:
         assert body["total"] >= 3
         assert len(body["data"]) >= 3
 
-    async def test_cross_tenant_visibility(self, client: AsyncClient, db_session: AsyncSession) -> None:
+    async def test_cross_tenant_visibility(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
         """Admin sees users registered by different parties."""
         headers = await _admin_headers(client, db_session)
         user_h = await _user_headers(client)
@@ -130,7 +131,9 @@ class TestAdminListUsers:
         ids = [u["id"] for u in resp.json()["data"]["data"]]
         assert regular_id in ids
 
-    async def test_response_has_expected_fields(self, client: AsyncClient, db_session: AsyncSession) -> None:
+    async def test_response_has_expected_fields(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
         headers = await _admin_headers(client, db_session)
         resp = await client.get("/api/v1/admin/users", headers=headers)
         assert resp.status_code == 200
@@ -200,7 +203,9 @@ class TestAdminListUsers:
         assert body["total"] == 0
         assert body["data"] == []
 
-    async def test_search_is_case_insensitive(self, client: AsyncClient, db_session: AsyncSession) -> None:
+    async def test_search_is_case_insensitive(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
         headers = await _admin_headers(client, db_session)
         unique = uuid.uuid4().hex[:8]
         await client.post(
@@ -237,12 +242,16 @@ class TestAdminListUsers:
             assert u["status"] == "active"
             assert u["role"] == "freelancer"
 
-    async def test_invalid_role_returns_422(self, client: AsyncClient, db_session: AsyncSession) -> None:
+    async def test_invalid_role_returns_422(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
         headers = await _admin_headers(client, db_session)
         resp = await client.get("/api/v1/admin/users?role=bogus", headers=headers)
         assert resp.status_code == 422
 
-    async def test_invalid_status_returns_422(self, client: AsyncClient, db_session: AsyncSession) -> None:
+    async def test_invalid_status_returns_422(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
         headers = await _admin_headers(client, db_session)
         resp = await client.get("/api/v1/admin/users?status=bogus", headers=headers)
         assert resp.status_code == 422
@@ -272,7 +281,9 @@ class TestAdminListUsers:
 
 
 class TestAdminGetUser:
-    async def test_returns_correct_user(self, client: AsyncClient, db_session: AsyncSession) -> None:
+    async def test_returns_correct_user(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
         headers = await _admin_headers(client, db_session)
         user_h = await _user_headers(client)
 
@@ -359,7 +370,9 @@ class TestAdminGetUser:
         assert resp.status_code == 200
         assert resp.json()["data"]["subscription"]["plan_slug"] == plan["slug"]
 
-    async def test_nonexistent_user_returns_404(self, client: AsyncClient, db_session: AsyncSession) -> None:
+    async def test_nonexistent_user_returns_404(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
         headers = await _admin_headers(client, db_session)
         resp = await client.get(f"/api/v1/admin/users/{uuid.uuid4()}", headers=headers)
         assert resp.status_code == 404
@@ -393,7 +406,9 @@ class TestAdminUpdateUser:
         assert resp.status_code == 200
         assert resp.json()["data"]["full_name"] == "Updated Name"
 
-    async def test_update_role_to_admin(self, client: AsyncClient, db_session: AsyncSession) -> None:
+    async def test_update_role_to_admin(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
         headers = await _admin_headers(client, db_session)
         user_h = await _user_headers(client)
         user_id = (await client.get("/api/v1/users/me", headers=user_h)).json()["data"]["id"]
@@ -406,7 +421,9 @@ class TestAdminUpdateUser:
         assert resp.status_code == 200
         assert resp.json()["data"]["role"] == "admin"
 
-    async def test_update_status_to_suspended(self, client: AsyncClient, db_session: AsyncSession) -> None:
+    async def test_update_status_to_suspended(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
         headers = await _admin_headers(client, db_session)
         user_h = await _user_headers(client)
         user_id = (await client.get("/api/v1/users/me", headers=user_h)).json()["data"]["id"]
@@ -506,7 +523,9 @@ class TestAdminUpdateUser:
         )
         assert resp.status_code == 200
 
-    async def test_update_nonexistent_returns_404(self, client: AsyncClient, db_session: AsyncSession) -> None:
+    async def test_update_nonexistent_returns_404(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
         headers = await _admin_headers(client, db_session)
         resp = await client.patch(
             f"/api/v1/admin/users/{uuid.uuid4()}",
@@ -538,7 +557,9 @@ class TestAdminUpdateUser:
 
 
 class TestAdminSuspendUser:
-    async def test_suspend_regular_user(self, client: AsyncClient, db_session: AsyncSession) -> None:
+    async def test_suspend_regular_user(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
         headers = await _admin_headers(client, db_session)
         user_h = await _user_headers(client)
         user_id = (await client.get("/api/v1/users/me", headers=user_h)).json()["data"]["id"]
@@ -606,16 +627,12 @@ class TestAdminReinstateUser:
         self, client: AsyncClient, db_session: AsyncSession
     ) -> None:
         headers = await _admin_headers(client, db_session)
-        resp = await client.post(
-            f"/api/v1/admin/users/{uuid.uuid4()}/reinstate", headers=headers
-        )
+        resp = await client.post(f"/api/v1/admin/users/{uuid.uuid4()}/reinstate", headers=headers)
         assert resp.status_code == 404
 
     async def test_non_admin_returns_403(self, client: AsyncClient) -> None:
         headers = await _user_headers(client)
-        resp = await client.post(
-            f"/api/v1/admin/users/{uuid.uuid4()}/reinstate", headers=headers
-        )
+        resp = await client.post(f"/api/v1/admin/users/{uuid.uuid4()}/reinstate", headers=headers)
         assert resp.status_code == 403
 
 
@@ -637,16 +654,12 @@ class TestAdminRevokeUserSessions:
         self, client: AsyncClient, db_session: AsyncSession
     ) -> None:
         headers = await _admin_headers(client, db_session)
-        resp = await client.delete(
-            f"/api/v1/admin/users/{uuid.uuid4()}/sessions", headers=headers
-        )
+        resp = await client.delete(f"/api/v1/admin/users/{uuid.uuid4()}/sessions", headers=headers)
         assert resp.status_code == 204
 
     async def test_non_admin_returns_403(self, client: AsyncClient) -> None:
         headers = await _user_headers(client)
-        resp = await client.delete(
-            f"/api/v1/admin/users/{uuid.uuid4()}/sessions", headers=headers
-        )
+        resp = await client.delete(f"/api/v1/admin/users/{uuid.uuid4()}/sessions", headers=headers)
         assert resp.status_code == 403
 
 
@@ -662,7 +675,9 @@ class TestAdminListPlans:
         assert resp.status_code == 200
         assert isinstance(resp.json()["data"], list)
 
-    async def test_includes_created_plan(self, client: AsyncClient, db_session: AsyncSession) -> None:
+    async def test_includes_created_plan(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
         headers = await _admin_headers(client, db_session)
         payload = _plan_payload(name="Visible Plan", slug="visible-plan")
         await client.post("/api/v1/admin/plans", json=payload, headers=headers)
@@ -671,7 +686,9 @@ class TestAdminListPlans:
         slugs = [p["slug"] for p in resp.json()["data"]]
         assert "visible-plan" in slugs
 
-    async def test_response_has_expected_fields(self, client: AsyncClient, db_session: AsyncSession) -> None:
+    async def test_response_has_expected_fields(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
         headers = await _admin_headers(client, db_session)
         await client.post("/api/v1/admin/plans", json=_plan_payload(), headers=headers)
 
@@ -733,7 +750,9 @@ class TestAdminGetPlan:
 
 
 class TestAdminCreatePlan:
-    async def test_create_plan_returns_201(self, client: AsyncClient, db_session: AsyncSession) -> None:
+    async def test_create_plan_returns_201(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
         headers = await _admin_headers(client, db_session)
         resp = await client.post("/api/v1/admin/plans", json=_plan_payload(), headers=headers)
         assert resp.status_code == 201
@@ -803,9 +822,13 @@ class TestAdminCreatePlan:
 
 
 class TestAdminUpdatePlan:
-    async def test_update_plan_returns_200(self, client: AsyncClient, db_session: AsyncSession) -> None:
+    async def test_update_plan_returns_200(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
         headers = await _admin_headers(client, db_session)
-        plan_id = (await client.post("/api/v1/admin/plans", json=_plan_payload(), headers=headers)).json()["data"]["id"]
+        plan_id = (
+            await client.post("/api/v1/admin/plans", json=_plan_payload(), headers=headers)
+        ).json()["data"]["id"]
 
         updated = _plan_payload(name="Renamed Plan", slug="renamed-plan", price_monthly="49.99")
         resp = await client.patch(f"/api/v1/admin/plans/{plan_id}", json=updated, headers=headers)
@@ -840,7 +863,9 @@ class TestAdminUpdatePlan:
 
     async def test_deactivate_plan(self, client: AsyncClient, db_session: AsyncSession) -> None:
         headers = await _admin_headers(client, db_session)
-        plan_id = (await client.post("/api/v1/admin/plans", json=_plan_payload(), headers=headers)).json()["data"]["id"]
+        plan_id = (
+            await client.post("/api/v1/admin/plans", json=_plan_payload(), headers=headers)
+        ).json()["data"]["id"]
 
         resp = await client.patch(
             f"/api/v1/admin/plans/{plan_id}",
@@ -893,7 +918,9 @@ class TestAdminUpdatePlan:
         )
         assert resp.status_code == 200
 
-    async def test_update_nonexistent_plan_returns_404(self, client: AsyncClient, db_session: AsyncSession) -> None:
+    async def test_update_nonexistent_plan_returns_404(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
         headers = await _admin_headers(client, db_session)
         resp = await client.patch(
             f"/api/v1/admin/plans/{uuid.uuid4()}",
@@ -904,7 +931,9 @@ class TestAdminUpdatePlan:
 
     async def test_non_admin_returns_403(self, client: AsyncClient) -> None:
         headers = await _user_headers(client)
-        resp = await client.patch(f"/api/v1/admin/plans/{uuid.uuid4()}", json=_plan_payload(), headers=headers)
+        resp = await client.patch(
+            f"/api/v1/admin/plans/{uuid.uuid4()}", json=_plan_payload(), headers=headers
+        )
         assert resp.status_code == 403
 
     async def test_unauthenticated_returns_401(self, client: AsyncClient) -> None:
@@ -930,13 +959,9 @@ class TestAdminListSubscriptions:
         assert "page" in body
         assert "page_size" in body
 
-    async def test_filter_by_status(
-        self, client: AsyncClient, db_session: AsyncSession
-    ) -> None:
+    async def test_filter_by_status(self, client: AsyncClient, db_session: AsyncSession) -> None:
         headers = await _admin_headers(client, db_session)
-        resp = await client.get(
-            "/api/v1/admin/subscriptions?status=active", headers=headers
-        )
+        resp = await client.get("/api/v1/admin/subscriptions?status=active", headers=headers)
         assert resp.status_code == 200
         for item in resp.json()["data"]["data"]:
             assert item["status"] == "active"
@@ -945,9 +970,7 @@ class TestAdminListSubscriptions:
         self, client: AsyncClient, db_session: AsyncSession
     ) -> None:
         headers = await _admin_headers(client, db_session)
-        resp = await client.get(
-            "/api/v1/admin/subscriptions?status=bogus", headers=headers
-        )
+        resp = await client.get("/api/v1/admin/subscriptions?status=bogus", headers=headers)
         assert resp.status_code == 422
 
     async def test_subscription_has_plan_fields(
@@ -988,9 +1011,7 @@ class TestAdminListSubscriptions:
 
 
 class TestAdminOverrideSubscription:
-    async def test_override_plan(
-        self, client: AsyncClient, db_session: AsyncSession
-    ) -> None:
+    async def test_override_plan(self, client: AsyncClient, db_session: AsyncSession) -> None:
         headers = await _admin_headers(client, db_session)
 
         plan1 = (
@@ -1120,9 +1141,7 @@ class TestAdminAuditLogs:
             headers=headers,
         )
 
-        resp = await client.get(
-            "/api/v1/admin/audit-logs?event_type=user.updated", headers=headers
-        )
+        resp = await client.get("/api/v1/admin/audit-logs?event_type=user.updated", headers=headers)
         assert resp.status_code == 200
         logs = resp.json()["data"]["data"]
         assert any("full_name=Audited Name" in e["description"] for e in logs)
@@ -1164,9 +1183,7 @@ class TestAdminListTemplates:
         self, client: AsyncClient, db_session: AsyncSession
     ) -> None:
         headers = await _admin_headers(client, db_session)
-        resp = await client.get(
-            "/api/v1/admin/templates?template_type=bogus", headers=headers
-        )
+        resp = await client.get("/api/v1/admin/templates?template_type=bogus", headers=headers)
         assert resp.status_code == 422
 
     async def test_non_admin_returns_403(self, client: AsyncClient) -> None:
@@ -1238,6 +1255,64 @@ class TestAdminCreateTemplate:
             headers=headers,
         )
         assert resp.status_code == 403
+
+    async def test_template_gan_nghe_hop_le(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        headers = await _admin_headers(client, db_session)
+        resp = await client.post(
+            "/api/v1/admin/templates",
+            json=self._template_payload(profession="ui-ux-design"),
+            headers=headers,
+        )
+        assert resp.status_code == 201
+        assert resp.json()["data"]["profession"] == "ui-ux-design"
+
+    async def test_nghe_khong_hop_le_tra_422(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        headers = await _admin_headers(client, db_session)
+        resp = await client.post(
+            "/api/v1/admin/templates",
+            json=self._template_payload(profession="nghe-bia-dat"),
+            headers=headers,
+        )
+        assert resp.status_code == 422
+
+    async def test_khong_gan_nghe_thi_mau_dung_chung(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """Không chọn nghề = mẫu dùng chung cho mọi nghề → lưu NULL, không phải "" rỗng."""
+        headers = await _admin_headers(client, db_session)
+        resp = await client.post(
+            "/api/v1/admin/templates",
+            json=self._template_payload(profession=""),
+            headers=headers,
+        )
+        assert resp.status_code == 201
+        assert resp.json()["data"]["profession"] is None
+
+    async def test_loc_thu_vien_theo_nghe(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        headers = await _admin_headers(client, db_session)
+        await client.post(
+            "/api/v1/admin/templates",
+            json=self._template_payload(name="Mẫu content", profession="content-writing"),
+            headers=headers,
+        )
+        await client.post(
+            "/api/v1/admin/templates",
+            json=self._template_payload(name="Mẫu graphic", profession="graphic-design"),
+            headers=headers,
+        )
+        resp = await client.get(
+            "/api/v1/admin/templates?profession=content-writing", headers=headers
+        )
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        assert all(t["profession"] == "content-writing" for t in data)
+        assert any(t["name"] == "Mẫu content" for t in data)
 
 
 # ---------------------------------------------------------------------------
@@ -1351,9 +1426,7 @@ class TestAdminUpdateFeatureFlag:
         await db_session.execute(stmt)
         await db_session.flush()
 
-    async def test_update_flag_enabled(
-        self, client: AsyncClient, db_session: AsyncSession
-    ) -> None:
+    async def test_update_flag_enabled(self, client: AsyncClient, db_session: AsyncSession) -> None:
         flag_name = f"test_flag_{uuid.uuid4().hex[:6]}"
         await self._create_flag(db_session, flag_name)
 

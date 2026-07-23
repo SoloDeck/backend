@@ -26,6 +26,8 @@ class AiProposalRequest(BaseModel):
     service_category: str
     pricing_tier: str
     freelancer_name: str
+    # Mẫu điều khoản freelancer chọn (từ thư viện admin). None = "AI tự viết", không mẫu.
+    template_id: uuid.UUID | None = None
 
 
 class ProposalPriceRequest(BaseModel):

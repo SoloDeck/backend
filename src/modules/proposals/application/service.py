@@ -24,6 +24,7 @@ from src.shared.exceptions.domain import (
     BusinessRuleError,
     InvalidStateTransitionError,
     NotFoundError,
+    ValidationError,
 )
 
 # Hạn hiệu lực mặc định. Chỉ là ĐIỂM XUẤT PHÁT — freelancer sửa được ngay trên tờ báo giá,
@@ -258,7 +259,14 @@ class ProposalsService:
 
         return content
 
-    async def generate_content(self, user_id: uuid.UUID, proposal_id: uuid.UUID, ai_facade):  # type: ignore[return]
+    async def generate_content(  # type: ignore[no-untyped-def]
+        self,
+        user_id: uuid.UUID,
+        proposal_id: uuid.UUID,
+        ai_facade,
+        *,
+        template_id: uuid.UUID | None = None,
+    ):
         proposal = await self._get_proposal(user_id, proposal_id)
         if proposal.status != "draft":
             raise BusinessRuleError(
@@ -331,12 +339,48 @@ class ProposalsService:
             user_id,
             (getattr(intake, "estimated_budget", None) if intake else None),
         )
+        content = await self._apply_chosen_template(content, template_id, user)
 
         proposal.content = content
         proposal.ai_generated = True
         return await self.repo.save(proposal)
 
-    async def generate_from_deal(self, user_id: uuid.UUID, deal_id: uuid.UUID, ai_facade):  # type: ignore[return]
+    async def list_term_templates(self, user_id: uuid.UUID) -> list:
+        """Mẫu điều khoản báo giá freelancer được chọn (theo nghề của họ + dùng chung)."""
+        user = await self.repo.get_user(user_id)
+        profession = getattr(user, "profession", None) if user else None
+        return await self.repo.list_active_templates(
+            template_type="proposal", profession=profession
+        )
+
+    async def _apply_chosen_template(  # type: ignore[no-untyped-def]
+        self, content: dict, template_id: uuid.UUID | None, user
+    ) -> dict:
+        """Chèn điều khoản từ mẫu freelancer CHỌN, NGUYÊN VĂN. AI lo phần thân báo giá;
+        điều khoản chuẩn giữ đúng chữ admin. Không chọn ("AI tự viết") thì để nguyên.  #Huynh
+        """
+        if template_id is None:
+            return content
+        profession = getattr(user, "profession", None) if user else None
+        template = await self.repo.get_template_for_use(
+            template_id, template_type="proposal", profession=profession
+        )
+        if template is None:
+            raise ValidationError("Mẫu điều khoản không hợp lệ hoặc không dùng được.")
+        body = template.content.get("body") if isinstance(template.content, dict) else None
+        if isinstance(body, str) and body.strip():
+            content = dict(content)
+            content["standard_terms"] = body.strip()
+        return content
+
+    async def generate_from_deal(  # type: ignore[no-untyped-def]
+        self,
+        user_id: uuid.UUID,
+        deal_id: uuid.UUID,
+        ai_facade,
+        *,
+        template_id: uuid.UUID | None = None,
+    ):
         deal = await self.repo.get_deal(deal_id)
         if deal is None or deal.owner_user_id != user_id:
             raise NotFoundError(f"Deal {deal_id} not found")
@@ -410,6 +454,7 @@ class ProposalsService:
             user_id,
             (getattr(intake, "estimated_budget", None) if intake else None),
         )
+        content = await self._apply_chosen_template(content, template_id, user)
 
         version_number = await self.repo.count_by_deal(deal_id) + 1
         return await self.repo.create(

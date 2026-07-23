@@ -244,6 +244,12 @@
 <h2>Điều {{ ns.n }}. Luật áp dụng và giải quyết tranh chấp</h2>
 <p class="clause">Hợp đồng này được điều chỉnh bởi pháp luật {{ governing_law or "Việt Nam" }}. Mọi tranh chấp phát sinh trước hết được hai bên giải quyết thông qua thương lượng, hòa giải; nếu không đạt được thỏa thuận, tranh chấp sẽ được đưa ra giải quyết tại Tòa án có thẩm quyền theo quy định pháp luật.</p>
 
+{% if standard_terms %}
+{% set ns.n = ns.n + 1 %}
+<h2>Điều {{ ns.n }}. Điều khoản chuẩn theo lĩnh vực</h2>
+<p class="clause" data-field="standard_terms" data-label="Điều khoản chuẩn theo lĩnh vực" style="white-space:pre-line">{{ standard_terms }}</p>
+{% endif %}
+
 {% if custom_clauses or editable %}
 {% set ns.n = ns.n + 1 %}
 <h2>Điều {{ ns.n }}. Điều khoản bổ sung</h2>

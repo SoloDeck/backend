@@ -19,6 +19,7 @@ from src.shared.exceptions.domain import (
     EntitlementError,
     InvalidStateTransitionError,
     NotFoundError,
+    ValidationError,
 )
 
 
@@ -161,7 +162,14 @@ class ContractsService:
         await self.repo.save(contract)
         return new_contract
 
-    async def generate_content(self, user_id: uuid.UUID, contract_id: uuid.UUID, ai_facade):  # type: ignore[return]
+    async def generate_content(  # type: ignore[no-untyped-def]
+        self,
+        user_id: uuid.UUID,
+        contract_id: uuid.UUID,
+        ai_facade,
+        *,
+        template_id: uuid.UUID | None = None,
+    ):
         contract = await self._get_contract(user_id, contract_id)
         if contract.status != ContractStatus.DRAFT:
             raise BusinessRuleError(
@@ -204,9 +212,42 @@ class ContractsService:
             usage=ai_facade.last_usage("contract_generator"),
         )
 
+        # Chèn điều khoản chuẩn từ mẫu freelancer CHỌN — NGUYÊN VĂN, AI không đụng tới. AI lo
+        # phần thân (phạm vi, giá, mốc); điều khoản chuẩn giữ đúng chữ admin viết. Freelancer
+        # sửa được khi review. Không chọn mẫu ("AI tự viết") thì để trống.  #Huynh
+        content = await self._apply_chosen_template(
+            content, template_id, user, template_type="contract"
+        )
+
         contract.content = content
         contract.ai_generated = True
         return await self.repo.save(contract)
+
+    async def list_term_templates(self, user_id: uuid.UUID) -> list:
+        """Mẫu điều khoản hợp đồng freelancer được chọn (theo nghề của họ + dùng chung)."""
+        user = await self.repo.get_user(user_id)
+        profession = getattr(user, "profession", None) if user else None
+        return await self.repo.list_active_templates(
+            template_type="contract", profession=profession
+        )
+
+    async def _apply_chosen_template(  # type: ignore[no-untyped-def]
+        self, content: dict, template_id: uuid.UUID | None, user, *, template_type: str
+    ) -> dict:
+        if template_id is None:  # "AI tự viết" — không chèn mẫu
+            return content
+        profession = getattr(user, "profession", None) if user else None
+        template = await self.repo.get_template_for_use(
+            template_id, template_type=template_type, profession=profession
+        )
+        if template is None:
+            # Mẫu không tồn tại / đã tắt / thuộc nghề khác — chặn, không im lặng bỏ qua.
+            raise ValidationError("Mẫu điều khoản không hợp lệ hoặc không dùng được.")
+        body = template.content.get("body") if isinstance(template.content, dict) else None
+        if isinstance(body, str) and body.strip():
+            content = dict(content)
+            content["standard_terms"] = body.strip()
+        return content
 
     async def send(self, user_id: uuid.UUID, contract_id: uuid.UUID):  # type: ignore[return]
         return await self.transition_status(user_id, contract_id, "pending_signatures")

@@ -348,10 +348,12 @@ async def list_templates(
     _: AdminUser,
     db: DBSession,
     template_type: Literal["proposal", "contract"] | None = Query(default=None),
+    profession: str | None = Query(default=None),
     is_active: bool | None = Query(default=None),
 ) -> ApiResponse[list[AdminTemplateResponse]]:
     templates = await AdminService(db=db).list_templates(
         template_type=template_type,
+        profession=profession,
         is_active=is_active,
     )
     return ApiResponse.ok([AdminTemplateResponse.model_validate(t) for t in templates])

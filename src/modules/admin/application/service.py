@@ -17,7 +17,12 @@ from src.modules.admin.schemas.request import (
     AdminUpdateTemplateRequest,
     AdminUpdateUserRequest,
 )
-from src.shared.exceptions.domain import AlreadyExistsError, BusinessRuleError, NotFoundError
+from src.shared.exceptions.domain import (
+    AlreadyExistsError,
+    BusinessRuleError,
+    NotFoundError,
+    ValidationError,
+)
 
 
 @dataclass
@@ -347,10 +352,12 @@ class AdminService:
         self,
         *,
         template_type: str | None = None,
+        profession: str | None = None,
         is_active: bool | None = None,
     ) -> list:
         return await self.repo.list_templates(
             template_type=template_type,
+            profession=profession,
             is_active=is_active,
         )
 
@@ -363,6 +370,7 @@ class AdminService:
         return await self.repo.create_template(
             name=payload.name,
             template_type=payload.template_type,
+            profession=self._clean_profession(payload.profession),
             content=payload.content,
             plan_tier_required=payload.plan_tier_required,
             is_active=payload.is_active,
@@ -379,6 +387,8 @@ class AdminService:
             raise NotFoundError(f"Template {template_id} not found")
         if payload.name is not None:
             template.name = payload.name
+        if payload.profession is not None:
+            template.profession = self._clean_profession(payload.profession)
         if payload.content is not None:
             template.content = payload.content
             template.version_number = (template.version_number or 1) + 1
@@ -387,6 +397,21 @@ class AdminService:
         if payload.plan_tier_required is not None:
             template.plan_tier_required = payload.plan_tier_required
         return await self.repo.save(template)
+
+    @staticmethod
+    def _clean_profession(profession: str | None) -> str | None:
+        """Chuẩn hoá + kiểm nghề qua SEAM, trả về giá trị để lưu.
+
+        Chuỗi rỗng "" nghĩa là "mẫu dùng chung" → quy về None để cột lưu NULL, thay vì một
+        slug rỗng vô nghĩa. Kiểm qua `is_valid_profession` (seam professions) chứ không đọc
+        thẳng dict — sau này nghề chuyển sang bảng DB thì chỗ này không phải sửa.  #Huynh
+        """
+        from src.modules.intake_form.professions import is_valid_profession
+
+        value = (profession or "").strip() or None
+        if not is_valid_profession(value):
+            raise ValidationError(f"Nghề không hợp lệ: {profession!r}")
+        return value
 
     # -------------------------------------------------------------------------
     # Feature Flags

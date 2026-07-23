@@ -150,6 +150,7 @@ def build_contract_document(
         termination_clause=_text(content.get("termination_clause")),
         governing_law=governing_law,
         custom_clauses=_text(content.get("custom_clauses")),
+        standard_terms=_text(content.get("standard_terms")),
         milestones=lines,
         total_amount=total_amount,
         effective_date=_vn_date(getattr(contract, "effective_date", None)),

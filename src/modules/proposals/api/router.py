@@ -17,7 +17,7 @@ from src.modules.proposals.schemas.request import (
     ProposalRequest,
     ProposalStatusRequest,
 )
-from src.modules.proposals.schemas.response import ProposalResponse
+from src.modules.proposals.schemas.response import ProposalResponse, TermTemplateOption
 from src.shared.dependencies.ai import AIFacadeDep
 from src.shared.dependencies.auth import CurrentUserId
 from src.shared.responses.response import ApiResponse, PaginatedResponse
@@ -51,7 +51,9 @@ async def ai_generate_proposal(
     Các trường trong payload giờ là dư thừa (đều suy ra được từ `deal_id`), nhưng vẫn nhận
     để không phá hợp đồng API. Nguồn sự thật là DATABASE, không phải payload.  #Huynh
     """
-    proposal = await ProposalsService(db=db).generate_from_deal(user_id, payload.deal_id, ai)
+    proposal = await ProposalsService(db=db).generate_from_deal(
+        user_id, payload.deal_id, ai, template_id=payload.template_id
+    )
     return ApiResponse.created(ProposalResponse.model_validate(proposal))
 
 
@@ -65,9 +67,26 @@ async def generate_proposal_from_deal(
     user_id: CurrentUserId,
     db: DBSession,
     ai: AIFacadeDep,
+    template_id: uuid.UUID | None = Query(default=None),
 ) -> ApiResponse[ProposalResponse]:
-    proposal = await ProposalsService(db=db).generate_from_deal(user_id, deal_id, ai)
+    proposal = await ProposalsService(db=db).generate_from_deal(
+        user_id, deal_id, ai, template_id=template_id
+    )
     return ApiResponse.created(ProposalResponse.model_validate(proposal))
+
+
+@router.get("/term-templates", response_model=ApiResponse[list[TermTemplateOption]])
+async def list_proposal_term_templates(
+    user_id: CurrentUserId,
+    db: DBSession,
+) -> ApiResponse[list[TermTemplateOption]]:
+    """Mẫu điều khoản báo giá freelancer được chọn (theo nghề của họ + dùng chung, đang bật).
+
+    Freelancer gọi được (khác `/admin/templates` chỉ admin). FE dùng để dựng danh sách chọn
+    trước khi sinh báo giá.
+    """
+    templates = await ProposalsService(db=db).list_term_templates(user_id)
+    return ApiResponse.ok([TermTemplateOption(id=t.id, name=t.name) for t in templates])
 
 
 @router.patch("/{proposal_id}/price", response_model=ApiResponse[ProposalResponse])

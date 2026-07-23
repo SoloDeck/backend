@@ -356,11 +356,14 @@ class AdminRepository:
         self,
         *,
         template_type: str | None = None,
+        profession: str | None = None,
         is_active: bool | None = None,
     ) -> list:
         q = select(SystemTemplateModel)
         if template_type is not None:
             q = q.where(SystemTemplateModel.template_type == template_type)
+        if profession is not None:
+            q = q.where(SystemTemplateModel.profession == profession)
         if is_active is not None:
             q = q.where(SystemTemplateModel.is_active == is_active)
         result = await self.db.execute(q)

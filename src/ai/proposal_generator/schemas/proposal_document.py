@@ -63,3 +63,7 @@ class ProposalDocument(BaseModel):
     # muộn rồi.  #Huynh
     out_of_scope: list[str] = []
     revision_policy: str = ""
+
+    # Điều khoản chuẩn lấy NGUYÊN VĂN từ thư viện mẫu của admin (theo nghề). AI không sinh
+    # trường này — service gán sau khi sinh. Rỗng = không có mẫu khớp.
+    standard_terms: str = ""

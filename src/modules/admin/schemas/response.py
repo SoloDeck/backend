@@ -131,6 +131,7 @@ class AdminTemplateResponse(BaseModel):
     id: uuid.UUID
     template_type: str
     name: str
+    profession: str | None
     content: dict
     plan_tier_required: str | None
     version_number: int

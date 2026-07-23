@@ -276,7 +276,12 @@
     {{ assumptions }}
 </p>
 
-<h2>12. Xác Nhận</h2>
+{% if standard_terms %}
+<h2>12. Điều Khoản Chuẩn Theo Lĩnh Vực</h2>
+<p data-field="standard_terms" data-label="Điều khoản chuẩn theo lĩnh vực" style="white-space:pre-line">{{ standard_terms }}</p>
+{% endif %}
+
+<h2>{% if standard_terms %}13{% else %}12{% endif %}. Xác Nhận</h2>
 
 <p>
     {% if valid_until %}Báo giá này có hiệu lực đến {{ valid_until }}. {% endif %}Vui lòng

@@ -1228,6 +1228,10 @@ class SystemTemplateModel(UUIDMixin, TimestampMixin, Base):
 
     template_type: Mapped[str] = mapped_column(_template_type, nullable=False)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
+    # Nghề áp dụng (slug trong intake_form/professions.py). NULL = mẫu dùng chung cho mọi
+    # nghề. Đây là chiều "thư viện mẫu theo nghề" Phiếu đòi (Gói 6); cột phẳng + validate
+    # qua seam professions, đúng lối đã làm với users.profession.  #Huynh
+    profession: Mapped[str | None] = mapped_column(String(64), nullable=True)
     content: Mapped[dict] = mapped_column(JSONB, nullable=False)
     plan_tier_required: Mapped[str | None] = mapped_column(String(50), nullable=True)
     version_number: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
@@ -1242,6 +1246,8 @@ class SystemTemplateModel(UUIDMixin, TimestampMixin, Base):
     __table_args__ = (
         CheckConstraint("version_number > 0", name="chk_system_templates_version"),
         Index("idx_system_templates_type_active", "template_type", "is_active"),
+        # Admin lọc thư viện theo nghề — index để không quét cả bảng.
+        Index("idx_system_templates_profession", "profession"),
     )
 
 

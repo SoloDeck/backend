@@ -1,7 +1,7 @@
 import uuid
 from dataclasses import dataclass
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.infrastructure.database.models import (
@@ -12,6 +12,7 @@ from src.infrastructure.database.models import (
     PlanModel,
     ProposalModel,
     SubscriptionModel,
+    SystemTemplateModel,
     UserModel,
 )
 
@@ -83,6 +84,49 @@ class ContractsRepository:
 
     async def get_user(self, user_id: uuid.UUID):
         return await self.db.scalar(select(UserModel).where(UserModel.id == user_id))
+
+    def _usable_template_conditions(self, template_type: str, profession: str | None) -> list:
+        """Điều kiện "mẫu freelancer được phép dùng": active + đúng loại + (đúng nghề HOẶC
+        dùng chung). Freelancer chưa chọn nghề thì chỉ mẫu dùng chung.  #Huynh"""
+        conditions = [
+            SystemTemplateModel.template_type == template_type,
+            SystemTemplateModel.is_active.is_(True),
+        ]
+        if profession:
+            conditions.append(
+                or_(
+                    SystemTemplateModel.profession == profession,
+                    SystemTemplateModel.profession.is_(None),
+                )
+            )
+        else:
+            conditions.append(SystemTemplateModel.profession.is_(None))
+        return conditions
+
+    async def list_active_templates(self, *, template_type: str, profession: str | None) -> list:
+        """Các mẫu freelancer được chọn khi sinh — để FE hiện danh sách. Mẫu đúng nghề
+        đứng trước mẫu dùng chung."""
+        result = await self.db.execute(
+            select(SystemTemplateModel)
+            .where(*self._usable_template_conditions(template_type, profession))
+            .order_by(
+                SystemTemplateModel.profession.is_(None),
+                SystemTemplateModel.name,
+            )
+        )
+        return list(result.scalars().all())
+
+    async def get_template_for_use(
+        self, template_id: uuid.UUID, *, template_type: str, profession: str | None
+    ):
+        """Mẫu theo id — CHỈ trả nếu freelancer được phép dùng (active + đúng loại + đúng
+        nghề/dùng chung). Chặn truyền id mẫu của nghề khác hay mẫu đã tắt.  #Huynh"""
+        return await self.db.scalar(
+            select(SystemTemplateModel).where(
+                SystemTemplateModel.id == template_id,
+                *self._usable_template_conditions(template_type, profession),
+            )
+        )
 
     async def get_milestones(self, contract_id: uuid.UUID) -> list:
         """Lịch thanh toán của hợp đồng, theo đúng thứ tự sort_order — để in vào bản

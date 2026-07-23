@@ -16,7 +16,11 @@ from src.modules.contracts.schemas.request import (
     ContractStatusRequest,
     ContractTerminateRequest,
 )
-from src.modules.contracts.schemas.response import ContractExportResponse, ContractResponse
+from src.modules.contracts.schemas.response import (
+    ContractExportResponse,
+    ContractResponse,
+    TermTemplateOption,
+)
 from src.shared.dependencies.ai import AIFacadeDep
 from src.shared.dependencies.auth import CurrentUserId
 from src.shared.responses.response import ApiResponse, PaginatedResponse
@@ -65,6 +69,18 @@ async def create_contract(
 ) -> ApiResponse[ContractResponse]:
     contract = await ContractsService(db=db).create(user_id, payload)
     return ApiResponse.created(ContractResponse.model_validate(contract))
+
+
+# PHẢI khai TRƯỚC "/{contract_id}" — để sau thì "term-templates" bị nuốt vào route động
+# và trả 422 vì không phải UUID.  #Huynh
+@router.get("/term-templates", response_model=ApiResponse[list[TermTemplateOption]])
+async def list_contract_term_templates(
+    user_id: CurrentUserId,
+    db: DBSession,
+) -> ApiResponse[list[TermTemplateOption]]:
+    """Mẫu điều khoản hợp đồng freelancer được chọn (theo nghề + dùng chung, đang bật)."""
+    templates = await ContractsService(db=db).list_term_templates(user_id)
+    return ApiResponse.ok([TermTemplateOption(id=t.id, name=t.name) for t in templates])
 
 
 @router.get("/{contract_id}", response_model=ApiResponse[ContractResponse])
@@ -133,8 +149,11 @@ async def ai_generate_contract_content(
     user_id: CurrentUserId,
     db: DBSession,
     ai: AIFacadeDep,
+    template_id: uuid.UUID | None = Query(default=None),
 ) -> ApiResponse[ContractResponse]:
-    contract = await ContractsService(db=db).generate_content(user_id, contract_id, ai)
+    contract = await ContractsService(db=db).generate_content(
+        user_id, contract_id, ai, template_id=template_id
+    )
     return ApiResponse.ok(ContractResponse.model_validate(contract))
 
 

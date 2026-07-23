@@ -225,4 +225,5 @@ def build_proposal_document(
         out_of_scope=_text_list(content.get("out_of_scope")),
         revision_policy=_text(content.get("revision_policy"))
         or _text(terms.get("revision_policy")),
+        standard_terms=_text(content.get("standard_terms")),
     )
