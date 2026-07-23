@@ -1,12 +1,15 @@
 #!/usr/bin/env python
 """Simulate a MoMo IPN callback against a locally running SoloDesk API.
 
-There is no real MoMo server behind this integration — this script builds a
-validly-signed payload the same way our own MockMomoClient does, and POSTs it
-to our webhook endpoint, exactly as a real MoMo server would.
+Useful when developing against the real MoMo sandbox but the machine has no
+public IP/tunnel for MoMo's servers to reach `momo_ipn_url` directly — this
+builds a payload signed the same way MoMo's real IPN would be (same keys as
+whatever `MOMO_*` settings are configured) and POSTs it to our webhook
+endpoint, exactly as MoMo's server would.
 
 Usage:
-    python scripts/simulate_payment_callback.py --order-id <payment id> --amount 199000 [--outcome success|fail]
+    python scripts/simulate_payment_callback.py --order-id <payment id> --amount 199000 \
+        [--outcome success|fail]
 """
 
 import argparse
@@ -18,7 +21,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import httpx
 
-from src.integrations.momo.client import MockMomoClient
+from src.shared.dependencies.payments import get_momo_client
 
 
 def main() -> None:
@@ -31,7 +34,7 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    client = MockMomoClient()
+    client = get_momo_client()
     if args.outcome == "success":
         payload = client.sign_ipn(order_id=args.order_id, amount=args.amount)
     else:

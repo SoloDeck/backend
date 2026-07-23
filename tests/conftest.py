@@ -48,7 +48,9 @@ from sqlalchemy.pool import NullPool  # noqa: E402
 
 import src.infrastructure.database.models  # noqa: F401,E402 — registers all ORM models with Base
 from src.infrastructure.database.session import get_db_session  # noqa: E402
+from src.integrations.momo.client import MockMomoClient  # noqa: E402
 from src.main import app  # noqa: E402
+from src.shared.dependencies.payments import get_momo_client  # noqa: E402
 
 # ── Helpers that run once at import time (before the event loop starts) ────────
 
@@ -138,6 +140,8 @@ async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient]:
         yield db_session
 
     app.dependency_overrides[get_db_session] = override_db
+    # MomoClient calls MoMo's real sandbox over the network — never that in tests.
+    app.dependency_overrides[get_momo_client] = lambda: MockMomoClient()
     async with AsyncClient(
         transport=ASGITransport(app=app),
         base_url="http://test",
