@@ -1,6 +1,6 @@
 import uuid
-from dataclasses import dataclass
-from datetime import UTC, datetime
+from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from unittest.mock import AsyncMock
 
@@ -56,7 +56,9 @@ class PaymentStub:
     failure_reason: str | None = None
     raw_create_response: dict | None = None
     raw_callback_payload: dict | None = None
-    expires_at: datetime = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+    expires_at: datetime = field(
+        default_factory=lambda: datetime.now(UTC) + timedelta(minutes=15)
+    )
     paid_at: datetime | None = None
     created_at: datetime = datetime(2026, 1, 1, tzinfo=UTC)
     updated_at: datetime = datetime(2026, 1, 1, tzinfo=UTC)
@@ -210,6 +212,68 @@ async def test_callback_unknown_order_raises_not_found() -> None:
 
     with pytest.raises(NotFoundError):
         await service.handle_payment_callback(PaymentProvider.MOMO, payload)
+
+
+async def test_callback_on_expired_checkout_does_not_activate_subscription() -> None:
+    momo = MockMomoClient()
+    payment_id = uuid.uuid4()
+    payload = momo.sign_ipn(order_id=str(payment_id), amount=199000)
+
+    payment = PaymentStub(
+        id=payment_id,
+        user_id=uuid.uuid4(),
+        subscription_id=uuid.uuid4(),
+        plan_id=uuid.uuid4(),
+        status="pending",
+        expires_at=datetime.now(UTC) - timedelta(minutes=1),
+    )
+    repo = _repo(get_payment_by_id_for_update=payment)
+    repo.create_billing_event = AsyncMock()
+    service = SubscriptionsService(db=AsyncMock(), repo=repo, momo_client=momo)
+
+    ack = await service.handle_payment_callback(PaymentProvider.MOMO, payload)
+
+    assert ack["resultCode"] == 0
+    assert payment.status == "expired"
+    repo.get_subscription.assert_not_awaited()
+    repo.create_billing_event.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
+# get_checkout_status
+# ---------------------------------------------------------------------------
+
+
+async def test_get_checkout_status_expires_stale_pending_payment() -> None:
+    user_id, payment_id = uuid.uuid4(), uuid.uuid4()
+    payment = PaymentStub(
+        id=payment_id,
+        user_id=user_id,
+        subscription_id=uuid.uuid4(),
+        plan_id=uuid.uuid4(),
+        status="pending",
+        expires_at=datetime.now(UTC) - timedelta(minutes=1),
+    )
+    repo = _repo(get_payment_by_id=payment)
+    service = SubscriptionsService(db=AsyncMock(), repo=repo, momo_client=MockMomoClient())
+
+    result = await service.get_checkout_status(user_id, payment_id)
+
+    assert result.status == "expired"
+
+
+async def test_get_checkout_status_leaves_unexpired_pending_payment_alone() -> None:
+    user_id, payment_id = uuid.uuid4(), uuid.uuid4()
+    payment = PaymentStub(
+        id=payment_id, user_id=user_id, subscription_id=uuid.uuid4(), plan_id=uuid.uuid4(),
+        status="pending",
+    )
+    repo = _repo(get_payment_by_id=payment)
+    service = SubscriptionsService(db=AsyncMock(), repo=repo, momo_client=MockMomoClient())
+
+    result = await service.get_checkout_status(user_id, payment_id)
+
+    assert result.status == "pending"
 
 
 # ---------------------------------------------------------------------------

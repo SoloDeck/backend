@@ -1,8 +1,12 @@
 """Integration coverage for the mock MoMo subscription-checkout flow."""
 
+from datetime import UTC, datetime, timedelta
+
 from httpx import AsyncClient
+from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.infrastructure.database.models import SubscriptionPaymentModel
 from src.infrastructure.database.seeders.plans import PlansSeeder
 from src.integrations.momo.client import MockMomoClient
 from tests.integration.modules.clients.test_clients_api import _auth_headers
@@ -69,6 +73,55 @@ async def test_webhook_rejects_tampered_signature(
 
     resp = await client.post("/api/v1/payments/webhooks/momo", json=ipn_payload)
     assert resp.status_code == 400
+
+
+async def test_webhook_on_expired_checkout_does_not_upgrade_subscription(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    await PlansSeeder(db_session).run()
+    headers = await _auth_headers(client)
+    plan = await _pro_plan(client, headers)
+    payment = await _create_checkout(client, headers, plan["id"])
+
+    # Backdate the checkout past its TTL, as if it had been sitting unpaid.
+    await db_session.execute(
+        update(SubscriptionPaymentModel)
+        .where(SubscriptionPaymentModel.id == payment["id"])
+        .values(expires_at=datetime.now(UTC) - timedelta(minutes=1))
+    )
+    await db_session.flush()
+
+    ipn_payload = MockMomoClient().sign_ipn(
+        order_id=payment["id"], amount=int(float(plan["price_monthly"]))
+    )
+    webhook_resp = await client.post("/api/v1/payments/webhooks/momo", json=ipn_payload)
+    assert webhook_resp.status_code == 202
+
+    status_resp = await client.get(f"/api/v1/payments/intents/{payment['id']}", headers=headers)
+    assert status_resp.json()["data"]["status"] == "expired"
+
+    me_resp = await client.get("/api/v1/subscriptions/me", headers=headers)
+    assert me_resp.json()["data"]["plan_slug"] == "free"
+
+
+async def test_polling_a_stale_pending_checkout_reports_expired(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    await PlansSeeder(db_session).run()
+    headers = await _auth_headers(client)
+    plan = await _pro_plan(client, headers)
+    payment = await _create_checkout(client, headers, plan["id"])
+
+    await db_session.execute(
+        update(SubscriptionPaymentModel)
+        .where(SubscriptionPaymentModel.id == payment["id"])
+        .values(expires_at=datetime.now(UTC) - timedelta(minutes=1))
+    )
+    await db_session.flush()
+
+    status_resp = await client.get(f"/api/v1/payments/intents/{payment['id']}", headers=headers)
+    assert status_resp.status_code == 200
+    assert status_resp.json()["data"]["status"] == "expired"
 
 
 async def test_cancel_pending_payment_intent(

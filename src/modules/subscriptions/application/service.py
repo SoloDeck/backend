@@ -110,6 +110,18 @@ class SubscriptionsService:
         payment = await self.repo.get_payment_by_id(payment_id)
         if payment is None or payment.user_id != user_id:
             raise NotFoundError("Payment intent not found")
+        return await self._expire_if_overdue(payment)
+
+    async def _expire_if_overdue(self, payment):
+        """Lazily flip a stale pending checkout to `expired` on read, rather
+        than leaving it reporting `pending` forever with no job to sweep it."""
+        if (
+            payment.status == SubscriptionPaymentStatus.PENDING
+            and payment.expires_at <= datetime.now(UTC)
+        ):
+            payment.status = SubscriptionPaymentStatus.EXPIRED.value
+            payment.updated_at = datetime.now(UTC)
+            payment = await self.repo.save(payment)
         return payment
 
     async def cancel_checkout(self, user_id: uuid.UUID, payment_id: uuid.UUID):
@@ -140,6 +152,11 @@ class SubscriptionsService:
         payment = await self.repo.get_payment_by_id_for_update(payment_id)
         if payment is None:
             raise NotFoundError(f"Unknown order '{parsed.order_id}'")
+
+        # The checkout window may have lapsed before this callback arrived — don't
+        # let a late "success" silently activate a subscription for an intent
+        # we've already given up on. A fresh checkout can always be started.
+        payment = await self._expire_if_overdue(payment)
 
         if payment.status != SubscriptionPaymentStatus.PENDING:
             # Idempotent replay — providers retry callbacks until acked.
