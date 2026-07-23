@@ -48,7 +48,7 @@ class SubscriptionPayment:
     created_at: datetime
     updated_at: datetime
 
-    def mark_succeeded(self, provider_reference: str) -> None:
+    def mark_succeeded(self, provider_reference: str | None) -> None:
         if self.status != SubscriptionPaymentStatus.PENDING:
             raise InvalidStateTransitionError(
                 "SubscriptionPayment", self.status.value, SubscriptionPaymentStatus.SUCCEEDED.value

@@ -162,6 +162,7 @@ class SubscriptionsService:
             # Idempotent replay — providers retry callbacks until acked.
             return gateway.build_ack_response(parsed)
 
+        entity = _payment_to_entity(payment)
         now = datetime.now(UTC)
         if parsed.success:
             plan = await self.repo.get_plan(payment.plan_id)
@@ -173,9 +174,13 @@ class SubscriptionsService:
             subscription.current_period_end = now + timedelta(days=_BILLING_PERIOD_DAYS)
             await self.repo.save(subscription)
 
-            payment.status = SubscriptionPaymentStatus.SUCCEEDED.value
-            payment.provider_reference = parsed.provider_reference
-            payment.paid_at = now
+            # Through the domain entity so the PENDING invariant it enforces
+            # isn't bypassed — matches cancel_checkout's pattern above.
+            entity.mark_succeeded(parsed.provider_reference)
+            payment.status = entity.status.value
+            payment.provider_reference = entity.provider_reference
+            payment.paid_at = entity.paid_at
+            payment.updated_at = entity.updated_at
             payment.raw_callback_payload = raw_payload
             await self.repo.save(payment)
 
@@ -193,8 +198,10 @@ class SubscriptionsService:
                 },
             )
         else:
-            payment.status = SubscriptionPaymentStatus.FAILED.value
-            payment.failure_reason = parsed.message
+            entity.mark_failed(parsed.message)
+            payment.status = entity.status.value
+            payment.failure_reason = entity.failure_reason
+            payment.updated_at = entity.updated_at
             payment.raw_callback_payload = raw_payload
             await self.repo.save(payment)
 
