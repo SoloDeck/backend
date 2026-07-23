@@ -170,10 +170,11 @@ class MomoClient(_MomoSignedClient):
         currency: str,
         order_info: str,
         notify_url: str,
+        redirect_url: str | None = None,
     ) -> CreatePaymentResult:
         request_id = str(uuid.uuid4())
         amount_int = self._to_whole_vnd(amount, currency)
-        redirect_url = self.redirect_url or notify_url
+        redirect_url = redirect_url or self.redirect_url or notify_url
         raw_signature = (
             f"accessKey={self.access_key}&amount={amount_int}&extraData="
             f"&ipnUrl={notify_url}&orderId={order_id}&orderInfo={order_info}"
@@ -246,13 +247,15 @@ class MockMomoClient(_MomoSignedClient):
         currency: str,
         order_info: str,
         notify_url: str,
+        redirect_url: str | None = None,
     ) -> CreatePaymentResult:
         request_id = str(uuid.uuid4())
         amount_int = self._to_whole_vnd(amount, currency)
+        redirect_url = redirect_url or notify_url
         raw_signature = (
             f"accessKey={self.access_key}&amount={amount_int}&extraData="
             f"&ipnUrl={notify_url}&orderId={order_id}&orderInfo={order_info}"
-            f"&partnerCode={self.partner_code}&redirectUrl={notify_url}"
+            f"&partnerCode={self.partner_code}&redirectUrl={redirect_url}"
             f"&requestId={request_id}&requestType={_MOCK_REQUEST_TYPE}"
         )
         pay_url = f"{_MOCK_BASE_URL}/pay/{order_id}"
@@ -263,6 +266,7 @@ class MockMomoClient(_MomoSignedClient):
             "orderId": order_id,
             "requestId": request_id,
             "amount": amount_int,
+            "redirectUrl": redirect_url,
             "responseTime": int(time.time() * 1000),
             "message": "Success",
             "resultCode": 0,

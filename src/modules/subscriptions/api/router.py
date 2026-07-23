@@ -48,7 +48,7 @@ async def create_checkout(
     momo_client: MomoClientDep,
 ) -> ApiResponse[PaymentIntentResponse]:
     payment = await SubscriptionsService(db=db, momo_client=momo_client).initiate_checkout(
-        user_id, payload.plan_id, PaymentProvider(payload.provider)
+        user_id, payload.plan_id, PaymentProvider(payload.provider), payload.return_url
     )
     return ApiResponse.created(PaymentIntentResponse.from_model(payment))
 

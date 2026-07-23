@@ -99,6 +99,127 @@ def test_build_ack_response_shape() -> None:
     assert ack["resultCode"] == 0
 
 
+async def test_create_payment_uses_given_redirect_url_over_notify_url() -> None:
+    client = MockMomoClient()
+
+    result = await client.create_payment(
+        order_id=str(uuid.uuid4()),
+        amount=Decimal("199000"),
+        currency="VND",
+        order_info="SoloDesk Pro plan upgrade",
+        notify_url="https://api.solodesk.space/api/v1/payments/webhooks/momo",
+        redirect_url="https://app.solodesk.space/billing/result",
+    )
+
+    assert result.raw["redirectUrl"] == "https://app.solodesk.space/billing/result"
+
+
+async def test_create_payment_falls_back_to_notify_url_when_no_redirect_given() -> None:
+    client = MockMomoClient()
+    notify_url = "https://api.solodesk.space/api/v1/payments/webhooks/momo"
+
+    result = await client.create_payment(
+        order_id=str(uuid.uuid4()),
+        amount=Decimal("199000"),
+        currency="VND",
+        order_info="SoloDesk Pro plan upgrade",
+        notify_url=notify_url,
+    )
+
+    assert result.raw["redirectUrl"] == notify_url
+
+
+async def test_real_client_prefers_per_call_redirect_url_over_configured_default() -> None:
+    order_id = str(uuid.uuid4())
+    sent_body: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        sent_body.update(json.loads(request.read()))
+        return httpx.Response(
+            200,
+            json={
+                "partnerCode": "MOMO",
+                "orderId": order_id,
+                "requestId": sent_body["requestId"],
+                "resultCode": 0,
+                "message": "Success",
+                "payUrl": f"https://test-payment.momo.vn/pay/{order_id}",
+                "deeplink": f"momo://app?orderId={order_id}",
+                "qrCodeUrl": f"https://test-payment.momo.vn/qr/{order_id}",
+            },
+        )
+
+    client = MomoClient(
+        partner_code="MOMO",
+        access_key="access-key",
+        secret_key="secret-key",
+        partner_name="SoloDesk",
+        store_id="SoloDeskStore",
+        endpoint="https://test-payment.momo.vn/v2/gateway/api/create",
+        request_type="captureWallet",
+        lang="vi",
+        redirect_url="https://configured-default.example/result",
+        timeout_seconds=5.0,
+        transport=httpx.MockTransport(handler),
+    )
+
+    await client.create_payment(
+        order_id=order_id,
+        amount=Decimal("199000"),
+        currency="VND",
+        order_info="SoloDesk Pro plan upgrade",
+        notify_url="https://api.solodesk.space/api/v1/payments/webhooks/momo",
+        redirect_url="https://per-call.example/result",
+    )
+
+    assert sent_body["redirectUrl"] == "https://per-call.example/result"
+
+
+async def test_real_client_uses_configured_default_when_no_redirect_given() -> None:
+    order_id = str(uuid.uuid4())
+    sent_body: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        sent_body.update(json.loads(request.read()))
+        return httpx.Response(
+            200,
+            json={
+                "partnerCode": "MOMO",
+                "orderId": order_id,
+                "requestId": sent_body["requestId"],
+                "resultCode": 0,
+                "message": "Success",
+                "payUrl": f"https://test-payment.momo.vn/pay/{order_id}",
+                "deeplink": f"momo://app?orderId={order_id}",
+                "qrCodeUrl": f"https://test-payment.momo.vn/qr/{order_id}",
+            },
+        )
+
+    client = MomoClient(
+        partner_code="MOMO",
+        access_key="access-key",
+        secret_key="secret-key",
+        partner_name="SoloDesk",
+        store_id="SoloDeskStore",
+        endpoint="https://test-payment.momo.vn/v2/gateway/api/create",
+        request_type="captureWallet",
+        lang="vi",
+        redirect_url="https://configured-default.example/result",
+        timeout_seconds=5.0,
+        transport=httpx.MockTransport(handler),
+    )
+
+    await client.create_payment(
+        order_id=order_id,
+        amount=Decimal("199000"),
+        currency="VND",
+        order_info="SoloDesk Pro plan upgrade",
+        notify_url="https://api.solodesk.space/api/v1/payments/webhooks/momo",
+    )
+
+    assert sent_body["redirectUrl"] == "https://configured-default.example/result"
+
+
 async def test_create_payment_rejects_non_vnd_currency() -> None:
     client = MockMomoClient()
 

@@ -117,6 +117,46 @@ async def test_initiate_checkout_missing_subscription_raises_not_found() -> None
         await service.initiate_checkout(uuid.uuid4(), uuid.uuid4(), PaymentProvider.MOMO)
 
 
+async def test_initiate_checkout_forwards_return_url_to_gateway() -> None:
+    user_id, sub_id, plan_id, payment_id = (uuid.uuid4() for _ in range(4))
+    plan = PlanStub(id=plan_id)
+    payment = PaymentStub(
+        id=payment_id, user_id=user_id, subscription_id=sub_id, plan_id=plan_id
+    )
+    repo = _repo(
+        get_subscription=SubscriptionStub(id=sub_id, user_id=user_id, plan_id=uuid.uuid4()),
+        get_plan=plan,
+        create_payment=payment,
+    )
+    service = SubscriptionsService(db=AsyncMock(), repo=repo, momo_client=MockMomoClient())
+    return_url = "https://app.solodesk.space/billing/result"
+
+    result = await service.initiate_checkout(
+        user_id, plan_id, PaymentProvider.MOMO, return_url=return_url
+    )
+
+    assert result.raw_create_response["redirectUrl"] == return_url
+
+
+async def test_initiate_checkout_falls_back_when_no_return_url_given() -> None:
+    user_id, sub_id, plan_id, payment_id = (uuid.uuid4() for _ in range(4))
+    plan = PlanStub(id=plan_id)
+    payment = PaymentStub(
+        id=payment_id, user_id=user_id, subscription_id=sub_id, plan_id=plan_id
+    )
+    repo = _repo(
+        get_subscription=SubscriptionStub(id=sub_id, user_id=user_id, plan_id=uuid.uuid4()),
+        get_plan=plan,
+        create_payment=payment,
+    )
+    service = SubscriptionsService(db=AsyncMock(), repo=repo, momo_client=MockMomoClient())
+
+    result = await service.initiate_checkout(user_id, plan_id, PaymentProvider.MOMO)
+
+    # MockMomoClient has no configured default redirect_url — falls back to notify_url.
+    assert result.raw_create_response["redirectUrl"]
+
+
 # ---------------------------------------------------------------------------
 # handle_payment_callback
 # ---------------------------------------------------------------------------

@@ -72,7 +72,11 @@ class SubscriptionsService:
         return await self.repo.list_active_plans()
 
     async def initiate_checkout(
-        self, user_id: uuid.UUID, plan_id: uuid.UUID, provider: PaymentProvider
+        self,
+        user_id: uuid.UUID,
+        plan_id: uuid.UUID,
+        provider: PaymentProvider,
+        return_url: str | None = None,
     ):
         subscription = await self.repo.get_subscription(user_id)
         if subscription is None:
@@ -102,6 +106,7 @@ class SubscriptionsService:
             currency=plan.currency,
             order_info=f"SoloDesk {plan.name} plan upgrade",
             notify_url=_NOTIFY_URL,
+            redirect_url=return_url,
         )
         payment.pay_url = result.pay_url
         payment.deeplink = result.deeplink

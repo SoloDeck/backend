@@ -161,6 +161,48 @@ async def test_checkout_against_free_plan_is_rejected(
     assert checkout_resp.status_code == 400
 
 
+async def test_checkout_with_return_url_uses_it_as_redirect_target(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    await PlansSeeder(db_session).run()
+    headers = await _auth_headers(client)
+    plan = await _pro_plan(client, headers)
+
+    resp = await client.post(
+        "/api/v1/subscriptions/checkout",
+        json={
+            "plan_id": plan["id"],
+            "provider": "momo",
+            "return_url": "https://app.solodesk.space/billing/result",
+        },
+        headers=headers,
+    )
+    assert resp.status_code == 201, resp.text
+
+    payment_id = resp.json()["data"]["id"]
+    row = await db_session.get(SubscriptionPaymentModel, payment_id)
+    assert row.raw_create_response["redirectUrl"] == "https://app.solodesk.space/billing/result"
+
+
+async def test_checkout_rejects_non_http_return_url(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    await PlansSeeder(db_session).run()
+    headers = await _auth_headers(client)
+    plan = await _pro_plan(client, headers)
+
+    resp = await client.post(
+        "/api/v1/subscriptions/checkout",
+        json={
+            "plan_id": plan["id"],
+            "provider": "momo",
+            "return_url": "javascript:alert(1)",
+        },
+        headers=headers,
+    )
+    assert resp.status_code == 422
+
+
 async def test_cancel_subscription_after_upgrade(
     client: AsyncClient, db_session: AsyncSession
 ) -> None:
