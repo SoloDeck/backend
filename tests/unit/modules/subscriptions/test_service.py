@@ -130,7 +130,9 @@ async def test_callback_success_upgrades_subscription_and_records_billing_event(
     )
     subscription = SubscriptionStub(id=sub_id, user_id=user_id, plan_id=uuid.uuid4())
     plan = PlanStub(id=plan_id, slug="pro")
-    repo = _repo(get_payment_by_id=payment, get_plan=plan, get_subscription=subscription)
+    repo = _repo(
+        get_payment_by_id_for_update=payment, get_plan=plan, get_subscription=subscription
+    )
     repo.create_billing_event = AsyncMock()
     service = SubscriptionsService(db=AsyncMock(), repo=repo, momo_client=momo)
 
@@ -155,7 +157,7 @@ async def test_callback_failure_marks_payment_failed_without_touching_subscripti
     payment = PaymentStub(
         id=payment_id, user_id=user_id, subscription_id=sub_id, plan_id=plan_id, status="pending"
     )
-    repo = _repo(get_payment_by_id=payment)
+    repo = _repo(get_payment_by_id_for_update=payment)
     repo.create_billing_event = AsyncMock()
     service = SubscriptionsService(db=AsyncMock(), repo=repo, momo_client=momo)
 
@@ -177,7 +179,7 @@ async def test_callback_rejects_tampered_signature() -> None:
 
     with pytest.raises(InvalidPaymentSignatureError):
         await service.handle_payment_callback(PaymentProvider.MOMO, payload)
-    repo.get_payment_by_id.assert_not_awaited()
+    repo.get_payment_by_id_for_update.assert_not_awaited()
 
 
 async def test_callback_is_idempotent_for_already_completed_payment() -> None:
@@ -189,7 +191,7 @@ async def test_callback_is_idempotent_for_already_completed_payment() -> None:
         id=payment_id, user_id=uuid.uuid4(), subscription_id=uuid.uuid4(), plan_id=uuid.uuid4(),
         status="succeeded",
     )
-    repo = _repo(get_payment_by_id=payment)
+    repo = _repo(get_payment_by_id_for_update=payment)
     repo.create_billing_event = AsyncMock()
     service = SubscriptionsService(db=AsyncMock(), repo=repo, momo_client=momo)
 
@@ -203,7 +205,7 @@ async def test_callback_is_idempotent_for_already_completed_payment() -> None:
 async def test_callback_unknown_order_raises_not_found() -> None:
     momo = MockMomoClient()
     payload = momo.sign_ipn(order_id=str(uuid.uuid4()), amount=199000)
-    repo = _repo(get_payment_by_id=None)
+    repo = _repo(get_payment_by_id_for_update=None)
     service = SubscriptionsService(db=AsyncMock(), repo=repo, momo_client=momo)
 
     with pytest.raises(NotFoundError):

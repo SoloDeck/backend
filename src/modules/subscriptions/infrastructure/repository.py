@@ -40,6 +40,20 @@ class SubscriptionsRepository:
             select(SubscriptionPaymentModel).where(SubscriptionPaymentModel.id == payment_id)
         )
 
+    async def get_payment_by_id_for_update(self, payment_id: uuid.UUID):
+        """Like `get_payment_by_id`, but takes a row lock held until commit/rollback.
+
+        Concurrent webhook deliveries for the same order (providers retry on
+        timeout) must be serialized — otherwise two callbacks can both read
+        status=PENDING before either commits and both activate the
+        subscription / write a billing event.
+        """
+        return await self.db.scalar(
+            select(SubscriptionPaymentModel)
+            .where(SubscriptionPaymentModel.id == payment_id)
+            .with_for_update()
+        )
+
     async def create_billing_event(self, **values):
         event = BillingEventModel(**values)
         self.db.add(event)

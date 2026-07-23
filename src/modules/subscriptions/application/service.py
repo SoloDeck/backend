@@ -134,7 +134,10 @@ class SubscriptionsService:
         except ValueError as exc:
             raise NotFoundError(f"Unknown order '{parsed.order_id}'") from exc
 
-        payment = await self.repo.get_payment_by_id(payment_id)
+        # Row lock held until this request commits/rolls back — serializes
+        # concurrent deliveries of the same callback so only one can pass the
+        # PENDING check below.
+        payment = await self.repo.get_payment_by_id_for_update(payment_id)
         if payment is None:
             raise NotFoundError(f"Unknown order '{parsed.order_id}'")
 
