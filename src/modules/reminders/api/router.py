@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.infrastructure.database.session import get_db_session
 from src.modules.reminders.application.service import RemindersService
 from src.modules.reminders.schemas.request import ReminderRequest
-from src.modules.reminders.schemas.response import ReminderResponse
+from src.modules.reminders.schemas.response import ReminderDeliveryResponse, ReminderResponse
 from src.shared.dependencies.auth import CurrentUserId
 from src.shared.responses.response import ApiResponse
 
@@ -69,6 +69,24 @@ async def update_reminder(
 ) -> ApiResponse[ReminderResponse]:
     reminder = await RemindersService(db=db).update(user_id, reminder_id, payload)
     return ApiResponse.ok(ReminderResponse.model_validate(reminder))
+
+
+@router.post("/{reminder_id}/send", response_model=ApiResponse[ReminderDeliveryResponse])
+async def send_reminder_now(
+    reminder_id: uuid.UUID,
+    user_id: CurrentUserId,
+    db: DBSession,
+) -> ApiResponse[ReminderDeliveryResponse]:
+    """Gửi lời nhắc ngay, không đợi tới giờ đã hẹn."""
+    reminder, result = await RemindersService(db=db).send_now(user_id, reminder_id)
+    return ApiResponse.ok(
+        ReminderDeliveryResponse(
+            reminder=ReminderResponse.model_validate(reminder),
+            status=result.status,
+            detail=result.detail,
+            delivered=result.delivered,
+        )
+    )
 
 
 @router.delete("/{reminder_id}", response_model=ApiResponse[MsgResp])

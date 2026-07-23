@@ -7,17 +7,88 @@ from src.infrastructure.celery.app import celery_app
 log = structlog.get_logger()
 
 
-@celery_app.task(name="src.workers.reminder_jobs.tasks.send_reminder", bind=True)
+@celery_app.task(
+    name="src.workers.reminder_jobs.tasks.send_reminder",
+    bind=True,
+    max_retries=3,
+    default_retry_delay=60,
+)
 def send_reminder(self, reminder_id: str) -> dict:  # type: ignore[misc]
-    # TODO: fetch reminder, deliver via configured channel, update status
-    raise NotImplementedError
+    """Gửi MỘT lời nhắc: email cho khách, hoặc thông báo trong ứng dụng cho freelancer.
+
+    Toàn bộ nghiệp vụ nằm ở `ReminderDeliveryService` — task này chỉ lo phần Celery: mở
+    session, commit, và quyết định có thử lại hay không. Nhờ vậy endpoint "Gửi ngay" dùng
+    lại được đúng đường code này mà không phải chạy qua hàng đợi.  #Huynh
+    """
+    import asyncio
+    import uuid as _uuid
+
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+
+    from src.config.settings import settings
+    from src.modules.reminders.application.delivery_service import ReminderDeliveryService
+
+    async def _run() -> tuple[str, str, bool]:
+        engine = create_async_engine(str(settings.database_url))
+        factory = async_sessionmaker(
+            engine, class_=AsyncSession, expire_on_commit=False, autoflush=False
+        )
+        try:
+            async with factory() as session:
+                result = await ReminderDeliveryService(db=session).deliver(_uuid.UUID(reminder_id))
+                # Commit KỂ CẢ khi gửi hỏng: lượt thử vừa rồi (retry_count, delivery
+                # record, thông báo báo lỗi) là dữ liệu phải giữ, không phải rác cần
+                # rollback. Rollback ở đây là mất dấu vết vì sao hỏng.
+                await session.commit()
+                return result.status, result.detail, result.should_retry
+        finally:
+            await engine.dispose()
+
+    status, detail, should_retry = asyncio.run(_run())
+
+    if should_retry:
+        log.info("send_reminder.retrying", reminder_id=reminder_id, attempt=self.request.retries)
+        raise self.retry(exc=RuntimeError(detail))
+
+    return {"reminder_id": reminder_id, "status": status, "detail": detail}
 
 
 @celery_app.task(name="src.workers.reminder_jobs.tasks.send_pending_reminders")
 def send_pending_reminders() -> None:
-    """Beat task: scan pending reminders due for execution and enqueue them."""
-    # TODO: query reminders WHERE status='pending' AND scheduled_at <= NOW()
-    raise NotImplementedError
+    """Beat mỗi phút: tìm lời nhắc tới giờ rồi xếp vào hàng đợi.
+
+    Task này TỪNG là `raise NotImplementedError` trong khi beat vẫn gọi nó 60 giây một
+    lần — worker log lỗi liên tục, còn lời nhắc thì nằm im ở `pending` vĩnh viễn.  #Huynh
+    """
+    import asyncio
+
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+
+    from src.config.settings import settings
+    from src.modules.reminders.infrastructure.repository import RemindersRepository
+
+    async def _run() -> list[str]:
+        engine = create_async_engine(str(settings.database_url))
+        factory = async_sessionmaker(
+            engine, class_=AsyncSession, expire_on_commit=False, autoflush=False
+        )
+        try:
+            async with factory() as session:
+                due = await RemindersRepository(session).list_due()
+                ids = [str(reminder.id) for reminder in due]
+                # Nhả khoá hàng TRƯỚC khi xếp việc: giữ khoá trong lúc worker chạy
+                # `send_reminder` thì chính nó lại bị khoá đó chặn.
+                await session.commit()
+                return ids
+        finally:
+            await engine.dispose()
+
+    reminder_ids = asyncio.run(_run())
+    for reminder_id in reminder_ids:
+        send_reminder.delay(reminder_id)
+
+    if reminder_ids:
+        log.info("send_pending_reminders.queued", count=len(reminder_ids))
 
 
 @celery_app.task(name="src.workers.reminder_jobs.tasks.mark_overdue_invoices")

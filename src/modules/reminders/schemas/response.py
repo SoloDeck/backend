@@ -18,3 +18,16 @@ class ReminderResponse(BaseModel):
     message_preview: str | None
     created_at: datetime
     updated_at: datetime
+
+
+class ReminderDeliveryResponse(BaseModel):
+    """Kết quả bấm "Gửi ngay".
+
+    Trả kèm `detail` — một câu tiếng Việt hiện thẳng lên toast — thay vì bắt frontend tự
+    đoán nghĩa của `status`. Lý do hỏng ("khách chưa có email") chỉ backend mới biết.
+    """
+
+    reminder: ReminderResponse
+    status: str
+    detail: str
+    delivered: bool

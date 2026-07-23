@@ -21,6 +21,9 @@ log = structlog.get_logger(__name__)
 TYPE_INTAKE_SUBMITTED = "intake_submitted"
 TYPE_DEAL_QUALIFIED = "deal_qualified"
 TYPE_INVOICE_OVERDUE = "invoice_overdue"
+TYPE_REMINDER_DUE = "reminder_due"
+TYPE_REMINDER_SENT = "reminder_sent"
+TYPE_REMINDER_FAILED = "reminder_failed"
 
 
 @dataclass
@@ -108,6 +111,72 @@ class NotificationService:
             body=f"Khách {client_name} chưa thanh toán. Cân nhắc gửi lời nhắc.",
             entity_type="invoice",
             entity_id=invoice_id,
+        )
+
+    async def notify_reminder_due(
+        self,
+        *,
+        owner_user_id: uuid.UUID,
+        reminder_id: uuid.UUID,
+        client_name: str | None,
+        message_preview: str | None,
+    ) -> NotificationModel:
+        """Lời nhắc kênh "trong ứng dụng" tới giờ — reo cho chính freelancer."""
+        who = f" khách {client_name}" if client_name else ""
+        return await self.notify(
+            user_id=owner_user_id,
+            type=TYPE_REMINDER_DUE,
+            title=f"Đến giờ nhắc{who}",
+            body=(message_preview or "").strip() or "Bạn có một lời nhắc đến hạn.",
+            entity_type="reminder",
+            entity_id=reminder_id,
+        )
+
+    async def notify_reminder_sent(
+        self,
+        *,
+        owner_user_id: uuid.UUID,
+        reminder_id: uuid.UUID,
+        client_name: str | None,
+        recipient: str,
+    ) -> NotificationModel:
+        """Hệ thống vừa gửi email cho khách THAY MẶT freelancer.
+
+        Đây là biên nhận, không phải lời nhắc. Hệ thống vừa thay mặt người dùng liên hệ
+        khách hàng của họ trong lúc họ không ngồi trước máy — họ phải được biết chuyện đó
+        đã xảy ra, gửi cho ai, và biết mà chờ khách trả lời.  #Huynh
+        """
+        who = client_name or "khách hàng"
+        return await self.notify(
+            user_id=owner_user_id,
+            type=TYPE_REMINDER_SENT,
+            title=f"Đã gửi email nhắc {who}",
+            body=f"SoloDesk vừa gửi email tới {recipient} thay bạn. Khách trả lời sẽ về hộp thư của bạn.",
+            entity_type="reminder",
+            entity_id=reminder_id,
+        )
+
+    async def notify_reminder_failed(
+        self,
+        *,
+        owner_user_id: uuid.UUID,
+        reminder_id: uuid.UUID,
+        client_name: str | None,
+        reason: str,
+    ) -> NotificationModel:
+        """Không gửi được lời nhắc.
+
+        Luôn kèm LÝ DO. Chỉ báo "gửi lỗi" thì người dùng không biết phải sửa gì — mà
+        phần lớn nguyên nhân đều tự sửa được (khách chưa có email, chưa nối Zalo).  #Huynh
+        """
+        who = f" cho {client_name}" if client_name else ""
+        return await self.notify(
+            user_id=owner_user_id,
+            type=TYPE_REMINDER_FAILED,
+            title=f"Chưa gửi được lời nhắc{who}",
+            body=reason,
+            entity_type="reminder",
+            entity_id=reminder_id,
         )
 
     # --- Đọc -----------------------------------------------------------------------

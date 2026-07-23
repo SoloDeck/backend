@@ -2,8 +2,13 @@
 
 import uuid
 from datetime import UTC, datetime, timedelta
+from unittest.mock import AsyncMock, patch
 
 from httpx import AsyncClient
+
+# Chặn SMTP thật. `.env` đang trỏ vào Gmail bằng app password thật, nên thiếu dòng patch
+# này là chạy test một lần gửi email thật ra ngoài.  #Huynh
+SEND_EMAIL = "src.modules.reminders.application.delivery_service.smtp_send_email"
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -23,10 +28,13 @@ async def _auth(client: AsyncClient) -> dict:
     return {"Authorization": f"Bearer {resp.json()['data']['access_token']}"}
 
 
-async def _make_deal_id(client: AsyncClient, headers: dict) -> str:
-    c = await client.post(
-        "/api/v1/clients", json={"name": "Client", "status": "prospect"}, headers=headers
-    )
+async def _make_deal_id(
+    client: AsyncClient, headers: dict, client_email: str | None = None
+) -> str:
+    payload: dict = {"name": "Client", "status": "prospect"}
+    if client_email:
+        payload["email"] = client_email
+    c = await client.post("/api/v1/clients", json=payload, headers=headers)
     d = await client.post(
         "/api/v1/deals",
         json={"client_id": c.json()["data"]["id"], "title": "Deal"},
@@ -262,4 +270,135 @@ class TestCancelReminder:
 
     async def test_unauthenticated_returns_401(self, client: AsyncClient) -> None:
         resp = await client.delete(f"/api/v1/reminders/{uuid.uuid4()}")
+        assert resp.status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# POST /reminders/{id}/send — bấm "Gửi ngay", không đợi tới giờ đã hẹn
+# ---------------------------------------------------------------------------
+
+
+class TestSendReminderNow:
+    async def test_gui_email_cho_khach_va_chuyen_sang_sent(self, client: AsyncClient) -> None:
+        headers = await _auth(client)
+        deal_id = await _make_deal_id(client, headers, client_email="khach@example.com")
+        reminder = await _create_reminder(client, headers, deal_id)
+
+        with patch(SEND_EMAIL, new=AsyncMock()) as send_email:
+            resp = await client.post(
+                f"/api/v1/reminders/{reminder['id']}/send", headers=headers
+            )
+
+        assert resp.status_code == 200, resp.text
+        data = resp.json()["data"]
+        assert data["delivered"] is True
+        assert data["status"] == "sent"
+        assert data["reminder"]["status"] == "sent"
+        assert send_email.await_args.kwargs["to"] == "khach@example.com"
+
+    async def test_khach_chua_co_email_thi_bao_ly_do_chu_khong_500(
+        self, client: AsyncClient
+    ) -> None:
+        """Khách không có email là chuyện thường ngày, không phải lỗi hệ thống."""
+        headers = await _auth(client)
+        deal_id = await _make_deal_id(client, headers)  # cố ý không có email
+        reminder = await _create_reminder(client, headers, deal_id)
+
+        with patch(SEND_EMAIL, new=AsyncMock()) as send_email:
+            resp = await client.post(
+                f"/api/v1/reminders/{reminder['id']}/send", headers=headers
+            )
+
+        assert resp.status_code == 200, resp.text
+        data = resp.json()["data"]
+        assert data["delivered"] is False
+        assert data["status"] == "failed"
+        assert "chưa có email" in data["detail"]
+        send_email.assert_not_awaited()
+
+    async def test_gui_lan_hai_thi_khong_gui_lai(self, client: AsyncClient) -> None:
+        """Bấm hai lần không được ra hai email cho khách."""
+        headers = await _auth(client)
+        deal_id = await _make_deal_id(client, headers, client_email="khach@example.com")
+        reminder = await _create_reminder(client, headers, deal_id)
+
+        with patch(SEND_EMAIL, new=AsyncMock()) as send_email:
+            await client.post(f"/api/v1/reminders/{reminder['id']}/send", headers=headers)
+            resp = await client.post(
+                f"/api/v1/reminders/{reminder['id']}/send", headers=headers
+            )
+
+        assert resp.status_code == 200
+        assert resp.json()["data"]["delivered"] is False
+        assert send_email.await_count == 1
+
+    async def test_kenh_zalo_ra_skipped_chu_khong_gia_vo_da_gui(
+        self, client: AsyncClient
+    ) -> None:
+        headers = await _auth(client)
+        deal_id = await _make_deal_id(client, headers, client_email="khach@example.com")
+        payload = _reminder_payload(deal_id)
+        payload["channel"] = "zalo"
+        created = await client.post("/api/v1/reminders", json=payload, headers=headers)
+        reminder_id = created.json()["data"]["id"]
+
+        with patch(SEND_EMAIL, new=AsyncMock()) as send_email:
+            resp = await client.post(f"/api/v1/reminders/{reminder_id}/send", headers=headers)
+
+        data = resp.json()["data"]
+        assert data["status"] == "skipped"
+        assert data["delivered"] is False
+        assert "Zalo" in data["detail"]
+        send_email.assert_not_awaited()
+
+    async def test_kenh_in_app_khong_dung_toi_email(self, client: AsyncClient) -> None:
+        headers = await _auth(client)
+        deal_id = await _make_deal_id(client, headers, client_email="khach@example.com")
+        payload = _reminder_payload(deal_id)
+        payload["channel"] = "in_app"
+        created = await client.post("/api/v1/reminders", json=payload, headers=headers)
+        reminder_id = created.json()["data"]["id"]
+
+        with patch(SEND_EMAIL, new=AsyncMock()) as send_email:
+            resp = await client.post(f"/api/v1/reminders/{reminder_id}/send", headers=headers)
+
+        assert resp.json()["data"]["status"] == "sent"
+        send_email.assert_not_awaited()
+
+    async def test_reminder_da_huy_thi_khong_gui(self, client: AsyncClient) -> None:
+        headers = await _auth(client)
+        deal_id = await _make_deal_id(client, headers, client_email="khach@example.com")
+        reminder = await _create_reminder(client, headers, deal_id)
+        await client.delete(f"/api/v1/reminders/{reminder['id']}", headers=headers)
+
+        with patch(SEND_EMAIL, new=AsyncMock()) as send_email:
+            resp = await client.post(
+                f"/api/v1/reminders/{reminder['id']}/send", headers=headers
+            )
+
+        assert resp.json()["data"]["status"] == "cancelled"
+        send_email.assert_not_awaited()
+
+    async def test_not_found_returns_404(self, client: AsyncClient) -> None:
+        headers = await _auth(client)
+        resp = await client.post(f"/api/v1/reminders/{uuid.uuid4()}/send", headers=headers)
+        assert resp.status_code == 404
+
+    async def test_tenant_isolation(self, client: AsyncClient) -> None:
+        """Không ai được bấm gửi lời nhắc của người khác."""
+        headers_a = await _auth(client)
+        headers_b = await _auth(client)
+        deal_id = await _make_deal_id(client, headers_a, client_email="khach@example.com")
+        reminder = await _create_reminder(client, headers_a, deal_id)
+
+        with patch(SEND_EMAIL, new=AsyncMock()) as send_email:
+            resp = await client.post(
+                f"/api/v1/reminders/{reminder['id']}/send", headers=headers_b
+            )
+
+        assert resp.status_code == 404
+        send_email.assert_not_awaited()
+
+    async def test_unauthenticated_returns_401(self, client: AsyncClient) -> None:
+        resp = await client.post(f"/api/v1/reminders/{uuid.uuid4()}/send")
         assert resp.status_code == 401
