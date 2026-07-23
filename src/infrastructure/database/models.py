@@ -1032,6 +1032,16 @@ class ReminderModel(UUIDMixin, TimestampMixin, Base):
     )
     retry_count: Mapped[int] = mapped_column(SmallInteger, nullable=False, server_default="0")
 
+    # Lời nhắc do quy tắc tự sinh, đang chờ người duyệt. Nó vẫn ở `pending` — nếu không có
+    # cột này thì beat quét thấy và gửi thẳng cho khách, đúng cái người dùng chưa cho phép.
+    # `RemindersRepository.list_due()` lọc theo cột này.  #Huynh
+    requires_approval: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default="false"
+    )
+    # Để giao diện gắn nhãn "Tự động" — người dùng cần phân biệt cái họ tự đặt với cái hệ
+    # thống tự sinh, nhất là khi định bấm gửi.
+    created_by_rule: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+
     __table_args__ = (
         CheckConstraint("retry_count BETWEEN 0 AND 3", name="chk_reminders_retry"),
         Index(
@@ -1051,6 +1061,61 @@ class ReminderModel(UUIDMixin, TimestampMixin, Base):
             "parent_reminder_id",
             postgresql_where=text("parent_reminder_id IS NOT NULL"),
         ),
+        # Chống trùng: mỗi lượt quét phải tra "đã có lời nhắc nào cho đúng đối tượng và
+        # đúng loại này chưa". Không có index thì quét toàn bảng mỗi ngày.
+        Index(
+            "idx_reminders_dedup",
+            "owner_user_id",
+            "target_type",
+            "target_id",
+            "reminder_type",
+            "created_at",
+        ),
+    )
+
+
+class ReminderRuleModel(UUIDMixin, TimestampMixin, Base):
+    """Quy tắc nhắc tự động của một freelancer.
+
+    Trước đây hệ thống chỉ gửi được lời nhắc do người dùng TỰ TẠO TAY — tức họ vẫn phải nhớ
+    hoá đơn nào sắp tới hạn, khách nào im lặng đã lâu. Bảng này để họ khai một lần rồi thôi.
+
+    Mỗi user một bộ 5 quy tắc, sinh lười lần đầu gọi API (xem `ReminderRulesService`) chứ
+    KHÔNG backfill trong migration — user đăng ký sau này vẫn có đủ mà không ai phải nhớ
+    chạy lại script.  #Huynh
+    """
+
+    __tablename__ = "reminder_rules"
+
+    owner_user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    # Dùng lại `reminder_type_enum` sẵn có — nó đã chứa đúng 5 giá trị cần thiết. Tạo enum
+    # mới chỉ để lặp lại y hệt là thêm một thứ nữa phải giữ đồng bộ.
+    rule_type: Mapped[str] = mapped_column(_reminder_type_enum, nullable=False)
+    is_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
+    # Số ngày TRƯỚC (payment_due) hoặc SAU (các loại còn lại) mốc thời gian của quy tắc.
+    offset_days: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+    # Chỉ dùng cho quá hạn và tái kết nối — hai loại đáng nhắc lại. NULL = nhắc đúng một lần.
+    repeat_every_days: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
+    channel: Mapped[str] = mapped_column(
+        _notification_channel, nullable=False, server_default="in_app"
+    )
+    # Mặc định FALSE: hệ thống soạn nháp rồi chờ người duyệt. Bật lên là cho phép email
+    # khách hàng thật mà không ai đọc lại — phải là hành động có ý thức.
+    auto_send: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+    # Giờ trong ngày để gửi, theo `users.timezone`. Quét chạy rạng sáng nhưng không ai muốn
+    # nhận email công việc lúc 1 giờ sáng.
+    send_at_hour: Mapped[int] = mapped_column(SmallInteger, nullable=False, server_default="9")
+
+    __table_args__ = (
+        UniqueConstraint("owner_user_id", "rule_type", name="uq_reminder_rules_owner_type"),
+        CheckConstraint("offset_days BETWEEN 0 AND 365", name="chk_reminder_rules_offset"),
+        CheckConstraint(
+            "repeat_every_days IS NULL OR repeat_every_days BETWEEN 1 AND 365",
+            name="chk_reminder_rules_repeat",
+        ),
+        CheckConstraint("send_at_hour BETWEEN 0 AND 23", name="chk_reminder_rules_hour"),
     )
 
 
