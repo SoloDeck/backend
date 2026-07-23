@@ -24,6 +24,18 @@ class PipelineStageResponse(BaseModel):
     total_value: Decimal
 
 
+class MonthlyRevenueResponse(BaseModel):
+    """Một tháng trên biểu đồ doanh thu.
+
+    `month` là "YYYY-MM". Chuỗi trả về LIỀN MẠCH — tháng không có hoá đơn vẫn xuất hiện
+    với số 0, để biểu đồ ở frontend không bị đứt cột giữa chừng và trục tháng thẳng hàng.
+    """
+
+    month: str
+    invoiced: Decimal
+    collected: Decimal
+
+
 class WinRateResponse(BaseModel):
     won: int
     lost: int

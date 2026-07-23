@@ -11,6 +11,7 @@ from src.modules.analytics.infrastructure.repository import AnalyticsRepository
 from src.modules.analytics.schemas.response import (
     AiUsageResponse,
     DashboardResponse,
+    MonthlyRevenueResponse,
     PipelineStageResponse,
     RevenueResponse,
     TopClientResponse,
@@ -54,6 +55,40 @@ class AnalyticsService:
         self, user_id: uuid.UUID, snapshot_date: date | None = None
     ) -> list[PipelineStageResponse]:
         return [PipelineStageResponse(**x) for x in await self.repo.pipeline(user_id)]
+
+    async def get_revenue_monthly(
+        self, user_id: uuid.UUID, months: int = 12
+    ) -> list[MonthlyRevenueResponse]:
+        """Doanh thu N tháng gần nhất, LIỀN MẠCH — tháng trống điền 0.
+
+        Điền tháng trống ở đây thay vì để frontend lo: nếu chỉ trả tháng có hoá đơn thì
+        biểu đồ mất cột giữa chừng, hoặc frontend phải tự dựng lại khung thời gian và dễ
+        lệch (đầu/cuối tháng, năm nhảy). Trả sẵn chuỗi đầy đủ thì frontend chỉ việc vẽ.
+        """
+        today = date.today()
+        # Ô tháng hiện tại lùi về (months-1) tháng: chỉ số tháng tuyệt đối cho phép trừ qua
+        # ranh giới năm mà không sợ tràn (tháng 1 lùi 3 → tháng 10 năm trước).
+        current_idx = today.year * 12 + (today.month - 1)
+        start_idx = current_idx - (months - 1)
+        start_year, start_month = divmod(start_idx, 12)
+        since = date(start_year, start_month + 1, 1)
+
+        raw = await self.repo.revenue_monthly(user_id, since)
+        by_month = {r["month"].strftime("%Y-%m"): r for r in raw}
+
+        result: list[MonthlyRevenueResponse] = []
+        for offset in range(months):
+            year, month = divmod(start_idx + offset, 12)
+            key = f"{year:04d}-{month + 1:02d}"
+            found = by_month.get(key)
+            result.append(
+                MonthlyRevenueResponse(
+                    month=key,
+                    invoiced=Decimal(str(found["invoiced"])) if found else Decimal(0),
+                    collected=Decimal(str(found["collected"])) if found else Decimal(0),
+                )
+            )
+        return result
 
     async def get_win_rate(
         self, user_id: uuid.UUID, from_date: date | None = None, to_date: date | None = None
