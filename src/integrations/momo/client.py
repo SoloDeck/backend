@@ -48,6 +48,17 @@ class _MomoSignedClient:
             self.secret_key.encode(), raw_signature.encode(), hashlib.sha256
         ).hexdigest()
 
+    @staticmethod
+    def _to_whole_vnd(amount: Decimal, currency: str) -> int:
+        """MoMo's AIOv2 API only accepts whole-number VND amounts — no other
+        currency, no decimal subunits. Reject anything `int()` would otherwise
+        silently truncate or mischarge rather than assuming VND."""
+        if currency != "VND":
+            raise PaymentGatewayError(f"MoMo only supports VND, got '{currency}'")
+        if amount != amount.to_integral_value():
+            raise PaymentGatewayError(f"MoMo requires a whole-number amount, got {amount}")
+        return int(amount)
+
     def _ipn_raw_signature(self, payload: dict[str, Any]) -> str:
         """MoMo's documented IPN raw-signature field order (alphabetical)."""
         return (
@@ -161,7 +172,7 @@ class MomoClient(_MomoSignedClient):
         notify_url: str,
     ) -> CreatePaymentResult:
         request_id = str(uuid.uuid4())
-        amount_int = int(amount)  # MoMo amounts are whole VND, no decimals
+        amount_int = self._to_whole_vnd(amount, currency)
         redirect_url = self.redirect_url or notify_url
         raw_signature = (
             f"accessKey={self.access_key}&amount={amount_int}&extraData="
@@ -237,7 +248,7 @@ class MockMomoClient(_MomoSignedClient):
         notify_url: str,
     ) -> CreatePaymentResult:
         request_id = str(uuid.uuid4())
-        amount_int = int(amount)  # MoMo amounts are whole VND, no decimals
+        amount_int = self._to_whole_vnd(amount, currency)
         raw_signature = (
             f"accessKey={self.access_key}&amount={amount_int}&extraData="
             f"&ipnUrl={notify_url}&orderId={order_id}&orderInfo={order_info}"

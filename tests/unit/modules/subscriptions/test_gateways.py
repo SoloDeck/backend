@@ -99,6 +99,48 @@ def test_build_ack_response_shape() -> None:
     assert ack["resultCode"] == 0
 
 
+async def test_create_payment_rejects_non_vnd_currency() -> None:
+    client = MockMomoClient()
+
+    with pytest.raises(PaymentGatewayError):
+        await client.create_payment(
+            order_id=str(uuid.uuid4()),
+            amount=Decimal("199000"),
+            currency="USD",
+            order_info="SoloDesk Pro plan upgrade",
+            notify_url="https://api.solodesk.space/api/v1/payments/webhooks/momo",
+        )
+
+
+async def test_create_payment_rejects_fractional_amount() -> None:
+    client = MockMomoClient()
+
+    with pytest.raises(PaymentGatewayError):
+        await client.create_payment(
+            order_id=str(uuid.uuid4()),
+            amount=Decimal("199000.50"),
+            currency="VND",
+            order_info="SoloDesk Pro plan upgrade",
+            notify_url="https://api.solodesk.space/api/v1/payments/webhooks/momo",
+        )
+
+
+async def test_real_client_rejects_invalid_amount_before_calling_momo() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise AssertionError("MoMo should never be called for an invalid amount/currency")
+
+    client = _momo_client(httpx.MockTransport(handler))
+
+    with pytest.raises(PaymentGatewayError):
+        await client.create_payment(
+            order_id=str(uuid.uuid4()),
+            amount=Decimal("199000"),
+            currency="USD",
+            order_info="SoloDesk Pro plan upgrade",
+            notify_url="https://api.solodesk.space/api/v1/payments/webhooks/momo",
+        )
+
+
 async def test_real_client_create_payment_returns_gateway_response() -> None:
     order_id = str(uuid.uuid4())
 
