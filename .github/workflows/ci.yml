@@ -126,7 +126,7 @@ jobs:
   # -------------------------------------------------------------------------
   deploy-staging:
     name: Deploy / Staging
-    runs-on: [self-hosted]
+    runs-on: [self-hosted, staging]
     needs: build-image
     environment: staging
     steps:
@@ -172,11 +172,34 @@ jobs:
       - name: Pull & deploy
         shell: powershell
         run: |
-          $repoLower = "${{ github.repository }}".ToLower()
-          $env:IMAGE_NAME = "ghcr.io/$repoLower/solodesk-backend"
           $env:API_PORT = "${{ vars.API_PORT }}"
-          docker compose -p solodesk-backend-staging pull api worker beat
-          docker compose -p solodesk-backend-staging up -d api worker beat
+          docker compose -p solodesk-backend-staging -f compose.deploy.yml pull api worker beat
+          docker compose -p solodesk-backend-staging -f compose.deploy.yml up -d api worker beat
+
+      - name: Verify API is healthy
+        shell: powershell
+        run: |
+          $cid = (docker compose -p solodesk-backend-staging -f compose.deploy.yml ps -q api | Select-Object -First 1)
+          if (-not $cid) {
+            Write-Host "::error::api container not found after deploy"
+            exit 1
+          }
+          $cid = $cid.Trim()
+          $healthy = $false
+          $status = "unknown"
+          foreach ($i in 1..36) {         # 36 x 5s = up to 3 minutes
+            $status = (docker inspect -f '{{.State.Health.Status}}' $cid).Trim()
+            Write-Host "[$i] api health: $status"
+            if ($status -eq 'healthy')   { $healthy = $true; break }
+            if ($status -eq 'unhealthy') { break }
+            Start-Sleep -Seconds 5
+          }
+          if (-not $healthy) {
+            Write-Host "::error::API did not become healthy within 3 minutes (last status: $status)"
+            docker logs --tail 120 $cid
+            exit 1
+          }
+          Write-Host "API is healthy."
 
       - name: Remove .env
         if: always()
@@ -185,7 +208,7 @@ jobs:
 
   deploy-production:
     name: Deploy / Production
-    runs-on: [self-hosted]
+    runs-on: [self-hosted, production]
     needs: deploy-staging
     environment: production
     steps:
@@ -231,11 +254,34 @@ jobs:
       - name: Pull & deploy
         shell: powershell
         run: |
-          $repoLower = "${{ github.repository }}".ToLower()
-          $env:IMAGE_NAME = "ghcr.io/$repoLower/solodesk-backend"
           $env:API_PORT = "${{ vars.API_PORT }}"
-          docker compose -p solodesk-backend-production pull api worker beat
-          docker compose -p solodesk-backend-production up -d api worker beat
+          docker compose -p solodesk-backend-production -f compose.deploy.yml pull api worker beat
+          docker compose -p solodesk-backend-production -f compose.deploy.yml up -d api worker beat
+
+      - name: Verify API is healthy
+        shell: powershell
+        run: |
+          $cid = (docker compose -p solodesk-backend-production -f compose.deploy.yml ps -q api | Select-Object -First 1)
+          if (-not $cid) {
+            Write-Host "::error::api container not found after deploy"
+            exit 1
+          }
+          $cid = $cid.Trim()
+          $healthy = $false
+          $status = "unknown"
+          foreach ($i in 1..36) {         # 36 x 5s = up to 3 minutes
+            $status = (docker inspect -f '{{.State.Health.Status}}' $cid).Trim()
+            Write-Host "[$i] api health: $status"
+            if ($status -eq 'healthy')   { $healthy = $true; break }
+            if ($status -eq 'unhealthy') { break }
+            Start-Sleep -Seconds 5
+          }
+          if (-not $healthy) {
+            Write-Host "::error::API did not become healthy within 3 minutes (last status: $status)"
+            docker logs --tail 120 $cid
+            exit 1
+          }
+          Write-Host "API is healthy."
 
       - name: Remove .env
         if: always()

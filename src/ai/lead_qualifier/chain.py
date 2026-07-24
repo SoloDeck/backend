@@ -26,8 +26,16 @@ class LeadQualifier(BaseAIChain):
     _client: Groq | None = None
 
     # Loaded once for the application's lifetime
-    _retriever = LeadQualificationRetriever()
+    _retriever: LeadQualificationRetriever | None = None
     _prompt_builder = LeadQualificationPromptBuilder()
+
+    @classmethod
+    def _get_retriever(cls) -> LeadQualificationRetriever:
+
+        if cls._retriever is None:
+            cls._retriever = LeadQualificationRetriever()
+
+        return cls._retriever
 
     # ---------------------------------------------------------
     # Groq Client
@@ -129,7 +137,7 @@ class LeadQualifier(BaseAIChain):
             raise ValueError("inquiry_context is required")
 
         # Retrieve framework + profession knowledge
-        retrieved_knowledge = self._retriever.retrieve(
+        retrieved_knowledge = self._get_retriever().retrieve(
             profession=profession,
             query=inquiry_context,
         )
