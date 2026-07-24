@@ -1,7 +1,7 @@
 """Integration tests for /admin/* endpoints."""
 
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from httpx import AsyncClient
 from sqlalchemy import insert, update
@@ -92,7 +92,6 @@ async def _create_subscription(
 ) -> None:
     """Insert a subscription directly into the DB for testing."""
     now = datetime.now(UTC)
-    from datetime import timedelta
     stmt = insert(SubscriptionModel).values(
         user_id=uuid.UUID(user_id),
         plan_id=uuid.UUID(plan_id),
@@ -1020,6 +1019,32 @@ class TestAdminOverrideSubscription:
         )
         assert resp.status_code == 200
         assert resp.json()["data"]["plan_id"] == plan2["id"]
+
+    async def test_override_with_past_expiry_returns_422(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        headers = await _admin_headers(client, db_session)
+
+        plan = (
+            await client.post("/api/v1/admin/plans", json=_plan_payload(), headers=headers)
+        ).json()["data"]
+
+        user_h = await _user_headers(client)
+        user_id = (await client.get("/api/v1/users/me", headers=user_h)).json()["data"]["id"]
+        await _create_subscription(db_session, user_id, plan["id"])
+
+        subs_resp = await client.get(
+            f"/api/v1/admin/subscriptions?plan_slug={plan['slug']}", headers=headers
+        )
+        sub_id = subs_resp.json()["data"]["data"][0]["id"]
+
+        past = (datetime.now(UTC) - timedelta(days=1)).isoformat()
+        resp = await client.patch(
+            f"/api/v1/admin/subscriptions/{sub_id}/override",
+            json={"override_expires_at": past},
+            headers=headers,
+        )
+        assert resp.status_code == 422, resp.text
 
     async def test_override_nonexistent_returns_404(
         self, client: AsyncClient, db_session: AsyncSession
