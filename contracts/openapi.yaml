@@ -3446,8 +3446,9 @@ paths:
       summary: Manually override a user's subscription plan or status
       description: |
         Used for trial access, compensations, or support escalations. `override_expires_at`
-        specifies when the override ends and the subscription returns to its normal plan.
-        Logged to the audit log.
+        specifies when the override ends and the subscription returns to its normal plan —
+        it must be a timestamp in the future; a past timestamp returns 422. Logged to the
+        audit log.
       requestBody:
         required: true
         content:
@@ -3466,6 +3467,8 @@ paths:
                     properties:
                       data:
                         $ref: '#/components/schemas/SubscriptionResponse'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
 
   /admin/plans:
     get:
@@ -7262,7 +7265,7 @@ components:
         override_expires_at:
           type: string
           format: date-time
-          description: When the override expires (returns to normal plan)
+          description: When the override expires (returns to normal plan). Must be in the future.
 
     AdminCreatePlanRequest:
       type: object
