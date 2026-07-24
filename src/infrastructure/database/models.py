@@ -57,6 +57,19 @@ _billing_event_type = PgEnum(
     name="billing_event_type",
     create_type=False,
 )
+_payment_provider = PgEnum(
+    "momo", "bank_transfer", "vnpay", "manual", name="payment_provider", create_type=False
+)
+_subscription_payment_status = PgEnum(
+    "pending",
+    "processing",
+    "succeeded",
+    "failed",
+    "expired",
+    "cancelled",
+    name="subscription_payment_status",
+    create_type=False,
+)
 _client_type = PgEnum("individual", "company", name="client_type", create_type=False)
 _client_status = PgEnum(
     "prospect", "active", "inactive", "archived", name="client_status", create_type=False
@@ -432,6 +445,44 @@ class BillingEventModel(UUIDMixin, Base):
     __table_args__ = (
         Index("idx_billing_events_user", "user_id", "occurred_at"),
         Index("idx_billing_events_subscription", "subscription_id"),
+    )
+
+
+class SubscriptionPaymentModel(UUIDMixin, TimestampMixin, Base):
+    """A payment intent to upgrade a subscription. `id` doubles as the order
+    code handed to the payment provider (e.g. MoMo's `orderId`)."""
+
+    __tablename__ = "subscription_payments"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=False
+    )
+    subscription_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("subscriptions.id"), nullable=False
+    )
+    plan_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("subscription_plans.id"), nullable=False
+    )
+    provider: Mapped[str] = mapped_column(_payment_provider, nullable=False)
+    status: Mapped[str] = mapped_column(
+        _subscription_payment_status, nullable=False, server_default="pending"
+    )
+    amount: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
+    currency: Mapped[str] = mapped_column(String(3), nullable=False)
+    pay_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    deeplink: Mapped[str | None] = mapped_column(Text, nullable=True)
+    qr_code_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    provider_reference: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    failure_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    raw_create_response: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    raw_callback_payload: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    paid_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        CheckConstraint("amount >= 0", name="chk_subscription_payments_amount"),
+        Index("idx_subscription_payments_user", "user_id"),
+        Index("idx_subscription_payments_status", "status"),
     )
 
 

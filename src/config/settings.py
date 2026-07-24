@@ -94,6 +94,27 @@ class Settings(BaseSettings):
     stripe_webhook_secret: str = ""
 
     # -----------------------------------------------------------------------
+    # MoMo (AIOv2 — https://developers.momo.vn/v2/#/docs/aiov2)
+    # Defaults are MoMo's published sandbox test-merchant credentials
+    # (test-payment.momo.vn) — fine for this university project's sandbox
+    # testing, but overridable via env if a personal test merchant is used.
+    # -----------------------------------------------------------------------
+    momo_partner_code: str = "MOMO"
+    momo_access_key: str = "F8BBA842ECF85"
+    momo_secret_key: str = "K951B6PE1waDMi640xX08PD3vg6EkVlz"
+    momo_partner_name: str = "SoloDesk"
+    momo_store_id: str = "SoloDeskStore"
+    momo_endpoint: str = "https://test-payment.momo.vn/v2/gateway/api/create"
+    momo_request_type: str = "captureWallet"
+    momo_lang: str = "vi"
+    momo_ipn_url: str = "https://api.solodesk.space/api/v1/payments/webhooks/momo"
+    # Browser redirect target after the user finishes on MoMo's checkout page.
+    # Falls back to momo_ipn_url when unset — this backend has no dedicated
+    # "payment result" frontend page yet.
+    momo_redirect_url: str = ""
+    momo_timeout_seconds: float = 15.0
+
+    # -----------------------------------------------------------------------
     # Storage
     # -----------------------------------------------------------------------
     storage_endpoint: str = ""
