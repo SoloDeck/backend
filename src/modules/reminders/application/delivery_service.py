@@ -22,6 +22,13 @@ from typing import Any
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.config.settings import settings
+from src.integrations.zalo.client import (
+    ZaloOAClient,
+    ZaloPermanentError,
+    ZaloTransientError,
+    get_zalo_client,
+)
 from src.modules.notifications.application.service import NotificationService
 from src.modules.reminders.infrastructure.repository import RemindersRepository
 from src.shared.email.smtp import send_email as smtp_send_email
@@ -185,12 +192,16 @@ class ReminderDeliveryService:
     # email thật.  #Huynh
     send_email: Callable[..., Awaitable[None]] | None = None
     repo: RemindersRepository | None = None
+    # Tiêm giống send_email: test bơm mock, còn chạy thật thì chọn real/mock theo config.
+    zalo_client: ZaloOAClient | None = None
 
     def __post_init__(self) -> None:
         if self.repo is None:
             self.repo = RemindersRepository(self.db)
         if self.send_email is None:
             self.send_email = smtp_send_email
+        if self.zalo_client is None:
+            self.zalo_client = get_zalo_client(settings)
 
     async def deliver(self, reminder_id: uuid.UUID, *, unattended: bool = True) -> DeliveryResult:
         """Gửi một lời nhắc.
@@ -212,9 +223,6 @@ class ReminderDeliveryService:
                 status=reminder.status,
                 detail="Lời nhắc này không còn ở trạng thái chờ gửi.",
             )
-
-        if reminder.channel == "zalo":
-            return await self._skip_zalo(reminder)
 
         try:
             detail = await self._dispatch(reminder, unattended=unattended)
@@ -244,6 +252,9 @@ class ReminderDeliveryService:
             client, _ = await self._target(reminder)
             await self._notify_due(reminder, client)
             return "Đã nhắc bạn trong ứng dụng."
+
+        if reminder.channel == "zalo":
+            return await self._send_zalo(reminder, unattended=unattended)
 
         # "email" và "both" đều gửi thư thật cho khách.
         client, _ = await self._target(reminder)
@@ -314,32 +325,62 @@ class ReminderDeliveryService:
 
         return f"Đã gửi email cho {client.name} ({recipient})."
 
-    async def _skip_zalo(self, reminder: Any) -> DeliveryResult:
-        """Chưa nối được Zalo OA (cần credentials + duyệt app).
+    async def _send_zalo(self, reminder: Any, *, unattended: bool) -> str:
+        """Gửi tin CS qua Zalo OA của freelancer tới follower là khách.
 
-        Cố ý KHÔNG lặng lẽ đổi sang thông báo trong app rồi đánh dấu "đã gửi" — người
-        dùng sẽ tưởng khách đã nhận tin Zalo. `skipped` có sẵn trong enum đúng cho cảnh
-        này: chưa làm gì cả, và nói thẳng ra như vậy.  #Huynh
+        Trước đây kênh này chỉ `_skip_zalo` (đánh dấu skipped) vì chưa nối được OA. Giờ đã có
+        luồng kết nối: gửi THẬT, cùng khuôn với email — trả câu mô tả khi xong, ném
+        Transient/Permanent để deliver() lo retry ≤3 / bỏ cuộc. Vẫn KHÔNG giả "đã gửi": chưa
+        kết nối OA hay khách chưa follow thì báo thẳng bằng PermanentDeliveryError.  #Huynh
         """
-        assert self.repo is not None
-        reason = "Kênh Zalo chưa được kết nối. Bạn nhắn Zalo cho khách giúp nhé."
-        client, _ = await self._target(reminder)
+        message = (reminder.message_preview or "").strip()
+        if not message:
+            raise PermanentDeliveryError("Lời nhắc chưa có nội dung nên không thể gửi.")
 
-        reminder.status = "skipped"
-        await self.repo.add_delivery_record(
-            reminder_id=reminder.id,
-            channel="zalo",
-            outcome="failure",
-            error_message=reason,
-        )
-        await NotificationService(db=self.db).notify_reminder_failed(
-            owner_user_id=reminder.owner_user_id,
-            reminder_id=reminder.id,
-            client_name=client.name if client else None,
-            reason=reason,
-        )
-        await self.db.flush()
-        return DeliveryResult(status="skipped", detail=reason)
+        client, _ = await self._target(reminder)
+        if client is None:
+            raise PermanentDeliveryError(
+                "Không tìm thấy khách hàng của lời nhắc này — có thể dữ liệu đã bị xoá."
+            )
+
+        assert self.repo is not None
+        owner = await self.repo.get_owner(reminder.owner_user_id)
+        access_token = (getattr(owner, "zalo_oa_access_token", None) or "").strip()
+        if not access_token:
+            raise PermanentDeliveryError(
+                "Bạn chưa kết nối Zalo OA. Vào Cài đặt để kết nối rồi gửi lại giúp nhé."
+            )
+
+        user_id = (getattr(client, "zalo_user_id", None) or "").strip()
+        if not user_id:
+            if settings.zalo_mode == "mock":
+                # Mock: gán tạm để luồng chạy trọn local khi chưa có webhook thật.
+                user_id = f"mock-user-{str(getattr(client, 'id', '') or '0')[:8]}"
+                client.zalo_user_id = user_id
+            else:
+                raise PermanentDeliveryError(
+                    f"Khách {client.name} chưa kết nối Zalo với OA của bạn. Nhắn Zalo tay giúp nhé."
+                )
+
+        assert self.zalo_client is not None
+        try:
+            await self.zalo_client.send_cs_message(
+                access_token=access_token, user_id=user_id, text=message
+            )
+        except ZaloTransientError as exc:
+            raise TransientDeliveryError(str(exc)) from exc
+        except ZaloPermanentError as exc:
+            raise PermanentDeliveryError(str(exc)) from exc
+
+        # Biên nhận trong app khi hệ thống tự gửi lúc người dùng vắng mặt (như kênh email).
+        if unattended:
+            await NotificationService(db=self.db).notify_reminder_sent(
+                owner_user_id=reminder.owner_user_id,
+                reminder_id=reminder.id,
+                client_name=client.name if client else None,
+                recipient="Zalo",
+            )
+        return f"Đã gửi tin Zalo cho {client.name}."
 
     # --- Xử lý hỏng ----------------------------------------------------------------
 

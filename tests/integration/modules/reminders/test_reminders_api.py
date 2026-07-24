@@ -324,7 +324,11 @@ class TestSendReminderNow:
         assert resp.json()["data"]["delivered"] is False
         assert send_email.await_count == 1
 
-    async def test_kenh_zalo_ra_skipped_chu_khong_gia_vo_da_gui(self, client: AsyncClient) -> None:
+    async def test_kenh_zalo_chua_ket_noi_thi_failed_chu_khong_gia_vo_da_gui(
+        self, client: AsyncClient
+    ) -> None:
+        """Freelancer chưa kết nối Zalo OA → gửi kênh zalo ra 'failed' + báo thẳng, KHÔNG giả
+        'đã gửi'. (Đã kết nối rồi thì gửi thật — phủ ở test_zalo_api.py.)"""
         headers = await _auth(client)
         deal_id = await _make_deal_id(client, headers, client_email="khach@example.com")
         payload = _reminder_payload(deal_id)
@@ -336,9 +340,9 @@ class TestSendReminderNow:
             resp = await client.post(f"/api/v1/reminders/{reminder_id}/send", headers=headers)
 
         data = resp.json()["data"]
-        assert data["status"] == "skipped"
+        assert data["status"] == "failed"
         assert data["delivered"] is False
-        assert "Zalo" in data["detail"]
+        assert "chưa kết nối Zalo OA" in data["detail"]
         send_email.assert_not_awaited()
 
     async def test_kenh_in_app_khong_dung_toi_email(self, client: AsyncClient) -> None:

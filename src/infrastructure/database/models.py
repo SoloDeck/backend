@@ -461,6 +461,10 @@ class ClientModel(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     status: Mapped[str] = mapped_column(_client_status, nullable=False, server_default="prospect")
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Id của khách trong OA của freelancer (follower id). Lấy từ webhook Zalo khi khách nhắn/
+    # follow OA — gửi tin CS phải theo id này, KHÔNG theo số điện thoại. NULL = khách chưa nối
+    # Zalo với OA nên chưa gửi CS được.  #Huynh
+    zalo_user_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     __table_args__ = (
         Index("idx_clients_owner_status", "owner_user_id", "status"),

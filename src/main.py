@@ -3,11 +3,13 @@
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Any
 
 import structlog
 import yaml
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse
 
 from src.ai.followup_generator.api.router import router as followup_router
 from src.ai.lead_qualifier.api.router import router as lead_qualifier_router
@@ -37,6 +39,7 @@ from src.modules.reminders.api.router import router as reminders_router
 from src.modules.subscriptions.api.router import router as subscriptions_router
 from src.modules.tasks.api.router import router as tasks_router
 from src.modules.users.api.router import router as users_router
+from src.modules.zalo.api.router import router as zalo_router
 from src.shared.exceptions.http import setup_exception_handlers
 from src.shared.logging import (
     AccessLogMiddleware,
@@ -79,7 +82,7 @@ app = FastAPI(
 )
 
 
-def custom_openapi() -> dict:
+def custom_openapi() -> dict[str, Any]:
     """Serve the contract-first OpenAPI document while API routers are scaffolded."""
     if app.openapi_schema:
         return app.openapi_schema
@@ -91,7 +94,7 @@ def custom_openapi() -> dict:
     # In development, promote the localhost server to the top so Swagger UI
     # sends requests to the local instance instead of production.
     if settings.debug or settings.app_env == "development":
-        servers: list[dict] = schema.get("servers", [])
+        servers: list[dict[str, Any]] = schema.get("servers", [])
         local = [s for s in servers if "localhost" in s.get("url", "")]
         others = [s for s in servers if "localhost" not in s.get("url", "")]
         if local:
@@ -151,16 +154,46 @@ app.include_router(intake_form_router, prefix=f"{API_V1}/intake-form", tags=["In
 app.include_router(freelancers_router, prefix=f"{API_V1}/public/freelancers", tags=["Public"])
 app.include_router(projects_router, prefix=f"{API_V1}/projects", tags=["Projects"])
 app.include_router(admin_router, prefix=f"{API_V1}/admin", tags=["Admin"])
+app.include_router(zalo_router, prefix=f"{API_V1}/zalo", tags=["Zalo"])
 app.include_router(lead_qualifier_router, prefix=f"{API_V1}/ai")
 app.include_router(followup_router, prefix=f"{API_V1}/ai")
 app.include_router(ai_jobs_router, prefix=f"{API_V1}/ai/jobs", tags=["AI Jobs"])
 
 
 # ---------------------------------------------------------------------------
+# Xác thực quyền sở hữu domain/URL với Zalo: Zalo tải https://<domain>/zalo_verifier<TOKEN>.html
+# rồi kiểm thẻ meta chứa <TOKEN>. Nội dung là mẫu CỐ ĐỊNH của Zalo (chỉ token đổi) → tự dựng
+# từ tên file, phục vụ được MỌI token (Tiền tố URL / Domain / verify lại) mà không cần cấu
+# hình từng cái. Pattern cụ thể (không catch-all) nên không che route khác; token chỉ nhận
+# chữ-số để chặn XSS phản chiếu.  #Huynh
+# ---------------------------------------------------------------------------
+@app.get("/zalo_verifier{token}.html", include_in_schema=False)
+async def zalo_domain_verify(token: str) -> HTMLResponse:
+    if not token.isalnum():
+        raise HTTPException(status_code=404)
+    body = (
+        '<!DOCTYPE html>\n<html lang="en">\n\n<head>\n'
+        f'    <meta property="zalo-platform-site-verification" content="{token}" />\n'
+        "</head>\n\n<body>\n"
+        "There Is No Limit To What You Can Accomplish Using Zalo!\n"
+        "</body>\n\n</html>\n"
+    )
+    return HTMLResponse(content=body)
+
+
+# ---------------------------------------------------------------------------
+# Root — trả 200 để các bộ kiểm tra domain (Zalo…) thấy site "sống", không phải 404.
+# ---------------------------------------------------------------------------
+@app.get("/", include_in_schema=False)
+async def root() -> dict[str, str]:
+    return {"service": "SoloDesk API", "status": "ok", "docs": "/docs"}
+
+
+# ---------------------------------------------------------------------------
 # API v1 root — Swagger UI probes this on load
 # ---------------------------------------------------------------------------
 @app.get(f"{API_V1}", include_in_schema=False)
-async def api_v1_root() -> dict:
+async def api_v1_root() -> dict[str, str]:
     return {"message": "SoloDesk API v1", "docs": "/docs"}
 
 
@@ -168,5 +201,5 @@ async def api_v1_root() -> dict:
 # Health
 # ---------------------------------------------------------------------------
 @app.get("/health", tags=["Health"], include_in_schema=False)
-async def health_check() -> dict:
+async def health_check() -> dict[str, str]:
     return {"status": "ok", "environment": settings.app_env}

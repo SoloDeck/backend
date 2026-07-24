@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from src.modules.reminders.application import delivery_service as _delivery_mod
 from src.modules.reminders.application.delivery_service import (
     MAX_DELIVERY_ATTEMPTS,
     ReminderDeliveryService,
@@ -345,20 +346,79 @@ class TestKenhInApp:
         assert "ghi lại thông báo cho bạn" in result.detail
 
 
+def make_zalo_service(reminder, *, oa_token, zalo_user_id, zalo_client=None):  # type: ignore[no-untyped-def]
+    """Như make_service nhưng gắn token OA cho owner + zalo_user_id cho client, và tiêm
+    zalo_client giả để khẳng định 'đã gọi gửi tới đúng người'."""
+    client = make_client()
+    client.id = uuid.uuid4()
+    client.zalo_user_id = zalo_user_id
+    repo = AsyncMock()
+    repo.get_for_delivery.return_value = reminder
+    repo.resolve_target.return_value = (client, "Thiết kế logo")
+    owner = MagicMock()
+    owner.full_name = "Huỳnh Hoa"
+    owner.email = "huynhhoa@example.com"
+    owner.zalo_oa_access_token = oa_token
+    repo.get_owner.return_value = owner
+    service = ReminderDeliveryService(
+        db=make_db(),
+        send_email=AsyncMock(),
+        repo=repo,
+        zalo_client=zalo_client or AsyncMock(),
+    )
+    return service, repo, client
+
+
 class TestKenhZalo:
-    async def test_zalo_danh_dau_skipped_chu_khong_gia_vo_da_gui(self) -> None:
-        """Đổi lặng lẽ sang in-app rồi báo "đã gửi" là để người dùng tưởng khách đã nhận."""
-        send_email = AsyncMock()
+    async def test_gui_cs_thanh_cong_khi_da_ket_noi(self, notifications: MagicMock) -> None:
+        """Có token OA + khách đã follow (có zalo_user_id) → gửi CS thật, đánh dấu sent."""
         reminder = make_reminder(channel="zalo")
-        service, repo = make_service(reminder, send_email=send_email)
+        zalo = AsyncMock()
+        service, repo, _ = make_zalo_service(
+            reminder, oa_token="oa-token", zalo_user_id="follower-123", zalo_client=zalo
+        )
 
         result = await service.deliver(reminder.id)
 
-        send_email.assert_not_awaited()
-        assert reminder.status == "skipped"
-        assert result.delivered is False
-        assert "Zalo" in result.detail
-        assert repo.add_delivery_record.await_args.kwargs["outcome"] == "failure"
+        zalo.send_cs_message.assert_awaited_once()
+        assert zalo.send_cs_message.await_args.kwargs["user_id"] == "follower-123"
+        assert reminder.status == "sent"
+        assert result.delivered is True
+        record = repo.add_delivery_record.await_args.kwargs
+        assert record["channel"] == "zalo" and record["outcome"] == "success"
+
+    async def test_chua_ket_noi_oa_thi_that_bai_khong_gia_gui(
+        self, notifications: MagicMock
+    ) -> None:
+        """Freelancer chưa nối OA → báo thẳng thất bại, KHÔNG giả 'đã gửi'."""
+        reminder = make_reminder(channel="zalo")
+        zalo = AsyncMock()
+        service, _, _ = make_zalo_service(
+            reminder, oa_token=None, zalo_user_id="follower-123", zalo_client=zalo
+        )
+
+        result = await service.deliver(reminder.id)
+
+        zalo.send_cs_message.assert_not_awaited()
+        assert reminder.status == "failed"
+        assert "chưa kết nối Zalo OA" in result.detail
+
+    async def test_khach_chua_follow_o_che_do_real_thi_that_bai(
+        self, notifications: MagicMock, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Chế độ real + khách chưa follow OA (thiếu zalo_user_id) → thất bại, không gửi bừa."""
+        monkeypatch.setattr(_delivery_mod.settings, "zalo_mode", "real")
+        reminder = make_reminder(channel="zalo")
+        zalo = AsyncMock()
+        service, _, _ = make_zalo_service(
+            reminder, oa_token="oa-token", zalo_user_id=None, zalo_client=zalo
+        )
+
+        result = await service.deliver(reminder.id)
+
+        zalo.send_cs_message.assert_not_awaited()
+        assert reminder.status == "failed"
+        assert "chưa kết nối Zalo" in result.detail
 
 
 class TestRetry:

@@ -132,6 +132,27 @@ class Settings(BaseSettings):
             return v
         return ["*"]
 
+    # -----------------------------------------------------------------------
+    # Frontend
+    # -----------------------------------------------------------------------
+    # Nơi backend chuyển hướng người dùng về sau các luồng OAuth ngoài (Zalo…).
+    frontend_url: str = "http://localhost:5173"
+
+    # -----------------------------------------------------------------------
+    # Zalo Official Account
+    # -----------------------------------------------------------------------
+    # app_id/app_secret là của MỘT app SoloDesk trên Zalo Developers — nhiều OA của các
+    # freelancer nối vào cùng app này; token của TỪNG OA lưu trên `users.zalo_oa_*`.
+    # `zalo_mode`: "mock" (mặc định — chạy local/test, thành công tất định, KHÔNG gọi mạng)
+    # hoặc "real" (gọi API Zalo thật; cần app thật + URL công khai cho callback/webhook).
+    zalo_mode: Literal["mock", "real"] = "mock"
+    zalo_app_id: str = ""
+    zalo_app_secret: str = ""
+    # Redirect URI đã khai ở Zalo Developers — PHẢI là URL công khai khớp từng ký tự.
+    zalo_oauth_redirect_uri: str = ""
+    # Bí mật để xác thực chữ ký webhook Zalo (đối chiếu header `X-ZEvent-Signature`).
+    zalo_webhook_secret: str = ""
+
     @property
     def is_production(self) -> bool:
         return self.app_env == "production"
