@@ -12,11 +12,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-
-
-from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
-from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_google_genai import GoogleGenerativeAIEmbeddings
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+
+from src.config.settings import settings
 
 
 class LeadQualificationRetriever:
@@ -47,8 +47,9 @@ class LeadQualificationRetriever:
 
         self.framework = self._load_framework()
 
-        self.embeddings = HuggingFaceEmbeddings(
-            model_name="sentence-transformers/all-MiniLM-L6-v2"
+        self.embeddings = GoogleGenerativeAIEmbeddings(
+            model="models/text-embedding-004",
+            google_api_key=settings.gemini_api_key,
         )
 
         self.splitter = RecursiveCharacterTextSplitter(

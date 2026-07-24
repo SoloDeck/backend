@@ -1,6 +1,16 @@
 # ===========================================================================
 # SoloDesk — Local development stack
 # ===========================================================================
+# No host ports are published. On this shared host the containers reach each
+# other over the internal `solodesk-network` on their standard ports
+# (db:5432, redis:6379, minio:9000/9001, ...), so nothing here can ever
+# collide with the staging/production stacks. Deploys use
+# `-f compose.deploy.yml` and are unaffected by this file.
+#
+# Need to reach a service from the host? Either:
+#   - exec in, e.g.  `docker compose exec db psql -U solodesk`
+#   - or add a `ports:` mapping to that one service temporarily.
+# ===========================================================================
 
 services:
 
@@ -14,8 +24,6 @@ services:
       POSTGRES_USER: solodesk
       POSTGRES_PASSWORD: solodesk
       POSTGRES_DB: solodesk
-    ports:
-      - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -32,8 +40,6 @@ services:
   redis:
     image: redis:7-alpine
     restart: always
-    ports:
-      - "6379:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s

@@ -61,6 +61,23 @@ def _make_qualifier(data: dict) -> LeadQualifier:
     return q
 
 
+@pytest.fixture(autouse=True)
+def _stub_retriever(monkeypatch):
+    """Keep unit tests offline.
+
+    `run()` now lazily builds the Gemini-backed FAISS retriever, which would
+    hit the Google embeddings API (needs GEMINI_API_KEY + network). Seed the
+    cached `_retriever` with a no-op stub so `_get_retriever()` never builds
+    the real one.
+    """
+
+    class _FakeRetriever:
+        def retrieve(self, *, profession, query):
+            return ""
+
+    monkeypatch.setattr(LeadQualifier, "_retriever", _FakeRetriever())
+
+
 # --------------------------------------------------
 # _get_client
 # --------------------------------------------------
@@ -168,3 +185,43 @@ class TestRun:
         q = _make_qualifier(data)
         result = await q.run(profession="software-developer", inquiry_context="Need a website")
         assert len(result["red_flags"]) == 2
+
+    async def test_run_feeds_retrieved_knowledge_into_prompt(self, monkeypatch):
+        """The knowledge returned by the retriever must reach the LLM prompt.
+
+        Overrides the autouse stub with a retriever that emits a recognizable
+        sentinel, then captures the prompt handed to the Groq call path and
+        asserts the sentinel is embedded in it.
+        """
+
+        class _SentinelRetriever:
+            def __init__(self):
+                self.calls = []
+
+            def retrieve(self, *, profession, query):
+                self.calls.append((profession, query))
+                return "SENTINEL-KNOWLEDGE-BLOCK"
+
+        sentinel_retriever = _SentinelRetriever()
+        monkeypatch.setattr(LeadQualifier, "_retriever", sentinel_retriever)
+
+        q = _make_qualifier(VALID_MOCK_DATA)
+
+        captured = {}
+
+        def _capture(prompt):
+            captured["prompt"] = prompt
+            return json.dumps(VALID_MOCK_DATA)
+
+        monkeypatch.setattr(q, "_call_groq", _capture)
+
+        result = await q.run(
+            profession="software-developer",
+            inquiry_context="Need a website",
+        )
+
+        assert result["suggested_lead_score"] == "HOT"
+        # Retriever was consulted with the caller's profession + inquiry.
+        assert sentinel_retriever.calls == [("software-developer", "Need a website")]
+        # Retrieved knowledge was threaded through the prompt builder into the LLM call.
+        assert "SENTINEL-KNOWLEDGE-BLOCK" in captured["prompt"]

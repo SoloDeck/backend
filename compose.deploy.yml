@@ -1,0 +1,61 @@
+# ===========================================================================
+# SoloDesk — Deploy stack (staging & production)
+# ===========================================================================
+# Production-shaped: image-only, NO bind mounts, NO --reload, NO dev tooling
+# (pgadmin/mailpit/minio/test). The running code comes from the pushed image,
+# not the runner's checkout.
+#
+# Staging and production differ only by the generated .env (secrets, APP_ENV,
+# ports) and the compose project name, so a single file serves both:
+#
+#   docker compose -p solodesk-backend-staging    -f compose.deploy.yml up -d
+#   docker compose -p solodesk-backend-production -f compose.deploy.yml up -d
+#
+# DB, Redis and migrations are NOT defined here — staging/production point at
+# external managed services via DATABASE_URL / REDIS_URL in .env.
+# ===========================================================================
+
+services:
+
+  # -------------------------------------------------------------------------
+  # FastAPI app
+  # -------------------------------------------------------------------------
+  api:
+    image: ${REGISTRY:-ghcr.io/solodeck/backend}/solodesk-backend:latest
+    restart: always
+    env_file:
+      - path: .env
+        required: true
+    environment:
+      # App listens on 8000 inside the container; host port is API_PORT.
+      PORT: 8000
+    ports:
+      - "${API_PORT:-8000}:8000"
+    healthcheck:
+      # No curl/wget in the slim image — use the bundled Python interpreter.
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health', timeout=3).status == 200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      # Grace window covering first-boot model download / load.
+      start_period: 60s
+
+  # -------------------------------------------------------------------------
+  # Celery worker
+  # -------------------------------------------------------------------------
+  worker:
+    image: ${REGISTRY:-ghcr.io/solodeck/backend}/solodesk-backend-worker:latest
+    restart: always
+    env_file:
+      - path: .env
+        required: true
+
+  # -------------------------------------------------------------------------
+  # Celery beat (scheduler)
+  # -------------------------------------------------------------------------
+  beat:
+    image: ${REGISTRY:-ghcr.io/solodeck/backend}/solodesk-backend-beat:latest
+    restart: always
+    env_file:
+      - path: .env
+        required: true
