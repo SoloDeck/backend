@@ -7,6 +7,7 @@ from datetime import datetime
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.infrastructure.database.models import PlanModel, SubscriptionModel, UserModel
+from src.modules.admin.domain.entities import AdminUser, FeatureFlagRollout, SubscriptionOverride
 from src.modules.admin.infrastructure.repository import AdminRepository
 from src.modules.admin.schemas.request import (
     AdminCreateTemplateRequest,
@@ -17,7 +18,7 @@ from src.modules.admin.schemas.request import (
     AdminUpdateTemplateRequest,
     AdminUpdateUserRequest,
 )
-from src.shared.exceptions.domain import AlreadyExistsError, BusinessRuleError, NotFoundError
+from src.shared.exceptions.domain import AlreadyExistsError, NotFoundError
 
 
 @dataclass
@@ -107,11 +108,15 @@ class AdminService:
         self, user_id: uuid.UUID, *, admin_id: uuid.UUID
     ) -> UserModel:
         user = await self.get_user(user_id)
+        is_last_active_admin = False
         if user.role == "admin":
             active_admin_count = await self.repo.count_active_admins()
-            if active_admin_count <= 1:
-                raise BusinessRuleError("Cannot suspend the last active admin account")
-        user.status = "suspended"
+            is_last_active_admin = active_admin_count <= 1
+
+        entity = AdminUser(id=user.id, email=user.email, role=user.role, status=user.status)
+        entity.suspend(is_last_active_admin=is_last_active_admin)
+        user.status = entity.status
+
         user = await self.repo.save(user)
         await self.repo.create_audit_log(
             event_type="user.suspended",
@@ -126,7 +131,10 @@ class AdminService:
         self, user_id: uuid.UUID, *, admin_id: uuid.UUID
     ) -> UserModel:
         user = await self.get_user(user_id)
-        user.status = "active"
+        entity = AdminUser(id=user.id, email=user.email, role=user.role, status=user.status)
+        entity.reinstate()
+        user.status = entity.status
+
         user = await self.repo.save(user)
         await self.repo.create_audit_log(
             event_type="user.reinstated",
@@ -225,11 +233,20 @@ class AdminService:
         sub = await self.repo.get_subscription(subscription_id)
         if sub is None:
             raise NotFoundError(f"Subscription {subscription_id} not found")
+
+        override = SubscriptionOverride(
+            subscription_id=sub.id,
+            plan_id=payload.plan_id if payload.plan_id is not None else sub.plan_id,
+            override_by_admin_id=admin_id,
+            override_expires_at=payload.override_expires_at,
+        )  # __post_init__ raises OverrideExpiryInPastError for an expiry already in the past
+
         if payload.plan_id is not None:
-            sub.plan_id = payload.plan_id
+            sub.plan_id = override.plan_id
         if payload.override_expires_at is not None:
-            sub.override_expires_at = payload.override_expires_at
-        sub.override_by_admin_id = admin_id
+            sub.override_expires_at = override.override_expires_at
+        sub.override_by_admin_id = override.override_by_admin_id
+
         sub = await self.repo.save(sub)
         plan = await self.repo.get_plan(sub.plan_id)
         if plan is None:
@@ -365,12 +382,25 @@ class AdminService:
         flag = await self.repo.get_feature_flag_by_name(flag_name)
         if flag is None:
             raise NotFoundError(f"Feature flag '{flag_name}' not found")
-        if payload.is_enabled is not None:
-            flag.is_enabled = payload.is_enabled
-        if payload.rollout_percentage is not None:
-            flag.rollout_percentage = payload.rollout_percentage
-        if payload.target_user_ids is not None:
-            flag.target_user_ids = payload.target_user_ids
+
+        entity = FeatureFlagRollout(
+            flag_name=flag.flag_name,
+            is_enabled=payload.is_enabled if payload.is_enabled is not None else flag.is_enabled,
+            rollout_percentage=(
+                payload.rollout_percentage
+                if payload.rollout_percentage is not None
+                else flag.rollout_percentage
+            ),
+            target_user_ids=(
+                payload.target_user_ids
+                if payload.target_user_ids is not None
+                else flag.target_user_ids
+            ),
+        )  # __post_init__ raises InvalidRolloutPercentageError if out of [0, 100]
+
+        flag.is_enabled = entity.is_enabled
+        flag.rollout_percentage = entity.rollout_percentage
+        flag.target_user_ids = entity.target_user_ids
         if payload.description is not None:
             flag.description = payload.description
         return await self.repo.save(flag)
