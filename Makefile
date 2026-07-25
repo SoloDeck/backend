@@ -44,15 +44,15 @@ downgrade: ## Rollback one migration
 	alembic downgrade -1
 
 db-shell: ## Open psql shell inside Docker
-	docker compose exec db psql -U solodesk -d solodesk
+	docker compose exec postgres psql -U solodesk -d solodesk
 
-migrate-docker: ## Apply migrations via Docker (requires: docker compose up -d db)
+migrate-docker: ## Apply migrations via Docker (requires: docker compose up -d postgres)
 	docker compose run --rm migrate alembic upgrade head
 
-seed-docker: ## Run seeders via Docker (requires: docker compose up -d db)
+seed-docker: ## Run seeders via Docker (requires: docker compose up -d postgres)
 	docker compose run --rm migrate python scripts/seed.py
 
-db-init: ## Apply migrations + seed via Docker — full DB init (requires: docker compose up -d db)
+db-init: ## Apply migrations + seed via Docker — full DB init (requires: docker compose up -d postgres)
 	docker compose run --rm migrate python scripts/bootstrap.py
 
 seed: ## Run seeders locally (requires local DB + installed deps)
@@ -116,7 +116,7 @@ agent-check: ## Fast non-mutating gate for AI agents (contract + lint + type + u
 	pytest tests/unit -v
 
 agent-db-check: ## DB-dependent gate for AI agents (migrate/seed + integration tests)
-	docker compose up -d db
+	docker compose up -d postgres
 	docker compose run --rm migrate python scripts/bootstrap.py
 	pytest tests/integration -v
 
