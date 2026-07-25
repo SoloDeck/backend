@@ -90,6 +90,8 @@ class AdminAiCostResponse(BaseModel):
 
     id: uuid.UUID
     user_id: uuid.UUID
+    user_email: str | None = None
+    user_full_name: str | None = None
     ai_module: str
     model_used: str
     input_tokens: int
@@ -119,6 +121,8 @@ class AdminAuditLogResponse(BaseModel):
     id: uuid.UUID
     event_type: str
     actor_user_id: uuid.UUID | None
+    actor_email: str | None = None
+    actor_full_name: str | None = None
     target_type: str | None
     target_id: uuid.UUID | None
     description: str

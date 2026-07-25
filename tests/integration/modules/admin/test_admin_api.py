@@ -8,6 +8,7 @@ from sqlalchemy import insert, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.infrastructure.database.models import (
+    AiCostRecordModel,
     FeatureFlagModel,
     SubscriptionModel,
     UserModel,
@@ -1080,6 +1081,37 @@ class TestAdminAiCosts:
         assert "output_tokens" in body["totals"]
         assert "estimated_cost_usd" in body["totals"]
 
+    async def test_includes_email_of_user_who_generated(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """Admin cần biết AI đó AI ai gen — response trả kèm email + tên người dùng."""
+        headers, admin_id = await _admin_headers_with_id(client, db_session)
+        admin_email = (await client.get("/api/v1/users/me", headers=headers)).json()["data"][
+            "email"
+        ]
+        await db_session.execute(
+            insert(AiCostRecordModel).values(
+                id=uuid.uuid4(),
+                user_id=uuid.UUID(admin_id),
+                ai_module="lead_qualifier",
+                model_used="llama-3.3-70b-versatile",
+                input_tokens=100,
+                output_tokens=20,
+                estimated_cost_usd=0,
+                status="completed",
+                occurred_at=datetime.now(UTC),
+            )
+        )
+        await db_session.flush()
+
+        resp = await client.get("/api/v1/admin/ai-costs", headers=headers)
+        assert resp.status_code == 200
+        rows = resp.json()["data"]["data"]
+        mine = [r for r in rows if r["user_id"] == admin_id]
+        assert mine, "Bản ghi ai_cost vừa seed phải xuất hiện"
+        assert mine[0]["user_email"] == admin_email
+        assert "user_full_name" in mine[0]
+
     async def test_invalid_ai_module_returns_422(
         self, client: AsyncClient, db_session: AsyncSession
     ) -> None:
@@ -1127,6 +1159,29 @@ class TestAdminAuditLogs:
         )
         assert resp.status_code == 200
         assert resp.json()["data"]["total"] >= 1
+
+    async def test_includes_actor_email_of_who_did_it(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """Nhật ký "ai làm gì" — response trả kèm email + tên người THỰC HIỆN hành động."""
+        headers, admin_id = await _admin_headers_with_id(client, db_session)
+        admin_email = (await client.get("/api/v1/users/me", headers=headers)).json()["data"][
+            "email"
+        ]
+        user_h = await _user_headers(client)
+        user_id = (await client.get("/api/v1/users/me", headers=user_h)).json()["data"]["id"]
+
+        await client.post(f"/api/v1/admin/users/{user_id}/suspend", headers=headers)
+
+        resp = await client.get(
+            "/api/v1/admin/audit-logs?event_type=user.suspended", headers=headers
+        )
+        assert resp.status_code == 200
+        rows = resp.json()["data"]["data"]
+        mine = [r for r in rows if r["actor_user_id"] == admin_id]
+        assert mine, "Bản ghi suspend phải có actor là admin vừa thao tác"
+        assert mine[0]["actor_email"] == admin_email
+        assert "actor_full_name" in mine[0]
 
     async def test_update_user_creates_audit_log(
         self, client: AsyncClient, db_session: AsyncSession

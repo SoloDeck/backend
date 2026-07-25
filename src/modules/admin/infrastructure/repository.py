@@ -265,7 +265,11 @@ class AdminRepository:
         page: int = 1,
         page_size: int = 20,
     ) -> tuple[list, int]:
-        base_q = select(AuditLogEntryModel)
+        # Join users để trả kèm email + tên người THỰC HIỆN hành động (nhật ký "ai làm gì").
+        # outerjoin vì actor_user_id nullable — hành động do hệ thống thì không có actor.  #Huynh
+        base_q = select(AuditLogEntryModel, UserModel.email, UserModel.full_name).outerjoin(
+            UserModel, UserModel.id == AuditLogEntryModel.actor_user_id
+        )
         if event_type is not None:
             base_q = base_q.where(AuditLogEntryModel.event_type == event_type)
         if target_type is not None:
@@ -284,7 +288,8 @@ class AdminRepository:
         data_q = base_q.order_by(ordered).offset((page - 1) * page_size).limit(page_size)
 
         result = await self.db.execute(data_q)
-        return list(result.scalars().all()), total
+        # Mỗi hàng = (AuditLogEntryModel, actor_email, actor_full_name) do join users ở trên.
+        return list(result.all()), total
 
     # -------------------------------------------------------------------------
     # AI Cost Records
@@ -301,7 +306,11 @@ class AdminRepository:
         page: int = 1,
         page_size: int = 20,
     ) -> tuple[list, int]:
-        base_q = select(AiCostRecordModel)
+        # Join users để trả kèm email + tên người gọi AI — admin cần biết AI đó ai gen.
+        # outerjoin phòng khi user bị xoá cứng (record vẫn hiện, email để trống).  #Huynh
+        base_q = select(AiCostRecordModel, UserModel.email, UserModel.full_name).outerjoin(
+            UserModel, UserModel.id == AiCostRecordModel.user_id
+        )
         if ai_module is not None:
             base_q = base_q.where(AiCostRecordModel.ai_module == ai_module)
         if from_date is not None:
@@ -318,7 +327,8 @@ class AdminRepository:
         data_q = base_q.order_by(ordered).offset((page - 1) * page_size).limit(page_size)
 
         result = await self.db.execute(data_q)
-        return list(result.scalars().all()), total
+        # Mỗi hàng = (AiCostRecordModel, email, full_name) do có join users ở trên.
+        return list(result.all()), total
 
     async def get_ai_cost_totals(
         self,

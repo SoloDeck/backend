@@ -291,7 +291,23 @@ async def list_ai_costs(
     )
     return ApiResponse.ok(
         AdminAiCostPagedResponse(
-            data=[AdminAiCostResponse.model_validate(r) for r in records],
+            # Mỗi bản ghi là (record, email, full_name) do repo join users → biết ai gen AI.
+            data=[
+                AdminAiCostResponse(
+                    id=r.id,
+                    user_id=r.user_id,
+                    user_email=email,
+                    user_full_name=full_name,
+                    ai_module=r.ai_module,
+                    model_used=r.model_used,
+                    input_tokens=r.input_tokens,
+                    output_tokens=r.output_tokens,
+                    estimated_cost_usd=r.estimated_cost_usd,
+                    status=r.status,
+                    occurred_at=r.occurred_at,
+                )
+                for (r, email, full_name) in records
+            ],
             total=total,
             page=page,
             page_size=page_size,
@@ -330,7 +346,21 @@ async def list_audit_logs(
     )
     return ApiResponse.ok(
         Paginated[AdminAuditLogResponse](
-            data=[AdminAuditLogResponse.model_validate(e) for e in logs],
+            # Mỗi bản ghi là (entry, actor_email, actor_full_name) do repo join users.
+            data=[
+                AdminAuditLogResponse(
+                    id=e.id,
+                    event_type=e.event_type,
+                    actor_user_id=e.actor_user_id,
+                    actor_email=actor_email,
+                    actor_full_name=actor_full_name,
+                    target_type=e.target_type,
+                    target_id=e.target_id,
+                    description=e.description,
+                    occurred_at=e.occurred_at,
+                )
+                for (e, actor_email, actor_full_name) in logs
+            ],
             total=total,
             page=page,
             page_size=page_size,
