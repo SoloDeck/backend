@@ -25,6 +25,8 @@ class DealStub:
 class OwnerStub:
     id: uuid.UUID
     currency: str = "VND"
+    email: str | None = None
+    full_name: str = "Owner"
 
 
 async def test_create_requires_owned_client() -> None:
@@ -103,7 +105,7 @@ def _intake_payload(**overrides) -> PublicIntakeRequest:
 
 
 async def test_create_public_intake_creates_client_deal_and_intake() -> None:
-    owner = OwnerStub(id=uuid.uuid4())
+    owner = OwnerStub(id=uuid.uuid4(), email="owner@example.com")
     client_id = uuid.uuid4()
     intake = IntakeStub(id=uuid.uuid4(), client_id=client_id)
     repo = AsyncMock()
@@ -120,11 +122,15 @@ async def test_create_public_intake_creates_client_deal_and_intake() -> None:
     service = DealsService(db=db, repo=repo, usage=AsyncMock())
 
     # Unique token per test run so the shared process limiter is never the cause of failure.
+    sent_email = AsyncMock()
     with pytest.MonkeyPatch().context() as mp:
         mp.setattr("src.workers.ai_jobs.tasks.qualify_deal_async_by_id.delay", lambda *a: None)
+        mp.setattr("src.shared.email.smtp.send_email", sent_email)
         result = await service.create_public_intake(f"tok-{uuid.uuid4().hex}", _intake_payload())
 
     assert result is intake
+    # Owner có email -> phải gửi thông báo email "Deal mới" (ngoài chuông in-app).
+    sent_email.assert_awaited_once()
     repo.create_client.assert_awaited_once()
     repo.create.assert_awaited_once()
     repo.create_intake.assert_awaited_once()

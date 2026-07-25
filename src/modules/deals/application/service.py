@@ -177,11 +177,39 @@ class DealsService:
             project_name=payload.project_name,
         )
 
+        # Ngoài chuông in-app, GỬI EMAIL cho freelancer: nhiều người không mở app cả ngày,
+        # deal nóng để lâu là mất khách. Best-effort — mail hỏng (SMTP lỗi, chưa cấu hình)
+        # KHÔNG được làm hỏng việc nhận form của khách, nên nuốt lỗi và chỉ ghi log.
+        await self._email_owner_new_deal(owner, deal.id, payload)
+
         from src.workers.ai_jobs.tasks import qualify_deal_async_by_id
 
         qualify_deal_async_by_id.delay(str(owner.id), str(deal.id))
 
         return intake
+
+    async def _email_owner_new_deal(self, owner, deal_id, payload) -> None:  # type: ignore[no-untyped-def]
+        if not owner.email:
+            return
+        from src.config.settings import settings
+        from src.modules.deals.application.emails import build_new_deal_email
+        from src.shared.email.smtp import send_email
+
+        content = build_new_deal_email(
+            owner_name=owner.full_name,
+            client_name=payload.name,
+            project_name=payload.project_name,
+            deal_url=f"{settings.frontend_url.rstrip('/')}/deals/{deal_id}",
+        )
+        try:
+            await send_email(
+                to=owner.email,
+                subject=content.subject,
+                html=content.html,
+                plain=content.plain,
+            )
+        except Exception as exc:  # noqa: BLE001 — best-effort, không chặn luồng intake
+            log.warning("intake.owner_email_failed", owner_id=str(owner.id), error=str(exc))
 
     async def list_all(
         self,
