@@ -151,6 +151,9 @@ jobs:
           @"
           APP_ENV=staging
           DATABASE_URL=${{ secrets.DATABASE_URL }}
+          POSTGRES_USER=${{ vars.POSTGRES_USER }}
+          POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}
+          POSTGRES_DB=${{ vars.POSTGRES_DB }}
           REDIS_URL=${{ secrets.REDIS_URL }}
           CELERY_BROKER_URL=${{ secrets.REDIS_URL }}
           CELERY_RESULT_BACKEND=${{ secrets.REDIS_URL }}
@@ -174,7 +177,10 @@ jobs:
         run: |
           $env:API_PORT = "${{ vars.API_PORT }}"
           docker compose -p solodesk-backend-staging -f compose.deploy.yml pull api worker beat
-          docker compose -p solodesk-backend-staging -f compose.deploy.yml up -d api worker beat
+          # --remove-orphans clears containers left by earlier compose files, so a
+          # stale `db` container can't keep holding the postgres data volume.
+          # postgres/redis/migrate start automatically as declared dependencies.
+          docker compose -p solodesk-backend-staging -f compose.deploy.yml up -d --remove-orphans api worker beat
 
       - name: Verify API is healthy
         shell: powershell
@@ -233,6 +239,9 @@ jobs:
           @"
           APP_ENV=production
           DATABASE_URL=${{ secrets.DATABASE_URL }}
+          POSTGRES_USER=${{ vars.POSTGRES_USER }}
+          POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}
+          POSTGRES_DB=${{ vars.POSTGRES_DB }}
           REDIS_URL=${{ secrets.REDIS_URL }}
           CELERY_BROKER_URL=${{ secrets.REDIS_URL }}
           CELERY_RESULT_BACKEND=${{ secrets.REDIS_URL }}
@@ -256,7 +265,10 @@ jobs:
         run: |
           $env:API_PORT = "${{ vars.API_PORT }}"
           docker compose -p solodesk-backend-production -f compose.deploy.yml pull api worker beat
-          docker compose -p solodesk-backend-production -f compose.deploy.yml up -d api worker beat
+          # --remove-orphans clears containers left by earlier compose files, so a
+          # stale `db` container can't keep holding the postgres data volume.
+          # postgres/redis/migrate start automatically as declared dependencies.
+          docker compose -p solodesk-backend-production -f compose.deploy.yml up -d --remove-orphans api worker beat
 
       - name: Verify API is healthy
         shell: powershell
