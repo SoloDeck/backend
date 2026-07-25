@@ -129,6 +129,12 @@ jobs:
     runs-on: [self-hosted, staging]
     needs: build-image
     environment: staging
+    permissions:
+      contents: read
+      # Without packages:read the job's GITHUB_TOKEN can log in to GHCR but
+      # cannot pull the private images, and `docker compose pull` fails with a
+      # bare "denied".
+      packages: read
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -176,11 +182,27 @@ jobs:
         shell: powershell
         run: |
           $env:API_PORT = "${{ vars.API_PORT }}"
-          docker compose -p solodesk-backend-staging -f compose.deploy.yml pull api worker beat
+          $project = "solodesk-backend-staging"
+
+          # PowerShell does not abort on a failed native command, and only the
+          # LAST exit code reaches Actions. Without these explicit checks a
+          # denied `pull` is followed by `up -d` silently starting whatever
+          # image is already on the host — the deploy then reports success
+          # while serving the previous build.
+          docker compose -p $project -f compose.deploy.yml pull api worker beat
+          if ($LASTEXITCODE -ne 0) {
+            throw "docker compose pull failed (exit $LASTEXITCODE) - aborting rather than deploying a stale image"
+          }
+
           # --remove-orphans clears containers left by earlier compose files, so a
           # stale `db` container can't keep holding the postgres data volume.
           # postgres/redis/migrate start automatically as declared dependencies.
-          docker compose -p solodesk-backend-staging -f compose.deploy.yml up -d --remove-orphans api worker beat
+          docker compose -p $project -f compose.deploy.yml up -d --remove-orphans api worker beat
+          if ($LASTEXITCODE -ne 0) { throw "docker compose up failed (exit $LASTEXITCODE)" }
+
+          # Record what is actually running, so a future image/config skew is
+          # visible in the deploy log instead of only in production behaviour.
+          docker compose -p $project -f compose.deploy.yml images
 
       - name: Verify API is healthy
         shell: powershell
@@ -217,6 +239,11 @@ jobs:
     runs-on: [self-hosted, production]
     needs: deploy-staging
     environment: production
+    permissions:
+      contents: read
+      # See deploy-staging — without this the image pull is denied and the
+      # previous image keeps running.
+      packages: read
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -264,11 +291,22 @@ jobs:
         shell: powershell
         run: |
           $env:API_PORT = "${{ vars.API_PORT }}"
-          docker compose -p solodesk-backend-production -f compose.deploy.yml pull api worker beat
+          $project = "solodesk-backend-production"
+
+          # See deploy-staging: a failed pull must abort the deploy, otherwise
+          # `up -d` quietly restarts the previous image and reports success.
+          docker compose -p $project -f compose.deploy.yml pull api worker beat
+          if ($LASTEXITCODE -ne 0) {
+            throw "docker compose pull failed (exit $LASTEXITCODE) - aborting rather than deploying a stale image"
+          }
+
           # --remove-orphans clears containers left by earlier compose files, so a
           # stale `db` container can't keep holding the postgres data volume.
           # postgres/redis/migrate start automatically as declared dependencies.
-          docker compose -p solodesk-backend-production -f compose.deploy.yml up -d --remove-orphans api worker beat
+          docker compose -p $project -f compose.deploy.yml up -d --remove-orphans api worker beat
+          if ($LASTEXITCODE -ne 0) { throw "docker compose up failed (exit $LASTEXITCODE)" }
+
+          docker compose -p $project -f compose.deploy.yml images
 
       - name: Verify API is healthy
         shell: powershell
