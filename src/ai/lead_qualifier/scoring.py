@@ -368,6 +368,7 @@ def normalize_price_range(low: Any, high: Any) -> tuple[int, int]:
     Giá trị 1.000–500.000 thì đáng ngờ nhưng không đoán được ý model, nên trả 0: **thà
     không hiện gì còn hơn hiện một con số sai** rồi freelancer báo giá theo.  #Huynh
     """
+
     def _one(value: Any) -> int:
         try:
             number = float(value or 0)

@@ -133,9 +133,7 @@ class LeadQualifier(BaseAIChain):
         # ("Qualify the following lead as JSON...") và hệ thống VẪN CHẤM ĐIỂM — sai bét mà
         # không ai biết. Thà nổ to còn hơn âm thầm chấm sai.  #Huynh
         prompt_template = load_prompt("lead_qualifier")
-        full_prompt = build_qualifier_prompt(
-            prompt_template, inquiry_text, profession, scam_hint
-        )
+        full_prompt = build_qualifier_prompt(prompt_template, inquiry_text, profession, scam_hint)
 
         try:
             raw_response = await asyncio.to_thread(

@@ -36,9 +36,7 @@ def load_prompt(module: str) -> str:
     """
     path = AI_ROOT / module / "prompts" / "system.txt"
     if not path.is_file():
-        raise FileNotFoundError(
-            f"Thiếu prompt cho module AI '{module}'. Phải có file: {path}"
-        )
+        raise FileNotFoundError(f"Thiếu prompt cho module AI '{module}'. Phải có file: {path}")
 
     content = path.read_text(encoding="utf-8").strip()
     if not content:

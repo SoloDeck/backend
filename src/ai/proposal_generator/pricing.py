@@ -362,8 +362,7 @@ def compute_quote(
         c_factor = Decimal("1.0")
         s_factor = Decimal("1.0")
         note = (
-            " (không nhân thêm: giá thị trường AI ước đã tính tới yếu tố này của chính dự "
-            "án này)"
+            " (không nhân thêm: giá thị trường AI ước đã tính tới yếu tố này của chính dự án này)"
         )
         complexity_reason = (complexity_reason or "").strip() + note
         scale_reason = (scale_reason or "").strip() + note
