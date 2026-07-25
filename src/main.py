@@ -1,5 +1,6 @@
 """SoloDesk API — application entry point."""
 
+import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -8,11 +9,13 @@ import structlog
 import yaml
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from sqlalchemy import text
 
 from src.ai.lead_qualifier.api.router import router as lead_qualifier_router
 from src.config.settings import settings
 from src.infrastructure.database.session import engine
-from src.infrastructure.redis.client import close_redis_pool
+from src.infrastructure.redis.client import close_redis_pool, get_redis
 from src.modules.admin.api.router import router as admin_router
 from src.modules.ai_jobs.api.router import router as ai_jobs_router
 from src.modules.analytics.api.router import router as analytics_router
@@ -45,6 +48,10 @@ from src.shared.logging import (
 
 setup_logging()
 log = structlog.get_logger()
+
+# Cap each readiness probe so a hung dependency can't hold the healthcheck open
+# past the container healthcheck's own timeout.
+_READINESS_TIMEOUT_SECONDS = 3.0
 
 
 @asynccontextmanager
@@ -160,4 +167,56 @@ async def api_v1_root() -> dict:
 # ---------------------------------------------------------------------------
 @app.get("/health", tags=["Health"], include_in_schema=False)
 async def health_check() -> dict:
+    """Liveness — the process is up. Deliberately touches no dependency."""
     return {"status": "ok", "environment": settings.app_env}
+
+
+async def _probe_database() -> None:
+    async with asyncio.timeout(_READINESS_TIMEOUT_SECONDS):
+        async with engine.connect() as conn:
+            await conn.execute(text("SELECT 1"))
+
+
+async def _probe_redis() -> None:
+    async with asyncio.timeout(_READINESS_TIMEOUT_SECONDS):
+        redis = await get_redis()
+        await redis.ping()
+
+
+@app.get("/health/ready", tags=["Health"], include_in_schema=False)
+async def readiness_check() -> JSONResponse:
+    """Readiness — every dependency the API needs to serve a real request.
+
+    The container healthcheck probes this, not ``/health``: a liveness-only
+    probe reports "healthy" while Postgres is unreachable and every business
+    endpoint returns 500, which is exactly how a broken deploy stays invisible.
+    """
+    # Probed concurrently, not in sequence: two dependencies hanging one after
+    # the other would push the response past the container healthcheck's own
+    # timeout, turning a clean 503 into an aborted request. Concurrent probes
+    # keep the worst case at _READINESS_TIMEOUT_SECONDS regardless of how many
+    # dependencies are added here later.
+    names = ("database", "redis")
+    results = await asyncio.gather(
+        _probe_database(), _probe_redis(), return_exceptions=True
+    )
+
+    checks: dict[str, str] = {}
+    for name, result in zip(names, results, strict=True):
+        if isinstance(result, BaseException):
+            checks[name] = f"fail: {type(result).__name__}"
+            log.warning(
+                "health.dependency_unavailable", dependency=name, error=str(result)[:200]
+            )
+        else:
+            checks[name] = "ok"
+
+    ready = all(status == "ok" for status in checks.values())
+    return JSONResponse(
+        status_code=200 if ready else 503,
+        content={
+            "status": "ready" if ready else "not_ready",
+            "environment": settings.app_env,
+            "checks": checks,
+        },
+    )
