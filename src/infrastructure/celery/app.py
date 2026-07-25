@@ -11,6 +11,7 @@ celery_app = Celery(
         "src.workers.ai_jobs.tasks",
         "src.workers.pdf_jobs.tasks",
         "src.workers.reminder_jobs.tasks",
+        "src.workers.subscription_jobs.tasks",
     ],
 )
 
@@ -46,8 +47,15 @@ celery_app.conf.update(
             "task": "src.workers.reminder_jobs.tasks.refresh_analytics_snapshots",
             "schedule": 86400.0,  # nightly
         },
+        # Hạ gói đã hết kỳ, mỗi giờ một lần. Chỉ hạ gói, không gửi email.
+        "expire-lapsed-subscriptions": {
+            "task": "src.workers.subscription_jobs.tasks.expire_lapsed_subscriptions",
+            "schedule": 3600.0,  # every hour
+        },
         # Báo trước gói sắp hết kỳ + tự hạ về Free khi đã hết kỳ. Mỗi ngày một lần lúc 2h
         # sáng (giờ VN) — chạy SAU các job nhắc lúc 1h để không giành tài nguyên rạng sáng.
+        # Phần hạ gói trùng với `expire-lapsed-subscriptions` ở trên nhưng idempotent:
+        # job nào chạy trước thì job kia không còn gì để hạ.  #Huynh
         "run-subscription-maintenance": {
             "task": "src.workers.reminder_jobs.tasks.run_subscription_maintenance",
             "schedule": crontab(hour=2, minute=0),

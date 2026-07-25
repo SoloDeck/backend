@@ -4,10 +4,17 @@ from dataclasses import dataclass
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.modules.intake_form.infrastructure.repository import IntakeFormRepository
+from src.modules.intake_form.professions import (
+    PROFESSIONS,
+    PROFESSIONS_BY_VALUE,
+    required_field_keys,
+)
 from src.modules.intake_form.schemas.request import IntakeFormUpdateRequest
 from src.modules.intake_form.schemas.response import (
     IntakeFormFieldResponse,
     IntakeFormResponse,
+    ProfessionFieldOptionResponse,
+    ProfessionOptionResponse,
     PublicIntakeFormConfigResponse,
     PublicIntakeFormFieldResponse,
 )
@@ -82,6 +89,17 @@ _DEFAULT_FIELDS = [
 
 def _default_field_responses() -> list[IntakeFormFieldResponse]:
     return [IntakeFormFieldResponse(id=uuid.uuid4(), **f) for f in _DEFAULT_FIELDS]
+
+
+def _profession_options() -> list[ProfessionOptionResponse]:
+    return [
+        ProfessionOptionResponse(
+            value=p["value"],
+            label=p["label"],
+            fields=[ProfessionFieldOptionResponse(**f) for f in p["fields"]],
+        )
+        for p in PROFESSIONS
+    ]
 
 
 @dataclass
@@ -170,6 +188,7 @@ class IntakeFormService:
                 description=None,
                 freelancer_name=freelancer_name,
                 fields=fields,
+                professions=_profession_options(),
             )
 
         db_fields = await self.repo.get_visible_fields(config.id)
@@ -187,6 +206,7 @@ class IntakeFormService:
                 )
                 for f in db_fields
             ],
+            professions=_profession_options(),
         )
 
     async def validate_submission(self, share_token: str, payload) -> None:
@@ -214,3 +234,18 @@ class IntakeFormService:
         missing = [k for k in required_keys if not payload_values.get(k)]
         if missing:
             raise ValidationError(f"Required fields missing: {', '.join(sorted(missing))}")
+
+        profession = getattr(payload, "profession", None)
+        if profession is not None:
+            if profession not in PROFESSIONS_BY_VALUE:
+                raise ValidationError(f"Unsupported profession: {profession}")
+
+            profession_fields = getattr(payload, "profession_fields", None) or {}
+            missing_profession_fields = [
+                key for key in required_field_keys(profession) if not profession_fields.get(key)
+            ]
+            if missing_profession_fields:
+                raise ValidationError(
+                    f"Missing profession fields for {profession}: "
+                    f"{', '.join(sorted(missing_profession_fields))}"
+                )

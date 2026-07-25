@@ -222,7 +222,7 @@ All services are orchestrated with Docker Compose. The stack includes:
 |---|---|---|
 | `migrate` | — | One-shot: applies migrations + seeds data, then exits |
 | `api` | 8000 | FastAPI application with hot-reload |
-| `db` | 5432 | PostgreSQL 16 |
+| `postgres` | 5432 | PostgreSQL 16 |
 | `redis` | 6379 | Redis 7 |
 | `worker` | — | Celery worker (4 concurrent) |
 | `beat` | — | Celery beat scheduler |
@@ -248,7 +248,7 @@ make down
 When you run `make up` (`docker compose up --build -d`), Docker Compose starts services
 in dependency order:
 
-1. `db` becomes healthy
+1. `postgres` becomes healthy
 2. `migrate` runs `alembic upgrade head` then seeds default data, then **exits 0**
 3. `api` and `worker` start only after `migrate` completes successfully
 
@@ -262,7 +262,7 @@ Start only the database and pgAdmin, initialise the schema, then bring up the re
 
 ```bash
 # 1. Start only DB and pgAdmin
-docker compose up -d db pgadmin
+docker compose up -d postgres pgadmin
 
 # 2. Apply migrations and seed (idempotent)
 make db-init
@@ -272,13 +272,13 @@ docker compose up -d
 ```
 
 `make db-init` runs `python scripts/bootstrap.py` inside a short-lived container
-connected to the running `db` service.
+connected to the running `postgres` service.
 
 ### Running without Docker
 
 | Step | `pip3 + venv` / Makefile | `uv` | Requires / Notes |
 |---|---|---|---|
-| Start only infrastructure | `docker compose up -d db redis` | `docker compose up -d db redis` | Docker is still used for PostgreSQL and Redis. |
+| Start only infrastructure | `docker compose up -d postgres redis` | `docker compose up -d postgres redis` | Docker is still used for PostgreSQL and Redis. |
 | Apply migrations locally | `make migrate` | `uv run alembic upgrade head` | Requires `DATABASE_URL` in `.env` or environment. |
 | Seed default data | `make seed` | `uv run python scripts/seed.py` | Run after migrations. |
 | Run API locally with hot-reload | `make dev` | `uv run uvicorn src.main:app --reload --host 0.0.0.0 --port 8000` | Requires dependencies installed and `.env` configured. |
@@ -306,7 +306,7 @@ during build/test installation.
 
 > **Why pgAdmin may show no tables:** pgAdmin connects to PostgreSQL but cannot create
 > tables itself. Tables are created by running Alembic migrations. If you start only
-> `docker compose up -d db pgadmin`, the database is empty until you run migrations.
+> `docker compose up -d postgres pgadmin`, the database is empty until you run migrations.
 
 ### What gets seeded
 
@@ -331,7 +331,7 @@ Click **Add New Server** and fill in the **Connection** tab:
 | Field | Value |
 |---|---|
 | Name | `SoloDesk Local` |
-| Host name/address | `db` ← Docker service name, **not** `localhost` |
+| Host name/address | `postgres` ← Docker service name, **not** `localhost` |
 | Port | `5432` |
 | Maintenance database | `solodesk` |
 | Username | `solodesk` |
@@ -344,7 +344,7 @@ Servers > SoloDesk Local > Databases > solodesk > Schemas > public > Tables
 ```
 
 > **Host note:** pgAdmin runs inside Docker and reaches PostgreSQL via the internal
-> Docker network using the service name `db`. External tools (TablePlus, DBeaver,
+> Docker network using the service name `postgres`. External tools (TablePlus, DBeaver,
 > local `psql`) connect via `localhost:5432`.
 
 ### Expected result after init
@@ -373,7 +373,7 @@ SoloDesk uses [Alembic](https://alembic.sqlalchemy.org/) with an async PostgreSQ
 # Apply all pending migrations (local)
 make migrate
 
-# Apply migrations via Docker against the running db service
+# Apply migrations via Docker against the running postgres service
 make migrate-docker
 
 # Create a new auto-generated migration
@@ -434,7 +434,7 @@ Integration tests require PostgreSQL. Start the database first and make sure
 `TEST_DATABASE_URL` points at the test database if you are not using the default:
 
 ```bash
-docker compose up -d db
+docker compose up -d postgres
 export TEST_DATABASE_URL="postgresql+asyncpg://solodesk:solodesk@localhost:5432/solodesk_test"
 ```
 

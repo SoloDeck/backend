@@ -124,9 +124,15 @@ jobs:
   # -------------------------------------------------------------------------
   deploy-staging:
     name: Deploy / Staging
-    runs-on: [self-hosted]
+    runs-on: [self-hosted, staging]
     needs: build-image
     environment: staging
+    permissions:
+      contents: read
+      # Without packages:read the job's GITHUB_TOKEN can log in to GHCR but
+      # cannot pull the private images, and `docker compose pull` fails with a
+      # bare "denied".
+      packages: read
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -149,6 +155,9 @@ jobs:
           @"
           APP_ENV=staging
           DATABASE_URL=${{ secrets.DATABASE_URL }}
+          POSTGRES_USER=${{ vars.POSTGRES_USER }}
+          POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}
+          POSTGRES_DB=${{ vars.POSTGRES_DB }}
           REDIS_URL=${{ secrets.REDIS_URL }}
           CELERY_BROKER_URL=${{ secrets.REDIS_URL }}
           CELERY_RESULT_BACKEND=${{ secrets.REDIS_URL }}
@@ -170,11 +179,53 @@ jobs:
       - name: Pull & deploy
         shell: powershell
         run: |
-          $repoLower = "${{ github.repository }}".ToLower()
-          $env:IMAGE_NAME = "ghcr.io/$repoLower/solodesk-backend"
           $env:API_PORT = "${{ vars.API_PORT }}"
-          docker compose -p solodesk-backend-staging pull api worker beat
-          docker compose -p solodesk-backend-staging up -d api worker beat
+          $project = "solodesk-backend-staging"
+
+          # PowerShell does not abort on a failed native command, and only the
+          # LAST exit code reaches Actions. Without these explicit checks a
+          # denied `pull` is followed by `up -d` silently starting whatever
+          # image is already on the host — the deploy then reports success
+          # while serving the previous build.
+          docker compose -p $project -f compose.deploy.yml pull api worker beat
+          if ($LASTEXITCODE -ne 0) {
+            throw "docker compose pull failed (exit $LASTEXITCODE) - aborting rather than deploying a stale image"
+          }
+
+          # --remove-orphans clears containers left by earlier compose files, so a
+          # stale `db` container can't keep holding the postgres data volume.
+          # postgres/redis/migrate start automatically as declared dependencies.
+          docker compose -p $project -f compose.deploy.yml up -d --remove-orphans api worker beat
+          if ($LASTEXITCODE -ne 0) { throw "docker compose up failed (exit $LASTEXITCODE)" }
+
+          # Record what is actually running, so a future image/config skew is
+          # visible in the deploy log instead of only in production behaviour.
+          docker compose -p $project -f compose.deploy.yml images
+
+      - name: Verify API is healthy
+        shell: powershell
+        run: |
+          $cid = (docker compose -p solodesk-backend-staging -f compose.deploy.yml ps -q api | Select-Object -First 1)
+          if (-not $cid) {
+            Write-Host "::error::api container not found after deploy"
+            exit 1
+          }
+          $cid = $cid.Trim()
+          $healthy = $false
+          $status = "unknown"
+          foreach ($i in 1..36) {         # 36 x 5s = up to 3 minutes
+            $status = (docker inspect -f '{{.State.Health.Status}}' $cid).Trim()
+            Write-Host "[$i] api health: $status"
+            if ($status -eq 'healthy')   { $healthy = $true; break }
+            if ($status -eq 'unhealthy') { break }
+            Start-Sleep -Seconds 5
+          }
+          if (-not $healthy) {
+            Write-Host "::error::API did not become healthy within 3 minutes (last status: $status)"
+            docker logs --tail 120 $cid
+            exit 1
+          }
+          Write-Host "API is healthy."
 
       - name: Remove .env
         if: always()
@@ -183,9 +234,14 @@ jobs:
 
   deploy-production:
     name: Deploy / Production
-    runs-on: [self-hosted]
+    runs-on: [self-hosted, production]
     needs: deploy-staging
     environment: production
+    permissions:
+      contents: read
+      # See deploy-staging — without this the image pull is denied and the
+      # previous image keeps running.
+      packages: read
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -208,6 +264,9 @@ jobs:
           @"
           APP_ENV=production
           DATABASE_URL=${{ secrets.DATABASE_URL }}
+          POSTGRES_USER=${{ vars.POSTGRES_USER }}
+          POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}
+          POSTGRES_DB=${{ vars.POSTGRES_DB }}
           REDIS_URL=${{ secrets.REDIS_URL }}
           CELERY_BROKER_URL=${{ secrets.REDIS_URL }}
           CELERY_RESULT_BACKEND=${{ secrets.REDIS_URL }}
@@ -229,11 +288,48 @@ jobs:
       - name: Pull & deploy
         shell: powershell
         run: |
-          $repoLower = "${{ github.repository }}".ToLower()
-          $env:IMAGE_NAME = "ghcr.io/$repoLower/solodesk-backend"
           $env:API_PORT = "${{ vars.API_PORT }}"
-          docker compose -p solodesk-backend-production pull api worker beat
-          docker compose -p solodesk-backend-production up -d api worker beat
+          $project = "solodesk-backend-production"
+
+          # See deploy-staging: a failed pull must abort the deploy, otherwise
+          # `up -d` quietly restarts the previous image and reports success.
+          docker compose -p $project -f compose.deploy.yml pull api worker beat
+          if ($LASTEXITCODE -ne 0) {
+            throw "docker compose pull failed (exit $LASTEXITCODE) - aborting rather than deploying a stale image"
+          }
+
+          # --remove-orphans clears containers left by earlier compose files, so a
+          # stale `db` container can't keep holding the postgres data volume.
+          # postgres/redis/migrate start automatically as declared dependencies.
+          docker compose -p $project -f compose.deploy.yml up -d --remove-orphans api worker beat
+          if ($LASTEXITCODE -ne 0) { throw "docker compose up failed (exit $LASTEXITCODE)" }
+
+          docker compose -p $project -f compose.deploy.yml images
+
+      - name: Verify API is healthy
+        shell: powershell
+        run: |
+          $cid = (docker compose -p solodesk-backend-production -f compose.deploy.yml ps -q api | Select-Object -First 1)
+          if (-not $cid) {
+            Write-Host "::error::api container not found after deploy"
+            exit 1
+          }
+          $cid = $cid.Trim()
+          $healthy = $false
+          $status = "unknown"
+          foreach ($i in 1..36) {         # 36 x 5s = up to 3 minutes
+            $status = (docker inspect -f '{{.State.Health.Status}}' $cid).Trim()
+            Write-Host "[$i] api health: $status"
+            if ($status -eq 'healthy')   { $healthy = $true; break }
+            if ($status -eq 'unhealthy') { break }
+            Start-Sleep -Seconds 5
+          }
+          if (-not $healthy) {
+            Write-Host "::error::API did not become healthy within 3 minutes (last status: $status)"
+            docker logs --tail 120 $cid
+            exit 1
+          }
+          Write-Host "API is healthy."
 
       - name: Remove .env
         if: always()

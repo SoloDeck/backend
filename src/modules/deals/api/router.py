@@ -21,6 +21,7 @@ from src.modules.deals.schemas.response import (
 )
 from src.shared.dependencies.ai import AIFacadeDep
 from src.shared.dependencies.auth import CurrentUserId
+from src.shared.dependencies.storage import StorageDep
 from src.shared.responses.response import ApiResponse, PaginatedResponse
 
 router = APIRouter()
@@ -141,6 +142,29 @@ async def list_deal_qualifications(
     """
     rows = await DealsService(db=db).list_qualifications(user_id, deal_id)
     return ApiResponse.ok([LeadScoreHistoryResponse.model_validate(r) for r in rows])
+
+
+@router.post(
+    "/{deal_id}/document",
+    response_model=ApiResponse[DealResponse],
+    summary="Upload a PDF document to a deal",
+)
+async def upload_document(
+    deal_id: uuid.UUID,
+    user_id: CurrentUserId,
+    db: DBSession,
+    storage: StorageDep,
+    file: Annotated[UploadFile, File()],
+) -> ApiResponse[DealResponse]:
+    content = await file.read()
+    deal = await DealsService(db=db, storage=storage).upload_document(
+        user_id,
+        deal_id,
+        filename=file.filename or "document.pdf",
+        content=content,
+        content_type=file.content_type or "",
+    )
+    return ApiResponse.ok(DealResponse.model_validate(deal))
 
 
 @router.post("/{deal_id}/qualify")

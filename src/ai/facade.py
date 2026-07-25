@@ -46,6 +46,7 @@ class AIFacade:
         inquiry_text: str,
         user_can_use_ai: bool,
         profession: str | None = None,
+        profession_slug: str | None = None,
         scam_hint: str | None = None,
     ) -> dict[str, Any]:
         self._check_entitlement(user_can_use_ai)
@@ -53,6 +54,7 @@ class AIFacade:
         return await self.lead_qualifier.run(
             inquiry_text=inquiry_text,
             profession=profession,
+            profession_slug=profession_slug,
             scam_hint=scam_hint,
         )
 

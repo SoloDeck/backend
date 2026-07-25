@@ -1,30 +1,54 @@
 # ===========================================================================
 # SoloDesk — Local development stack
 # ===========================================================================
+# This file is for LOCAL DEVELOPMENT ONLY. Deploys use `-f compose.deploy.yml`
+# and never read this file.
+#
+# Networking: no `networks:` block anywhere. Every service lands on the
+# project's implicit `default` network (`<project>_default`), so this stack is
+# isolated from the staging/production stacks on the same host. Do NOT add a
+# network with a hardcoded `name:` — that removes the project prefix, puts
+# unrelated stacks on one bridge, and is what previously left `api` unable to
+# resolve `postgres`.
+#
+# Host ports: only the developer-facing UIs are published, and all of them bind
+# to 127.0.0.1 so nothing is reachable from outside this machine. Datastores
+# (postgres, redis) publish nothing — reach them with
+# `docker compose exec postgres psql -U solodesk` or add a temporary mapping.
+#
+# Configuration: every service reads `.env` when present. The `environment:`
+# blocks below only supply defaults via `${VAR:-fallback}`, so a value set in
+# `.env` applies to *all* services uniformly. Never hardcode a bare value
+# there — it silently overrides `.env` for that one service.
+# ===========================================================================
+
+# Cap container logs so the shared host can't be filled by a dev stack.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
 
 services:
 
   # -------------------------------------------------------------------------
   # PostgreSQL
   # -------------------------------------------------------------------------
-  db:
+  postgres:
     image: postgres:16-alpine
     restart: always
     environment:
-      POSTGRES_USER: solodesk
-      POSTGRES_PASSWORD: solodesk
-      POSTGRES_DB: solodesk
-    ports:
-      - "5432:5432"
+      POSTGRES_USER: ${POSTGRES_USER:-solodesk}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-solodesk}
+      POSTGRES_DB: ${POSTGRES_DB:-solodesk}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U solodesk"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-solodesk}"]
       interval: 5s
       timeout: 5s
       retries: 10
-    networks:
-      - solodesk-network
+    logging: *default-logging
 
   # -------------------------------------------------------------------------
   # Redis
@@ -41,12 +65,14 @@ services:
     image: minio/minio:latest
     restart: always
     command: server /data --console-address ":9001"
+    # Trùng STORAGE_ACCESS_KEY/STORAGE_SECRET_KEY trong .env.example — đổi ở đây mà quên
+    # đổi bên đó là mọi lần upload trả về 403.  #Huynh
     environment:
       MINIO_ROOT_USER: solodesk
       MINIO_ROOT_PASSWORD: solodesk123
     ports:
-      - "9000:9000"   # API S3
-      - "9001:9001"   # Giao diện quản trị
+      - "127.0.0.1:9000:9000"   # API S3
+      - "127.0.0.1:9001:9001"   # Giao diện quản trị
     volumes:
       - minio_data:/data
     healthcheck:
@@ -54,21 +80,17 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
-    networks:
-      - solodesk-network
+    logging: *default-logging
 
   redis:
     image: redis:7-alpine
     restart: always
-    ports:
-      - "6379:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
       timeout: 3s
       retries: 10
-    networks:
-      - solodesk-network
+    logging: *default-logging
 
   # -------------------------------------------------------------------------
   # Migrate + seed (one-shot).
@@ -82,18 +104,17 @@ services:
       target: runtime
     restart: "no"
     environment:
-      DATABASE_URL: postgresql+asyncpg://solodesk:solodesk@db:5432/solodesk
-      APP_ENV: development
+      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://solodesk:solodesk@postgres:5432/solodesk}
+      APP_ENV: ${APP_ENV:-development}
     depends_on:
-      db:
+      postgres:
         condition: service_healthy
     volumes:
       - ./src:/app/src
       - ./alembic:/app/alembic
       - ./scripts:/app/scripts
     command: python scripts/bootstrap.py
-    networks:
-      - solodesk-network
+    logging: *default-logging
 
   # -------------------------------------------------------------------------
   # FastAPI app
@@ -108,15 +129,15 @@ services:
       - path: .env
         required: false
     environment:
-      DATABASE_URL: postgresql+asyncpg://solodesk:solodesk@db:5432/solodesk
-      REDIS_URL: redis://redis:6379/0
-      CELERY_BROKER_URL: redis://redis:6379/1
-      CELERY_RESULT_BACKEND: redis://redis:6379/2
+      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://solodesk:solodesk@postgres:5432/solodesk}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      CELERY_BROKER_URL: ${CELERY_BROKER_URL:-redis://redis:6379/1}
+      CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND:-redis://redis:6379/2}
       PORT: 8000
     ports:
-      - "${API_PORT:-8001}:8000"
+      - "127.0.0.1:${API_PORT:-8001}:8000"
     depends_on:
-      db:
+      postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
@@ -132,8 +153,7 @@ services:
         --host 0.0.0.0
         --port 8000
         --reload
-    networks:
-      - solodesk-network
+    logging: *default-logging
 
   # -------------------------------------------------------------------------
   # Celery worker
@@ -148,12 +168,12 @@ services:
       - path: .env
         required: false
     environment:
-      DATABASE_URL: postgresql+asyncpg://solodesk:solodesk@db:5432/solodesk
-      REDIS_URL: redis://redis:6379/0
-      CELERY_BROKER_URL: redis://redis:6379/1
-      CELERY_RESULT_BACKEND: redis://redis:6379/2
+      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://solodesk:solodesk@postgres:5432/solodesk}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      CELERY_BROKER_URL: ${CELERY_BROKER_URL:-redis://redis:6379/1}
+      CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND:-redis://redis:6379/2}
     depends_on:
-      db:
+      postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
@@ -162,8 +182,7 @@ services:
     volumes:
       - ./src:/app/src
       - ./contracts:/app/contracts:ro
-    networks:
-      - solodesk-network
+    logging: *default-logging
 
   # -------------------------------------------------------------------------
   # Celery beat (scheduler)
@@ -178,32 +197,37 @@ services:
       - path: .env
         required: false
     environment:
-      DATABASE_URL: postgresql+asyncpg://solodesk:solodesk@db:5432/solodesk
-      CELERY_BROKER_URL: redis://redis:6379/1
-      CELERY_RESULT_BACKEND: redis://redis:6379/2
+      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://solodesk:solodesk@postgres:5432/solodesk}
+      CELERY_BROKER_URL: ${CELERY_BROKER_URL:-redis://redis:6379/1}
+      CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND:-redis://redis:6379/2}
     depends_on:
-      - redis
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     volumes:
       - ./src:/app/src
       - ./contracts:/app/contracts:ro
-    networks:
-      - solodesk-network
+    logging: *default-logging
 
   # -------------------------------------------------------------------------
-  # Mailpit — local SMTP / email UI
+  # Mailpit — local SMTP / email UI (http://127.0.0.1:8025)
   # -------------------------------------------------------------------------
   mailpit:
     image: axllent/mailpit:latest
     restart: always
     ports:
-      - "1025:1025"   # SMTP
-      - "8025:8025"   # Web UI
-    networks:
-      - solodesk-network
+      - "127.0.0.1:1025:1025"   # SMTP
+      - "127.0.0.1:8025:8025"   # Web UI
+    logging: *default-logging
 
   # -------------------------------------------------------------------------
   # Test runner — uses dev image (includes pytest, httpx, etc.)
   # Usage: docker compose run --rm test
+  #
+  # The test DSNs are hardcoded on purpose — unlike every other service they
+  # must NOT follow `.env`. A stray DATABASE_URL pointing at the dev database
+  # would let the suite truncate real local data.
   # -------------------------------------------------------------------------
   test:
     build:
@@ -211,13 +235,13 @@ services:
       target: test
     restart: "no"
     environment:
-      DATABASE_URL: postgresql+asyncpg://solodesk:solodesk@db:5432/solodesk_test
-      TEST_DATABASE_URL: postgresql+asyncpg://solodesk:solodesk@db:5432/solodesk_test
+      DATABASE_URL: postgresql+asyncpg://solodesk:solodesk@postgres:5432/solodesk_test
+      TEST_DATABASE_URL: postgresql+asyncpg://solodesk:solodesk@postgres:5432/solodesk_test
       APP_ENV: development
       SECRET_KEY: test-secret-key-not-for-production
       JWT_SECRET_KEY: test-jwt-secret-key-not-for-production
     depends_on:
-      db:
+      postgres:
         condition: service_healthy
     volumes:
       - ./src:/app/src
@@ -227,13 +251,12 @@ services:
       - ./contracts:/app/contracts:ro
       - ./pyproject.toml:/app/pyproject.toml:ro
     command: python -m pytest tests/ -v
-    networks:
-      - solodesk-network
+    logging: *default-logging
 
   # -------------------------------------------------------------------------
   # pgAdmin — local PostgreSQL web UI
-  # http://localhost:5050  login: admin@solodesk.dev / admin
-  # Add server: host=db, port=5432, db=solodesk, user/pass=solodesk
+  # http://127.0.0.1:5050  login: admin@solodesk.dev / admin
+  # Add server: host=postgres, port=5432, db=solodesk, user/pass=solodesk
   # -------------------------------------------------------------------------
   pgadmin:
     image: dpage/pgadmin4:latest
@@ -242,20 +265,13 @@ services:
       PGADMIN_DEFAULT_EMAIL: admin@solodesk.dev
       PGADMIN_DEFAULT_PASSWORD: admin
     ports:
-      - "5050:80"
+      - "127.0.0.1:5050:80"
     depends_on:
-      db:
+      postgres:
         condition: service_healthy
-    networks:
-      - solodesk-network
+    logging: *default-logging
 
 
 volumes:
   postgres_data:
   minio_data:
-
-
-networks:
-  solodesk-network:
-    name: solodesk-network
-    driver: bridge

@@ -353,3 +353,113 @@ async def test_submit_succeeds_with_all_required_fields_present(client: AsyncCli
             json={"name": "Dave", "inquiry_text": "Need a logo"},
         )
     assert resp.status_code == 201
+
+
+# ---------------------------------------------------------------------------
+# Profession selector + per-profession qualification fields
+# ---------------------------------------------------------------------------
+
+_SOFTWARE_DEV_FIELDS = {
+    "project_type": "E-commerce",
+    "business_goal": "Sell handmade jewelry online",
+    "target_users": "Customers",
+    "platforms_needed": "Web",
+    "core_features": "Payments, Search",
+}
+
+
+async def test_public_config_lists_all_six_professions(client: AsyncClient):
+    headers, _ = await _auth(client)
+    token = await _get_share_token(client, headers)
+    resp = await client.get(f"/api/v1/intake/{token}/config")
+    assert resp.status_code == 200
+    professions = resp.json()["data"]["professions"]
+    values = {p["value"] for p in professions}
+    assert values == {
+        "software-developer",
+        "ui-ux-design",
+        "graphic-design",
+        "digital-marketing-consulting",
+        "content-writer",
+        "photography&videography",
+    }
+
+
+async def test_public_config_software_developer_has_five_fields(client: AsyncClient):
+    headers, _ = await _auth(client)
+    token = await _get_share_token(client, headers)
+    resp = await client.get(f"/api/v1/intake/{token}/config")
+    professions = {p["value"]: p for p in resp.json()["data"]["professions"]}
+    fields = professions["software-developer"]["fields"]
+    assert len(fields) == 5
+    assert {f["field_key"] for f in fields} == set(_SOFTWARE_DEV_FIELDS)
+    assert all(f["is_required"] for f in fields)
+
+
+async def test_submit_with_unsupported_profession_returns_422(client: AsyncClient):
+    headers, _ = await _auth(client)
+    token = await _get_share_token(client, headers)
+    resp = await client.post(
+        f"/api/v1/intake/{token}",
+        json={
+            "name": "Eve",
+            "inquiry_text": "Need something",
+            "profession": "underwater-basket-weaving",
+        },
+    )
+    assert resp.status_code == 422
+
+
+async def test_submit_with_profession_missing_required_fields_returns_422(
+    client: AsyncClient,
+) -> None:
+    headers, _ = await _auth(client)
+    token = await _get_share_token(client, headers)
+    resp = await client.post(
+        f"/api/v1/intake/{token}",
+        json={
+            "name": "Frank",
+            "inquiry_text": "Need a website",
+            "profession": "software-developer",
+            "profession_fields": {"project_type": "E-commerce"},
+        },
+    )
+    assert resp.status_code == 422
+
+
+async def test_submit_with_complete_profession_fields_persists_on_deal(
+    client: AsyncClient,
+) -> None:
+    headers, _ = await _auth(client)
+    token = await _get_share_token(client, headers)
+    with patch("src.workers.ai_jobs.tasks.qualify_deal_async_by_id.delay"):
+        resp = await client.post(
+            f"/api/v1/intake/{token}",
+            json={
+                "name": "Grace",
+                "inquiry_text": "Need an online store",
+                "profession": "software-developer",
+                "profession_fields": _SOFTWARE_DEV_FIELDS,
+            },
+        )
+    assert resp.status_code == 201
+
+    deals = await client.get("/api/v1/deals", headers=headers)
+    deal = next(d for d in deals.json()["data"] if "Grace" in d["title"])
+    detail = await client.get(f"/api/v1/deals/{deal['id']}", headers=headers)
+    assert detail.status_code == 200
+    body = detail.json()["data"]
+    assert body["profession"] == "software-developer"
+    assert body["profession_fields"] == _SOFTWARE_DEV_FIELDS
+
+
+async def test_submit_without_profession_still_succeeds(client: AsyncClient) -> None:
+    """Profession selection stays optional — plain submissions keep working."""
+    headers, _ = await _auth(client)
+    token = await _get_share_token(client, headers)
+    with patch("src.workers.ai_jobs.tasks.qualify_deal_async_by_id.delay"):
+        resp = await client.post(
+            f"/api/v1/intake/{token}",
+            json={"name": "Heidi", "inquiry_text": "Need a quote"},
+        )
+    assert resp.status_code == 201

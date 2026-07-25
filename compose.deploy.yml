@@ -1,0 +1,170 @@
+# ===========================================================================
+# SoloDesk — Deploy stack (staging & production)
+# ===========================================================================
+# Production-shaped: image-only, NO bind mounts, NO --reload, NO dev tooling
+# (pgadmin/mailpit/minio/test). The running code comes from the pushed image,
+# not the runner's checkout.
+#
+# Staging and production differ only by the generated .env (secrets, APP_ENV,
+# ports) and the compose project name, so a single file serves both:
+#
+#   docker compose -p solodesk-backend-staging    -f compose.deploy.yml up -d
+#   docker compose -p solodesk-backend-production -f compose.deploy.yml up -d
+#
+# Datastores are declared HERE, not in compose.yml. Every service in this file
+# lands on the project's implicit `default` network, so `postgres` and `redis`
+# resolve from api/worker/beat and each project stays isolated from the others
+# on this shared host. No `networks:` block — naming a shared network is what
+# previously put api and postgres on different bridges.
+#
+# DATABASE_URL / REDIS_URL in .env MUST point at these service names:
+#   DATABASE_URL=postgresql+asyncpg://<user>:<pass>@postgres:5432/<db>
+#   REDIS_URL=redis://redis:6379/0
+# and <user>/<pass>/<db> must match POSTGRES_* below (same .env drives both).
+# ===========================================================================
+
+# Cap container logs so the shared host can't be filled by one noisy stack.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+
+  # -------------------------------------------------------------------------
+  # PostgreSQL — no published ports; reachable only inside the project network.
+  # The volume key stays `postgres_data` so the existing
+  # `<project>_postgres_data` volume (created when this service was named `db`)
+  # is reused as-is — renaming the service does not touch the data.
+  # -------------------------------------------------------------------------
+  postgres:
+    image: postgres:16-alpine
+    restart: always
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-solodesk}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-solodesk}
+      POSTGRES_DB: ${POSTGRES_DB:-solodesk}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-solodesk} -d ${POSTGRES_DB:-solodesk}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    logging: *default-logging
+    networks:
+      default:
+        # Compatibility alias for any .env still using the old `db` hostname.
+        aliases:
+          - db
+
+  # -------------------------------------------------------------------------
+  # Redis — broker + cache. No published ports.
+  # -------------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    restart: always
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+    logging: *default-logging
+    networks:
+      default:
+        aliases:
+          - redis-host
+
+  # -------------------------------------------------------------------------
+  # Migrations (one-shot). Runs `alembic upgrade head` from the same image the
+  # api serves, so schema and code always ship together. api/worker/beat refuse
+  # to start until this exits 0 — a failed migration fails the deploy loudly
+  # instead of leaving new code on an old schema.
+  # -------------------------------------------------------------------------
+  migrate:
+    image: ${REGISTRY:-ghcr.io/solodeck/backend}/solodesk-backend:latest
+    restart: "no"
+    env_file:
+      - path: .env
+        required: true
+    command: ["alembic", "upgrade", "head"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    logging: *default-logging
+
+  # -------------------------------------------------------------------------
+  # FastAPI app
+  # -------------------------------------------------------------------------
+  api:
+    image: ${REGISTRY:-ghcr.io/solodeck/backend}/solodesk-backend:latest
+    restart: always
+    env_file:
+      - path: .env
+        required: true
+    environment:
+      # App listens on 8000 inside the container; host port is API_PORT.
+      PORT: 8000
+    ports:
+      - "${API_PORT:-8000}:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      # /health/ready actually touches Postgres and Redis — a shallow liveness
+      # probe would report "healthy" while every real endpoint returns 500.
+      # No curl/wget in the slim image, so use the bundled interpreter.
+      # urlopen timeout must stay above the app's own readiness budget (3s) and
+      # below the healthcheck `timeout:` below, so a slow dependency yields a
+      # clean 503 instead of an aborted request.
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health/ready', timeout=8).status == 200 else 1)"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      # Grace window covering first-boot model download / load.
+      start_period: 60s
+    logging: *default-logging
+
+  # -------------------------------------------------------------------------
+  # Celery worker
+  # -------------------------------------------------------------------------
+  worker:
+    image: ${REGISTRY:-ghcr.io/solodeck/backend}/solodesk-backend-worker:latest
+    restart: always
+    env_file:
+      - path: .env
+        required: true
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    logging: *default-logging
+
+  # -------------------------------------------------------------------------
+  # Celery beat (scheduler)
+  # -------------------------------------------------------------------------
+  beat:
+    image: ${REGISTRY:-ghcr.io/solodeck/backend}/solodesk-backend-beat:latest
+    restart: always
+    env_file:
+      - path: .env
+        required: true
+    depends_on:
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    logging: *default-logging
+
+
+volumes:
+  postgres_data:

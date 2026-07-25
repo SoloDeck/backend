@@ -6,6 +6,8 @@ from datetime import UTC, datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.infrastructure.database.models import UserModel
+from src.integrations.storage.client import StorageClient
 from src.modules.users.infrastructure.repository import UsersRepository
 from src.modules.users.schemas.request import (
     ChangePasswordRequest,
@@ -14,14 +16,27 @@ from src.modules.users.schemas.request import (
     UpdateProfessionalProfileRequest,
     UpdateUserRequest,
 )
-from src.shared.exceptions.domain import AlreadyExistsError, AuthenticationError, NotFoundError
+from src.shared.exceptions.domain import (
+    AlreadyExistsError,
+    AuthenticationError,
+    NotFoundError,
+    ValidationError,
+)
 from src.shared.security.passwords import hash_password, verify_password
+
+AVATAR_MAX_SIZE_BYTES = 5 * 1024 * 1024  # 5 MB
+AVATAR_EXTENSION_BY_CONTENT_TYPE = {
+    "image/jpeg": "jpg",
+    "image/png": "png",
+    "image/webp": "webp",
+}
 
 
 @dataclass
 class UsersService:
     db: AsyncSession
     repo: UsersRepository | None = None
+    storage: StorageClient | None = None
 
     def __post_init__(self) -> None:
         if self.repo is None:
@@ -102,3 +117,25 @@ class UsersService:
             raise AuthenticationError("Current password is incorrect")
         user.hashed_password = hash_password(payload.new_password)
         await self.repo.save(user)
+
+    async def upload_avatar(
+        self, user_id: uuid.UUID, *, content: bytes, content_type: str
+    ) -> UserModel:
+        if self.storage is None:
+            raise RuntimeError("Storage client not initialized")
+        if content_type not in AVATAR_EXTENSION_BY_CONTENT_TYPE:
+            raise ValidationError(
+                f"Unsupported image type '{content_type}'. Allowed: jpeg, png, webp."
+            )
+        if not content:
+            raise ValidationError("Avatar file is empty")
+        if len(content) > AVATAR_MAX_SIZE_BYTES:
+            raise ValidationError("Avatar image must be 5MB or smaller")
+
+        user = await self.get_me(user_id)
+        ext = AVATAR_EXTENSION_BY_CONTENT_TYPE[content_type]
+        key = f"avatars/{user_id}/{uuid.uuid4().hex}.{ext}"
+        user.avatar_url = await self.storage.upload(
+            key=key, content=content, content_type=content_type
+        )
+        return await self.repo.save(user)

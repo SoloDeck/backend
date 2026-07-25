@@ -33,8 +33,23 @@ class PublicIntakeFormFieldResponse(BaseModel):
     is_required: bool
 
 
+class ProfessionFieldOptionResponse(BaseModel):
+    field_key: str
+    label: str
+    field_type: str
+    options: list[str] | None
+    is_required: bool
+
+
+class ProfessionOptionResponse(BaseModel):
+    value: str
+    label: str
+    fields: list[ProfessionFieldOptionResponse]
+
+
 class PublicIntakeFormConfigResponse(BaseModel):
     title: str
     description: str | None
     freelancer_name: str
     fields: list[PublicIntakeFormFieldResponse]
+    professions: list[ProfessionOptionResponse]

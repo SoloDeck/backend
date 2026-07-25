@@ -4,6 +4,15 @@ import uuid
 
 from httpx import AsyncClient
 
+from src.main import app
+from src.shared.dependencies.storage import get_storage_client
+
+
+class _FakeStorageClient:
+    async def upload(self, *, key: str, content: bytes, content_type: str) -> str:
+        return f"https://cdn.example.com/{key}"
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -264,6 +273,60 @@ class TestDeleteMe:
 # ---------------------------------------------------------------------------
 # POST /users/me/change-password
 # ---------------------------------------------------------------------------
+
+
+class TestUploadAvatar:
+    async def test_uploads_and_returns_avatar_url(self, client: AsyncClient) -> None:
+        headers, _ = await _register(client)
+        app.dependency_overrides[get_storage_client] = lambda: _FakeStorageClient()
+        try:
+            resp = await client.post(
+                "/api/v1/users/me/avatar",
+                files={"file": ("avatar.png", b"fake-png-bytes", "image/png")},
+                headers=headers,
+            )
+        finally:
+            app.dependency_overrides.pop(get_storage_client, None)
+
+        assert resp.status_code == 200, resp.text
+        avatar_url = resp.json()["data"]["avatar_url"]
+        assert avatar_url.startswith("https://cdn.example.com/avatars/")
+
+    async def test_rejects_unsupported_content_type(self, client: AsyncClient) -> None:
+        headers, _ = await _register(client)
+        app.dependency_overrides[get_storage_client] = lambda: _FakeStorageClient()
+        try:
+            resp = await client.post(
+                "/api/v1/users/me/avatar",
+                files={"file": ("resume.pdf", b"%PDF-1.4", "application/pdf")},
+                headers=headers,
+            )
+        finally:
+            app.dependency_overrides.pop(get_storage_client, None)
+
+        assert resp.status_code == 422
+
+    async def test_rejects_oversized_file(self, client: AsyncClient) -> None:
+        headers, _ = await _register(client)
+        app.dependency_overrides[get_storage_client] = lambda: _FakeStorageClient()
+        oversized = b"x" * (5 * 1024 * 1024 + 1)
+        try:
+            resp = await client.post(
+                "/api/v1/users/me/avatar",
+                files={"file": ("avatar.png", oversized, "image/png")},
+                headers=headers,
+            )
+        finally:
+            app.dependency_overrides.pop(get_storage_client, None)
+
+        assert resp.status_code == 422
+
+    async def test_unauthenticated_returns_401(self, client: AsyncClient) -> None:
+        resp = await client.post(
+            "/api/v1/users/me/avatar",
+            files={"file": ("avatar.png", b"fake-png-bytes", "image/png")},
+        )
+        assert resp.status_code == 401
 
 
 class TestChangePassword:

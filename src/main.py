@@ -1,5 +1,6 @@
 """SoloDesk API — application entry point."""
 
+import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -9,13 +10,14 @@ import structlog
 import yaml
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
+from sqlalchemy import text
 
 from src.ai.followup_generator.api.router import router as followup_router
 from src.ai.lead_qualifier.api.router import router as lead_qualifier_router
 from src.config.settings import settings
 from src.infrastructure.database.session import engine
-from src.infrastructure.redis.client import close_redis_pool
+from src.infrastructure.redis.client import close_redis_pool, get_redis
 from src.infrastructure.storage.object_storage import object_storage
 from src.modules.admin.api.router import router as admin_router
 from src.modules.ai_jobs.api.router import router as ai_jobs_router
@@ -33,6 +35,8 @@ from src.modules.intake_form.api.router import router as intake_form_router
 from src.modules.invoices.api.public_router import router as public_invoices_router
 from src.modules.invoices.api.router import router as invoices_router
 from src.modules.notifications.api.router import router as notifications_router
+from src.modules.payments.api.public_router import router as public_payments_router
+from src.modules.payments.api.router import router as payments_router
 from src.modules.projects.api.router import router as projects_router
 from src.modules.proposals.api.router import router as proposals_router
 from src.modules.reminders.api.router import router as reminders_router
@@ -49,6 +53,10 @@ from src.shared.logging import (
 
 setup_logging()
 log = structlog.get_logger()
+
+# Cap each readiness probe so a hung dependency can't hold the healthcheck open
+# past the container healthcheck's own timeout.
+_READINESS_TIMEOUT_SECONDS = 3.0
 
 
 @asynccontextmanager
@@ -141,6 +149,10 @@ app.include_router(proposals_router, prefix=f"{API_V1}/proposals", tags=["Propos
 app.include_router(contracts_router, prefix=f"{API_V1}/contracts", tags=["Contracts"])
 app.include_router(public_invoices_router, prefix=f"{API_V1}/invoices/public", tags=["Public"])
 app.include_router(invoices_router, prefix=f"{API_V1}/invoices", tags=["Invoices"])
+app.include_router(
+    public_payments_router, prefix=f"{API_V1}/payments/webhooks", tags=["Public"]
+)
+app.include_router(payments_router, prefix=f"{API_V1}/payments", tags=["Payments"])
 app.include_router(reminders_router, prefix=f"{API_V1}/reminders", tags=["Reminders"])
 app.include_router(notifications_router, prefix=f"{API_V1}/notifications", tags=["Notifications"])
 app.include_router(projects_router, prefix=f"{API_V1}/projects", tags=["Projects"])
@@ -202,4 +214,56 @@ async def api_v1_root() -> dict[str, str]:
 # ---------------------------------------------------------------------------
 @app.get("/health", tags=["Health"], include_in_schema=False)
 async def health_check() -> dict[str, str]:
+    """Liveness — the process is up. Deliberately touches no dependency."""
     return {"status": "ok", "environment": settings.app_env}
+
+
+async def _probe_database() -> None:
+    async with asyncio.timeout(_READINESS_TIMEOUT_SECONDS):
+        async with engine.connect() as conn:
+            await conn.execute(text("SELECT 1"))
+
+
+async def _probe_redis() -> None:
+    async with asyncio.timeout(_READINESS_TIMEOUT_SECONDS):
+        redis = await get_redis()
+        await redis.ping()
+
+
+@app.get("/health/ready", tags=["Health"], include_in_schema=False)
+async def readiness_check() -> JSONResponse:
+    """Readiness — every dependency the API needs to serve a real request.
+
+    The container healthcheck probes this, not ``/health``: a liveness-only
+    probe reports "healthy" while Postgres is unreachable and every business
+    endpoint returns 500, which is exactly how a broken deploy stays invisible.
+    """
+    # Probed concurrently, not in sequence: two dependencies hanging one after
+    # the other would push the response past the container healthcheck's own
+    # timeout, turning a clean 503 into an aborted request. Concurrent probes
+    # keep the worst case at _READINESS_TIMEOUT_SECONDS regardless of how many
+    # dependencies are added here later.
+    names = ("database", "redis")
+    results = await asyncio.gather(
+        _probe_database(), _probe_redis(), return_exceptions=True
+    )
+
+    checks: dict[str, str] = {}
+    for name, result in zip(names, results, strict=True):
+        if isinstance(result, BaseException):
+            checks[name] = f"fail: {type(result).__name__}"
+            log.warning(
+                "health.dependency_unavailable", dependency=name, error=str(result)[:200]
+            )
+        else:
+            checks[name] = "ok"
+
+    ready = all(status == "ok" for status in checks.values())
+    return JSONResponse(
+        status_code=200 if ready else 503,
+        content={
+            "status": "ready" if ready else "not_ready",
+            "environment": settings.app_env,
+            "checks": checks,
+        },
+    )
