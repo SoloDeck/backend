@@ -34,7 +34,11 @@ from src.modules.notifications.application.service import (
     TYPE_REMINDER_DRAFTED,
     NotificationService,
 )
-from src.modules.reminders.domain.value_objects.reminder_rules import RuleType
+from src.modules.reminders.domain.value_objects.reminder_rules import (
+    RuleType,
+    effective_template,
+    render_reminder_template,
+)
 
 log = structlog.get_logger(__name__)
 
@@ -126,12 +130,10 @@ class AutoReminderScheduler:
                     target_id=proposal.deal_id,
                     rule=rule,
                     client_name=client_name,
-                    message=(
-                        f"Chào anh/chị {client_name},\n\n"
-                        f'Em có gửi báo giá cho dự án "{deal_title}" ít hôm trước. '
-                        "Không biết anh/chị đã có dịp xem qua chưa ạ?\n\n"
-                        "Nếu có chỗ nào cần điều chỉnh, anh/chị cứ trao đổi với em nhé.\n\n"
-                        "Em cảm ơn anh/chị."
+                    message=self._render(
+                        RuleType.PROPOSAL_FOLLOW_UP,
+                        rule,
+                        {"client_name": client_name, "deal_title": deal_title},
                     ),
                 )
             )
@@ -161,12 +163,10 @@ class AutoReminderScheduler:
                     target_id=contract.id,
                     rule=rule,
                     client_name=client_name,
-                    message=(
-                        f"Chào anh/chị {client_name},\n\n"
-                        f'Hợp đồng dự án "{deal_title}" vẫn đang chờ chữ ký của anh/chị. '
-                        "Anh/chị xem và ký giúp em khi thuận tiện để bên em bắt đầu triển "
-                        "khai ạ.\n\n"
-                        "Em cảm ơn anh/chị."
+                    message=self._render(
+                        RuleType.CONTRACT_SIGNING_NUDGE,
+                        rule,
+                        {"client_name": client_name, "deal_title": deal_title},
                     ),
                 )
             )
@@ -197,12 +197,15 @@ class AutoReminderScheduler:
                     invoice,
                     client_name,
                     rule,
-                    message=(
-                        f"Chào anh/chị {client_name},\n\n"
-                        f"Em xin nhắc anh/chị hoá đơn {invoice.invoice_number} sẽ tới hạn "
-                        f"vào ngày {self._vn_date(invoice.due_date)}, "
-                        f"số tiền còn lại {self._money(invoice)}.\n\n"
-                        "Anh/chị sắp xếp giúp em nhé. Em cảm ơn anh/chị."
+                    message=self._render(
+                        RuleType.PAYMENT_DUE,
+                        rule,
+                        {
+                            "client_name": client_name,
+                            "invoice_number": invoice.invoice_number,
+                            "due_date": self._vn_date(invoice.due_date),
+                            "amount": self._money(invoice),
+                        },
                     ),
                 )
             )
@@ -228,14 +231,16 @@ class AutoReminderScheduler:
                     invoice,
                     client_name,
                     rule,
-                    message=(
-                        f"Chào anh/chị {client_name},\n\n"
-                        f"Hoá đơn {invoice.invoice_number} đã quá hạn {days_late} ngày "
-                        f"(hạn ngày {self._vn_date(invoice.due_date)}), "
-                        f"số tiền còn lại {self._money(invoice)}.\n\n"
-                        "Anh/chị kiểm tra giúp em nhé. Nếu đã thanh toán rồi thì anh/chị bỏ "
-                        "qua email này giúp em ạ.\n\n"
-                        "Em cảm ơn anh/chị."
+                    message=self._render(
+                        RuleType.PAYMENT_OVERDUE,
+                        rule,
+                        {
+                            "client_name": client_name,
+                            "invoice_number": invoice.invoice_number,
+                            "days_late": str(days_late),
+                            "due_date": self._vn_date(invoice.due_date),
+                            "amount": self._money(invoice),
+                        },
                     ),
                 )
             )
@@ -274,12 +279,10 @@ class AutoReminderScheduler:
                     target_id=client.id,
                     rule=rule,
                     client_name=client_name,
-                    message=(
-                        f"Chào anh/chị {client_name},\n\n"
-                        "Lâu rồi mình chưa có dịp trao đổi, em viết vài dòng hỏi thăm "
-                        "anh/chị ạ.\n\n"
-                        "Nếu sắp tới anh/chị có dự án nào cần hỗ trợ, anh/chị cứ nhắn em nhé.\n\n"
-                        "Em cảm ơn anh/chị."
+                    message=self._render(
+                        RuleType.RE_ENGAGEMENT,
+                        rule,
+                        {"client_name": client_name},
                     ),
                 )
             )
@@ -454,6 +457,14 @@ class AutoReminderScheduler:
         if extra is not None:
             stmt = stmt.where(extra)
         return list((await self.db.execute(stmt)).all())
+
+    @staticmethod
+    def _render(
+        rule_type: RuleType, rule: ReminderRuleModel, variables: dict[str, str]
+    ) -> str:
+        """Soạn nội dung lời nhắc từ template tự soạn của freelancer (hoặc mặc định)."""
+        template = effective_template(rule_type, rule.message_template)
+        return render_reminder_template(template, variables)
 
     def _invoice_candidate(
         self, invoice: Any, client_name: str, rule: ReminderRuleModel, *, message: str

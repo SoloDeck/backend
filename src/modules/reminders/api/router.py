@@ -13,13 +13,16 @@ from src.modules.reminders.application.service import RemindersService
 from src.modules.reminders.domain.value_objects.reminder_rules import (
     REPEATABLE_RULES,
     RULE_DEFAULTS,
+    VARIABLE_LABELS,
     RuleType,
+    effective_template,
 )
 from src.modules.reminders.schemas.request import ReminderRequest, ReminderRuleUpdate
 from src.modules.reminders.schemas.response import (
     ReminderDeliveryResponse,
     ReminderResponse,
     ReminderRuleResponse,
+    ReminderTemplateVariable,
 )
 from src.shared.dependencies.auth import CurrentUserId
 from src.shared.responses.response import ApiResponse
@@ -86,7 +89,8 @@ async def update_reminder_rule(
 
 
 def _rule_response(rule: Any) -> ReminderRuleResponse:
-    spec = RULE_DEFAULTS.get(RuleType(rule.rule_type))
+    rule_type = RuleType(rule.rule_type)
+    spec = RULE_DEFAULTS.get(rule_type)
     return ReminderRuleResponse(
         rule_type=rule.rule_type,
         is_enabled=rule.is_enabled,
@@ -96,7 +100,13 @@ def _rule_response(rule: Any) -> ReminderRuleResponse:
         auto_send=rule.auto_send,
         send_at_hour=rule.send_at_hour,
         label=spec.label if spec else "",
-        supports_repeat=RuleType(rule.rule_type) in REPEATABLE_RULES,
+        supports_repeat=rule_type in REPEATABLE_RULES,
+        message_template=effective_template(rule_type, rule.message_template),
+        is_custom_template=bool((rule.message_template or "").strip()),
+        template_variables=[
+            ReminderTemplateVariable(token="{" + name + "}", label=VARIABLE_LABELS[name])
+            for name in (spec.variables if spec else ())
+        ],
     )
 
 

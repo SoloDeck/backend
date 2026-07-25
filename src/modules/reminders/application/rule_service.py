@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.infrastructure.database.models import ReminderRuleModel, UserModel
 from src.modules.reminders.domain.value_objects.reminder_rules import (
+    MAX_TEMPLATE_LENGTH,
     REPEATABLE_RULES,
     RULE_DEFAULTS,
     RuleType,
@@ -63,6 +64,7 @@ class ReminderRulesService:
         channel: str | None = None,
         auto_send: bool | None = None,
         send_at_hour: int | None = None,
+        message_template: str | None = None,
     ) -> ReminderRuleModel:
         if rule_type not in {r.value for r in RuleType}:
             raise ValidationError(
@@ -111,6 +113,19 @@ class ReminderRulesService:
             rule.is_enabled = is_enabled
         if auto_send is not None:
             rule.auto_send = auto_send
+
+        if message_template is not None:
+            trimmed = message_template.strip()
+            if not trimmed:
+                # Chuỗi rỗng = "trả về mặc định": xoá bản tự soạn để lời nhắc dùng lại
+                # template gốc trong RULE_DEFAULTS.
+                rule.message_template = None
+            else:
+                if len(trimmed) > MAX_TEMPLATE_LENGTH:
+                    raise ValidationError(
+                        f"Nội dung mẫu tối đa {MAX_TEMPLATE_LENGTH} ký tự."
+                    )
+                rule.message_template = trimmed
 
         await self.db.flush()
         await self.db.refresh(rule)

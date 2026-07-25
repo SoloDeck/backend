@@ -23,3 +23,5 @@ class ReminderRuleUpdate(BaseModel):
     channel: str | None = None
     auto_send: bool | None = None
     send_at_hour: int | None = None
+    # Nội dung mẫu tự soạn. Gửi chuỗi rỗng để trả lời nhắc về template mặc định.
+    message_template: str | None = None

@@ -1111,6 +1111,9 @@ class ReminderRuleModel(UUIDMixin, TimestampMixin, Base):
     # Giờ trong ngày để gửi, theo `users.timezone`. Quét chạy rạng sáng nhưng không ai muốn
     # nhận email công việc lúc 1 giờ sáng.
     send_at_hour: Mapped[int] = mapped_column(SmallInteger, nullable=False, server_default="9")
+    # Nội dung mẫu freelancer tự soạn cho lời nhắc này. NULL = dùng template mặc định trong
+    # `RULE_DEFAULTS`. Placeholder `{client_name}`, `{deal_title}`... được thay khi soạn tin.
+    message_template: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     __table_args__ = (
         UniqueConstraint("owner_user_id", "rule_type", name="uq_reminder_rules_owner_type"),

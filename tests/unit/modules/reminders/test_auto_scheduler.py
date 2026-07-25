@@ -28,6 +28,7 @@ def make_rule(rule_type: str = "payment_overdue", **overrides) -> MagicMock:  # 
     rule.channel = overrides.get("channel", "email")
     rule.auto_send = overrides.get("auto_send", False)
     rule.send_at_hour = overrides.get("send_at_hour", 9)
+    rule.message_template = overrides.get("message_template", None)
     return rule
 
 

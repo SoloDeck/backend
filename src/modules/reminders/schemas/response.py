@@ -24,6 +24,13 @@ class ReminderResponse(BaseModel):
     updated_at: datetime
 
 
+class ReminderTemplateVariable(BaseModel):
+    """Một biến chèn được vào template lời nhắc, kèm nhãn tiếng Việt cho giao diện."""
+
+    token: str
+    label: str
+
+
 class ReminderRuleResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -38,6 +45,11 @@ class ReminderRuleResponse(BaseModel):
     # kiểu thì người dùng đọc tài liệu và đọc màn hình sẽ thấy khác nhau.
     label: str = ""
     supports_repeat: bool = False
+    # Nội dung mẫu ĐANG hiệu lực (bản tự soạn nếu có, ngược lại là mặc định) + các biến
+    # template này hỗ trợ, để màn cài đặt hiển thị và cho sửa.
+    message_template: str = ""
+    is_custom_template: bool = False
+    template_variables: list[ReminderTemplateVariable] = []
 
 
 class ReminderDeliveryResponse(BaseModel):
