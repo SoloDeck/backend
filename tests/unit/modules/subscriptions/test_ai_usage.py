@@ -86,6 +86,61 @@ class TestConsume:
         assert created.ai_generations_used == 1
 
 
+class TestQuotaWarning:
+    """Email "sắp hết lượt AI" gửi ĐÚNG một lần khi vượt ngưỡng (không cần cột cờ)."""
+
+    def _user(self):  # type: ignore[no-untyped-def]
+        return SimpleNamespace(id=uuid.uuid4(), email="a@b.com", full_name="Chị Lan")
+
+    async def test_gui_khi_dung_dat_nguong(self, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+        import src.shared.email.smtp as smtp_mod
+
+        sent = AsyncMock()
+        monkeypatch.setattr(smtp_mod, "send_email", sent)
+        db = AsyncMock()
+        db.scalar = AsyncMock(return_value=self._user())
+        service = AiUsageService(db=db)
+
+        # limit 50 -> ngưỡng ceil(50*0.8) = 40.
+        await service._maybe_warn_quota(uuid.uuid4(), _record(used=40), 50)
+
+        sent.assert_awaited_once()
+
+    async def test_khong_gui_khi_chua_toi_nguong(self, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+        import src.shared.email.smtp as smtp_mod
+
+        sent = AsyncMock()
+        monkeypatch.setattr(smtp_mod, "send_email", sent)
+        service = AiUsageService(db=AsyncMock())
+
+        await service._maybe_warn_quota(uuid.uuid4(), _record(used=39), 50)
+
+        sent.assert_not_awaited()
+
+    async def test_chi_gui_dung_lan_vuot_nguong(self, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+        """41 đã qua ngưỡng 40 -> KHÔNG gửi lại (chỉ đúng lần == ngưỡng mới gửi)."""
+        import src.shared.email.smtp as smtp_mod
+
+        sent = AsyncMock()
+        monkeypatch.setattr(smtp_mod, "send_email", sent)
+        service = AiUsageService(db=AsyncMock())
+
+        await service._maybe_warn_quota(uuid.uuid4(), _record(used=41), 50)
+
+        sent.assert_not_awaited()
+
+    async def test_limit_0_khong_gui(self, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+        import src.shared.email.smtp as smtp_mod
+
+        sent = AsyncMock()
+        monkeypatch.setattr(smtp_mod, "send_email", sent)
+        service = AiUsageService(db=AsyncMock())
+
+        await service._maybe_warn_quota(uuid.uuid4(), _record(used=0), 0)
+
+        sent.assert_not_awaited()
+
+
 class TestSummary:
     async def test_bao_cao_dung_so_luot_con_lai(self) -> None:
         service = _service(_sub(), _plan(can_use_ai=True, limit=50), _record(used=12))

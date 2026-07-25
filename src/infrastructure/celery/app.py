@@ -46,5 +46,11 @@ celery_app.conf.update(
             "task": "src.workers.reminder_jobs.tasks.refresh_analytics_snapshots",
             "schedule": 86400.0,  # nightly
         },
+        # Báo trước gói sắp hết kỳ + tự hạ về Free khi đã hết kỳ. Mỗi ngày một lần lúc 2h
+        # sáng (giờ VN) — chạy SAU các job nhắc lúc 1h để không giành tài nguyên rạng sáng.
+        "run-subscription-maintenance": {
+            "task": "src.workers.reminder_jobs.tasks.run_subscription_maintenance",
+            "schedule": crontab(hour=2, minute=0),
+        },
     },
 )

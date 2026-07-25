@@ -200,6 +200,41 @@ def generate_rule_reminders() -> None:
         log.info("generate_rule_reminders.done", **counts)
 
 
+@celery_app.task(name="src.workers.reminder_jobs.tasks.run_subscription_maintenance")
+def run_subscription_maintenance() -> None:
+    """Chạy mỗi ngày: báo trước gói sắp hết kỳ và tự hạ về Free khi đã hết kỳ.
+
+    Toàn bộ nghiệp vụ (email cảnh báo + hạ gói) nằm ở `SubscriptionLifecycleService`; task
+    này chỉ lo phần Celery: mở session, chạy, commit. Cảnh báo "sắp hết quota AI" thì xử lý
+    ngay trong `AiUsageService.consume`, không nằm ở đây.  #Huynh
+    """
+    import asyncio
+
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+
+    from src.config.settings import settings
+    from src.modules.subscriptions.application.lifecycle_service import (
+        SubscriptionLifecycleService,
+    )
+
+    async def _run() -> dict[str, int]:
+        engine = create_async_engine(str(settings.database_url))
+        factory = async_sessionmaker(
+            engine, class_=AsyncSession, expire_on_commit=False, autoflush=False
+        )
+        try:
+            async with factory() as session:
+                counts = await SubscriptionLifecycleService(db=session).run_daily_maintenance()
+                await session.commit()
+                return counts
+        finally:
+            await engine.dispose()
+
+    counts = asyncio.run(_run())
+    if counts["expiry_warned"] or counts["downgraded"]:
+        log.info("run_subscription_maintenance.done", **counts)
+
+
 @celery_app.task(name="src.workers.reminder_jobs.tasks.refresh_analytics_snapshots")
 def refresh_analytics_snapshots() -> None:
     """Beat task: nightly refresh of revenue and pipeline snapshots."""

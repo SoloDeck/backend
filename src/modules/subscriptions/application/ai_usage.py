@@ -13,6 +13,7 @@ Trước đây KHÔNG có cổng nào:
 Giờ mọi đường vào AI đều đi qua ``AiUsageService.consume()``.  #Huynh
 """
 
+import math
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -27,10 +28,15 @@ from src.infrastructure.database.models import (
     PlanModel,
     SubscriptionModel,
     UsageRecordModel,
+    UserModel,
 )
 from src.shared.exceptions.domain import EntitlementError, RateLimitError
 
 log = structlog.get_logger(__name__)
+
+# Ngưỡng gửi email "sắp hết lượt AI": khi đã dùng tới tỉ lệ này của hạn mức tháng.
+# Chỉnh được khi chốt nghiệp vụ.
+QUOTA_WARN_RATIO = 0.8
 
 # Khớp ĐÚNG enum trong Postgres — sai một chữ là Postgres từ chối và transaction vỡ.
 _AI_STATUSES = frozenset({"pending", "completed", "failed"})
@@ -83,6 +89,47 @@ class AiUsageService:
 
         record.ai_generations_used += 1
         await self.db.flush()
+
+        # Sắp hết hạn mức GIỮA kỳ -> gửi email báo trước (best-effort). KHÔNG hạ gói ở đây:
+        # hết lượt AI tháng không đồng nghĩa hết hạn gói — việc hạ Free để dành cho lúc HẾT
+        # KỲ (SubscriptionLifecycleService). Ở giữa kỳ chỉ cần cảnh báo.
+        await self._maybe_warn_quota(user_id, record, limit)
+
+    async def _maybe_warn_quota(
+        self, user_id: uuid.UUID, record: UsageRecordModel, limit: int
+    ) -> None:
+        if limit <= 0:
+            return
+        threshold = math.ceil(limit * QUOTA_WARN_RATIO)
+        # Đếm tăng ĐÚNG 1 mỗi lượt nên `ai_generations_used` chỉ bằng threshold một lần
+        # duy nhất trong kỳ -> email cảnh báo gửi đúng một lần, không cần cột cờ.
+        if record.ai_generations_used != threshold:
+            return
+
+        user = await self.db.scalar(select(UserModel).where(UserModel.id == user_id))
+        if user is None or not user.email:
+            return
+
+        from src.config.settings import settings
+        from src.modules.subscriptions.application.emails import build_quota_warning_email
+        from src.shared.email.smtp import send_email
+
+        content = build_quota_warning_email(
+            owner_name=user.full_name,
+            used=record.ai_generations_used,
+            limit=limit,
+            period_end=record.billing_period_end,
+            plan_url=f"{settings.frontend_url.rstrip('/')}/?tab=subscription",
+        )
+        try:
+            await send_email(
+                to=user.email,
+                subject=content.subject,
+                html=content.html,
+                plain=content.plain,
+            )
+        except Exception as exc:  # noqa: BLE001 — cảnh báo là best-effort, không chặn AI
+            log.warning("ai_usage.quota_warning_failed", user_id=str(user_id), error=str(exc))
 
     async def _get_or_create_record(
         self, user_id: uuid.UUID, sub: SubscriptionModel
@@ -163,7 +210,7 @@ class AiUsageService:
         )
         await self.db.flush()
 
-    async def summary(self, user_id: uuid.UUID) -> dict:
+    async def summary(self, user_id: uuid.UUID) -> dict[str, Any]:
         """Đã dùng bao nhiêu / còn bao nhiêu trong kỳ này."""
         sub = await self.db.scalar(
             select(SubscriptionModel).where(SubscriptionModel.user_id == user_id)
