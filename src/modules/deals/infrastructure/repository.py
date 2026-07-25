@@ -276,7 +276,9 @@ class DealsRepository:
         result = await self.db.execute(
             select(DealModel)
             .where(*conditions)
-            .order_by(DealModel.created_at.desc())
+            # Sắp theo ngày cập nhật mới nhất: deal vừa đổi giai đoạn/sửa thông tin
+            # luôn nổi lên đầu danh sách (tránh cảnh "chuyển status xong nhảy xuống giữa").
+            .order_by(DealModel.updated_at.desc())
             .offset(offset)
             .limit(page_size)
         )
