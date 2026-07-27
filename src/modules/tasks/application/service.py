@@ -23,6 +23,12 @@ from src.shared.exceptions.domain import NotFoundError
 
 _DEFAULT_PRIORITY = "medium"
 
+# Tiền tố nhận diện TASK THANH TOÁN do hệ thống tự sinh từ các mốc thanh toán của báo giá
+# đã chốt (Phase B — mục 8/9). Guard "hoàn thành dự án" của deals dựa vào tiền tố này để
+# biết đâu là mốc thu tiền cần tick xong. Đây là HỢP ĐỒNG NGẦM giữa proposals (sinh) và
+# deals (kiểm) — đổi tiền tố là phải đổi cả hai chỗ.  #Huynh
+PAYMENT_TASK_PREFIX = "Thu tiền:"
+
 
 @dataclass
 class TaskService:
@@ -79,6 +85,55 @@ class TaskService:
             priority=payload.priority.value if payload.priority else _DEFAULT_PRIORITY,
             deadline=payload.deadline,
         )
+
+    async def create_many_for_entity(
+        self,
+        entity_type: str,
+        entity_id: uuid.UUID,
+        owner_user_id: uuid.UUID,
+        payloads: list[CreateTaskRequest],
+        *,
+        skip_existing_titles: bool = True,
+    ) -> list[TaskModel]:
+        """Tạo NHIỀU task một lượt cho cùng một entity — dùng cho việc SINH TỰ ĐỘNG.
+
+        `skip_existing_titles` (mặc định) bỏ qua các title đã có sẵn trên entity, nên gọi
+        lại nhiều lần cũng KHÔNG nhân đôi (idempotent) — cần thiết vì một deal có thể có
+        nhiều báo giá được chốt. Chủ sở hữu entity chỉ kiểm MỘT lần cho cả lô.  #Huynh
+        """
+        await self._require_entity_owner(entity_type, entity_id, owner_user_id)
+        seen: set[str] = set()
+        if skip_existing_titles:
+            rows, _ = await self.repo.list_by_entity(
+                entity_type, entity_id, status=None, offset=0, limit=1000
+            )
+            seen = {row.title for row in rows}
+        created: list[TaskModel] = []
+        for payload in payloads:
+            if payload.title in seen:
+                continue
+            task = await self.repo.create(
+                entity_type=entity_type,
+                entity_id=entity_id,
+                title=payload.title,
+                description=payload.description,
+                priority=payload.priority.value if payload.priority else _DEFAULT_PRIORITY,
+                deadline=payload.deadline,
+            )
+            created.append(task)
+            seen.add(payload.title)
+        return created
+
+    async def payment_task_progress(
+        self, entity_type: str, entity_id: uuid.UUID, owner_user_id: uuid.UUID
+    ) -> tuple[int, int]:
+        """(tổng, đã xong) các task thanh toán ("Thu tiền:") của entity.
+
+        Guard "hoàn thành dự án" của deals gọi hàm này: còn mốc thu tiền chưa xong thì
+        chưa cho đóng deal.  #Huynh
+        """
+        await self._require_entity_owner(entity_type, entity_id, owner_user_id)
+        return await self.repo.count_by_title_prefix(entity_type, entity_id, PAYMENT_TASK_PREFIX)
 
     async def get(self, task_id: uuid.UUID, owner_user_id: uuid.UUID) -> TaskModel:
         return await self._get_owned_task(task_id, owner_user_id)

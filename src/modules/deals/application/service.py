@@ -331,23 +331,36 @@ class DealsService:
                     "(record the client's signature on the contract first)"
                 )
         if target == DealStage.COMPLETED_AND_BILLED:
-            if not await self.repo.has_invoice(deal_id, user_id):
+            # ĐÓNG DEAL KHI THU ĐỦ TIỀN — nay đo bằng TASK "Thu tiền:" thay cho hoá đơn.
+            #
+            # Từ Phase B, các mốc thanh toán của báo giá đã chốt tự sinh thành task "Thu
+            # tiền:" trên PROJECT của deal khi vào active (xem nhánh ACTIVE bên dưới).
+            # Freelancer tick xong từng mốc khi nhận tiền, nên "thu đủ" = mọi task thu tiền
+            # đã done. Bỏ ràng buộc phải có hoá đơn (mục 7: không tạo hoá đơn tay nữa). Deal
+            # cũ / không có mốc thu tiền (total = 0) thì không chặn — tránh khoá dữ liệu cũ.
+            #
+            # Task gắn vào PROJECT (không phải deal): bảng "Công việc" hiển thị theo project,
+            # và guard phải soi đúng chỗ freelancer tick.  #Huynh
+            from src.modules.projects.application.service import ProjectService
+            from src.modules.tasks.application.service import TaskService
+
+            project = await ProjectService(db=self.db).get_or_create_for_deal(
+                deal_id, user_id, name=deal.title
+            )
+            total, done = await TaskService(self.db).payment_task_progress(
+                "project", project.id, user_id
+            )
+            if total > 0 and done < total:
                 raise BusinessRuleError(
-                    "Transitioning to completed_and_billed requires a linked invoice"
+                    f"Còn {total - done}/{total} mốc thu tiền chưa hoàn tất. "
+                    "Hãy tick xong các mốc 'Thu tiền:' trước khi hoàn thành dự án."
                 )
 
-            # GHI LẠI GIÁ THẬT — đây là chỗ đóng vòng lặp học của bộ định giá.
-            #
-            # `actual_value` trước đây KHÔNG BAO GIỜ được điền (0/63 deal trong DB), nên bộ
-            # định giá chẳng có gì để neo và mọi báo giá đều rơi về "AI ước lượng, tin cậy
-            # thấp". Deal chốt xong mà không ghi lại giá thì hệ thống không học được gì.
-            #
-            # Không bắt người dùng gõ tay: hoá đơn đã BẮT BUỘC có ở bước này (luật ngay
-            # trên), và tổng hoá đơn CHÍNH LÀ tiền thật đã xuất. Bắt gõ lại một con số hệ
-            # thống đã biết là mời sai sót.  #Huynh
-            invoiced = await self.repo.invoiced_total(deal_id, user_id)
-            if invoiced:
-                deal.actual_value = invoiced
+            # GHI LẠI GIÁ THẬT — đóng vòng lặp học của bộ định giá. Không còn hoá đơn để lấy
+            # tổng, nên neo vào GIÁ ĐÃ CHỐT trên báo giá (`estimated_value`, do set_price ghi
+            # cả vào deal). Không bắt gõ tay: con số này hệ thống đã biết.  #Huynh
+            if deal.estimated_value:
+                deal.actual_value = deal.estimated_value
 
         deal.stage = payload.stage
         if target in TERMINAL_STAGES and hasattr(deal, "closed_at"):
@@ -360,10 +373,21 @@ class DealsService:
         # the project. Project invariants stay owned by the projects domain.
         if target == DealStage.ACTIVE:
             from src.modules.projects.application.service import ProjectService
+            from src.modules.proposals.application.service import (
+                payment_task_payloads_for_deal,
+            )
+            from src.modules.tasks.application.service import TaskService
 
-            await ProjectService(db=self.db).get_or_create_for_deal(
+            project = await ProjectService(db=self.db).get_or_create_for_deal(
                 deal_id, user_id, name=deal.title
             )
+            # Mốc thanh toán của báo giá đã chốt → task "Thu tiền:" trên project. Idempotent
+            # (bỏ title trùng) nên chuyển active nhiều lần cũng không nhân đôi.  #Huynh
+            payloads = await payment_task_payloads_for_deal(self.db, deal_id, user_id)
+            if payloads:
+                await TaskService(self.db).create_many_for_entity(
+                    "project", project.id, user_id, payloads
+                )
         return saved
 
     async def _run_ai_qualification(self, deal_model, inquiry_context: str) -> dict:

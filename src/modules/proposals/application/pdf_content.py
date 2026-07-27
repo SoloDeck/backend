@@ -24,6 +24,7 @@ thiếu dữ liệu thì để trống chứ không nổ.  #Huynh
 from typing import Any
 
 from src.ai.proposal_generator.schemas.proposal_document import (
+    PaymentMilestone,
     PricingLineItem,
     ProposalDocument,
 )
@@ -84,6 +85,30 @@ def _pricing_to_text(value: Any) -> str:
     return "\n".join(line for line in lines if line)
 
 
+def _resolve_total_int(content: dict[str, Any]) -> int:
+    """Tổng báo giá (giá đã chốt) dưới dạng int > 0, hoặc 0 nếu chưa có.
+
+    Ưu tiên `pricing_detail.final_price` → `suggested` → `pricing.total` (shape DTO).  #Huynh"""
+    detail = content.get("pricing_detail")
+    if isinstance(detail, dict):
+        for key in ("final_price", "suggested"):
+            try:
+                value = int(detail.get(key) or 0)
+            except (TypeError, ValueError):
+                value = 0
+            if value > 0:
+                return value
+    pricing = content.get("pricing")
+    if isinstance(pricing, dict) and pricing.get("total") is not None:
+        try:
+            value = int(pricing["total"])
+        except (TypeError, ValueError):
+            value = 0
+        if value > 0:
+            return value
+    return 0
+
+
 def _structured_pricing(content: dict[str, Any]) -> tuple[list[PricingLineItem], str, str]:
     """Bảng giá có cấu trúc cho template — LẤY TỪ CÙNG NGUỒN với card trên màn hình.
 
@@ -95,6 +120,26 @@ def _structured_pricing(content: dict[str, Any]) -> tuple[list[PricingLineItem],
     tổng đó, và ĐỒNG LẺ do làm tròn dồn vào dòng cuối để bảng cộng ra ĐÚNG tổng — y hệt
     frontend. Bảng cộng không ra tổng là thứ khách soi ra ngay.  #Huynh
     """
+    # NHÁNH ƯU TIÊN — freelancer đã tự sửa danh sách hạng mục ở màn review (Stage 4, mục 7).
+    # `pricing_items` chỉ chứa NHÃN; số tiền chia ĐỀU từ giá đã chốt, dòng cuối gánh phần lẻ
+    # để tổng khớp tuyệt đối. Ghi đè cách chia của bộ định giá vì đây là ý freelancer.  #Huynh
+    override = content.get("pricing_items")
+    if isinstance(override, list):
+        labels = [_text(x) for x in override if _text(x)]
+        total_int = _resolve_total_int(content)
+        if labels and total_int > 0:
+            items: list[PricingLineItem] = []
+            allocated = 0
+            n = len(labels)
+            for index, label in enumerate(labels):
+                if index == n - 1:
+                    amount = total_int - allocated  # dồn phần lẻ vào dòng cuối
+                else:
+                    amount = round(total_int / n / 1000) * 1000
+                    allocated += amount
+                items.append(PricingLineItem(description=label, amount=_money(amount, "VND")))
+            return items, _money(total_int, "VND"), ""
+
     detail = content.get("pricing_detail")
     if isinstance(detail, dict):
         raw_items = detail.get("line_items") or []
@@ -168,6 +213,59 @@ def _timeline_to_text(value: Any) -> str:
     return "\n".join(line for line in lines if line)
 
 
+def extract_payment_milestones(content: dict[str, Any]) -> list[PaymentMilestone]:
+    """Trích các đợt thanh toán có cấu trúc, nhận cả shape AI (`payment_milestones`) lẫn
+    shape DTO (`terms.payment_schedule`). Entry hỏng thì bỏ qua, không nổ.
+
+    Public vì Stage 2 dùng lại chính nguồn này để SINH TASK "Thu tiền" khi báo giá được
+    chốt — task và bảng mốc trên PDF phải khớp nhau tuyệt đối.  #Huynh"""
+    raw = content.get("payment_milestones")
+    if raw is None:
+        terms = content.get("terms")
+        if isinstance(terms, dict):
+            raw = terms.get("payment_schedule") or terms.get("payment_milestones")
+    if isinstance(raw, dict):
+        raw = [raw]
+    if not isinstance(raw, list):
+        return []
+
+    out: list[PaymentMilestone] = []
+    for entry in raw:
+        if isinstance(entry, str):
+            if entry.strip():
+                out.append(PaymentMilestone(label=entry.strip()))
+            continue
+        if not isinstance(entry, dict):
+            continue
+        label = _text(
+            entry.get("label")
+            or entry.get("description")
+            or entry.get("name")
+            or entry.get("stage")
+        )
+        if not label:
+            continue
+        raw_percent = entry.get("percent", entry.get("percentage"))
+        try:
+            percent = (
+                int(float(str(raw_percent).strip().rstrip("%")))
+                if raw_percent not in (None, "")
+                else None
+            )
+        except (TypeError, ValueError):
+            percent = None
+        amount = _text(entry.get("amount") or entry.get("value"))
+        due = _text(
+            entry.get("due")
+            or entry.get("when")
+            or entry.get("condition")
+            or entry.get("timing")
+            or entry.get("date")
+        )
+        out.append(PaymentMilestone(label=label, percent=percent, amount=amount, due=due))
+    return out
+
+
 def build_proposal_document(
     content: dict[str, Any],
     *,
@@ -221,6 +319,7 @@ def build_proposal_document(
         pricing_total=pricing_total,
         pricing=pricing_fallback,
         payment_terms=payment_terms,
+        payment_milestones=extract_payment_milestones(content),
         assumptions=assumptions,
         out_of_scope=_text_list(content.get("out_of_scope")),
         revision_policy=_text(content.get("revision_policy"))

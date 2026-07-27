@@ -1,284 +1,166 @@
 <!DOCTYPE html>
-
 <html lang="vi">
-
 <head>
-    <meta charset="UTF-8">
-    <title>Hợp Đồng Dịch Vụ</title>
+<meta charset="UTF-8">
+<title>Hợp Đồng Dịch Vụ</title>
 <style>
-    @page {
-        size: A4;
-        margin: 2cm;
-    }
-
-    body {
-        font-family: Arial, sans-serif;
-        font-size: 12pt;
-        line-height: 1.6;
-        color: #222;
-    }
-
-    h1 {
-        text-align: center;
-        margin-bottom: 4px;
-        font-size: 18pt;
-    }
-
-    .subtitle {
-        text-align: center;
-        color: #666;
-        margin-bottom: 6px;
-    }
-
-    .meta {
-        text-align: center;
-        color: #666;
-        font-size: 10.5pt;
-        margin-bottom: 24px;
-    }
-
-    .preamble {
-        font-style: italic;
-        color: #444;
-        margin-bottom: 18px;
-    }
-
-    .parties {
-        width: 100%;
-        border-collapse: collapse;
-        margin-bottom: 8px;
-    }
-
-    .parties td {
-        vertical-align: top;
-        padding: 2px 0;
-    }
-
-    .party-title {
-        font-weight: bold;
-        text-transform: uppercase;
-        margin-top: 14px;
-        margin-bottom: 4px;
-    }
-
-    .party-line .label {
-        display: inline-block;
-        width: 150px;
-        color: #555;
-    }
-
-    h2 {
-        margin-top: 22px;
-        margin-bottom: 6px;
-        font-size: 12.5pt;
-        text-transform: uppercase;
-    }
-
-    .clause {
-        white-space: pre-line;
-        margin: 0 0 4px;
-    }
-
-    .schedule {
-        width: 100%;
-        border-collapse: collapse;
-        margin-top: 10px;
-    }
-
-    .schedule th,
-    .schedule td {
-        border-bottom: 1px solid #e5e5e5;
-        padding: 8px 4px;
-        text-align: left;
-    }
-
-    .schedule th {
-        font-size: 10pt;
-        text-transform: uppercase;
-        color: #777;
-    }
-
-    .schedule .amount {
-        text-align: right;
-        white-space: nowrap;
-    }
-
-    .schedule tfoot td {
-        border-top: 2px solid #333;
-        border-bottom: none;
-        font-weight: bold;
-        padding-top: 10px;
-    }
-
-    .signature {
-        width: 100%;
-        margin-top: 50px;
-    }
-
-    .signature td {
-        width: 50%;
-        text-align: center;
-        vertical-align: top;
-        /* Chừa khoảng trống bên dưới nhãn để hai bên TỰ ký tay + ghi họ tên — không in
-           sẵn tên vào chỗ chữ ký. */
-        padding-bottom: 70px;
-    }
-
-    .signature .role {
-        font-weight: bold;
-        text-transform: uppercase;
-    }
-
-    .footer-note {
-        margin-top: 40px;
-        font-size: 10pt;
-        color: #777;
-        text-align: center;
-    }
+    @page { size: A4; margin: 20mm; }
+    body { font-family: "Times New Roman", Times, serif; font-size: 12pt; line-height: 1.5; color: #1a1a1a; max-width: 780px; margin: 0 auto; }
+    .national-header { text-align: center; margin-bottom: 4px; }
+    .national-header .title { font-weight: bold; font-size: 13pt; text-transform: uppercase; }
+    .national-header .motto { font-weight: bold; font-size: 12pt; margin-top: 2px; }
+    .national-header .motto-underline { width: 220px; border-bottom: 1px solid #1a1a1a; margin: 3px auto 0; }
+    .doc-code { text-align: center; font-style: italic; font-size: 11pt; margin: 14px 0 6px; }
+    h1 { text-align: center; font-size: 17pt; margin: 4px 0 2px; }
+    .subtitle { text-align: center; font-size: 11pt; font-style: italic; color: #444; margin-bottom: 6px; }
+    .meta-line { text-align: center; font-size: 11pt; margin-bottom: 12px; }
+    .preamble { font-size: 11pt; margin: 10px 0 14px; }
+    .preamble p { margin: 3px 0; text-align: justify; }
+    .party-title { font-weight: bold; text-transform: uppercase; margin-top: 14px; margin-bottom: 4px; font-size: 11pt; }
+    .party-line { margin: 3px 0; }
+    .party-line .label { display: inline-block; width: 170px; color: #555; }
+    .fill { border-bottom: 1px dotted #999; display: inline-block; min-width: 150px; }
+    h2 { margin-top: 20px; margin-bottom: 6px; font-size: 12.5pt; border-bottom: 1px solid #ccc; padding-bottom: 3px; }
+    p, li { text-align: justify; margin: 6px 0; }
+    .clause { white-space: pre-line; margin: 0 0 4px; }
+    ul { padding-left: 22px; }
+    table.schedule { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 11pt; }
+    table.schedule th, table.schedule td { border: 1px solid #bbb; padding: 6px 8px; text-align: left; }
+    table.schedule th { background: #f0f0f0; font-size: 10.5pt; }
+    table.schedule .amount { text-align: right; white-space: nowrap; }
+    table.schedule tfoot td { font-weight: bold; border-top: 2px solid #333; }
+    .signature { width: 100%; margin-top: 50px; }
+    .signature td { width: 50%; text-align: center; vertical-align: top; padding-bottom: 70px; }
+    .signature .role { font-weight: bold; text-transform: uppercase; }
+    .footer-note { margin-top: 36px; font-size: 10pt; color: #777; text-align: center; border-top: 1px dashed #ccc; padding-top: 8px; }
+    .en { display: block; font-weight: normal; font-size: 0.72em; font-style: italic; color: #888; text-transform: none; margin-top: 1px; }
+    .eni { font-weight: normal; font-style: italic; color: #888; font-size: 0.85em; }
 </style>
-
 </head>
-
 <body>
 
-<h1>HỢP ĐỒNG DỊCH VỤ</h1>
-
-{% if project_name %}<div class="subtitle">{{ project_name }}</div>{% endif %}
-
-<div class="meta">
-    {% if contract_number %}Số hợp đồng: {{ contract_number }}{% endif %}
-    {% if contract_number and contract_date %} &nbsp;—&nbsp; {% endif %}
-    {% if contract_date %}Ngày lập: {{ contract_date }}{% endif %}
+<div class="national-header">
+    <div class="title">CỘNG HÒA XÃ HỘI CHỦ NGHĨA VIỆT NAM<span class="en">Socialist Republic of Vietnam</span></div>
+    <div class="motto">Độc lập – Tự do – Hạnh phúc<span class="en">Independence – Freedom – Happiness</span></div>
+    <div class="motto-underline"></div>
 </div>
+
+<div class="doc-code">Số <span class="eni">/ No.</span>: {{ contract_number or "……" }}/HĐDV</div>
+<h1>HỢP ĐỒNG DỊCH VỤ<span class="en">Service Agreement</span></h1>
+{% if project_name %}<div class="subtitle">{{ project_name }}</div>{% endif %}
+<div class="meta-line">{% if contract_date %}Ngày lập <span class="eni">/ Date</span>: {{ contract_date }}{% else %}Hôm nay, ngày …… tháng …… năm ……{% endif %}</div>
 
 <div class="preamble">
-    Căn cứ Bộ luật Dân sự và các quy định pháp luật hiện hành có liên quan;<br>
-    {% if proposal_reference %}Căn cứ {{ proposal_reference }};<br>{% endif %}
-    Hai bên gồm:
+    <p>Căn cứ Bộ luật Dân sự số 91/2015/QH13 và các quy định pháp luật hiện hành có liên quan;</p>
+    {% if proposal_reference %}<p>Căn cứ {{ proposal_reference }};</p>{% endif %}
+    <p>Căn cứ nhu cầu và khả năng thực tế của hai Bên;</p>
+    <p>Hai Bên chúng tôi gồm <span class="eni">/ The two Parties are</span>:</p>
 </div>
 
-<div class="party-title">Bên A (Bên cung cấp dịch vụ)</div>
-<div class="party-line"><span class="label">Họ và tên:</span>{{ freelancer_name }}</div>
-{% if freelancer_business_name %}<div class="party-line"><span class="label">Đơn vị:</span>{{ freelancer_business_name }}</div>{% endif %}
-{% if freelancer_address %}<div class="party-line"><span class="label">Địa chỉ:</span>{{ freelancer_address }}</div>{% endif %}
-{% if freelancer_email %}<div class="party-line"><span class="label">Email:</span>{{ freelancer_email }}</div>{% endif %}
-{% if freelancer_phone %}<div class="party-line"><span class="label">Số điện thoại:</span>{{ freelancer_phone }}</div>{% endif %}
+<div class="party-title">Bên A — Bên Cung Cấp Dịch Vụ (Freelancer)<span class="en">Party A — Service Provider</span></div>
+<div class="party-line"><span class="label">Họ và tên <span class="eni">/ Full name</span>:</span>{{ freelancer_name or "……" }}</div>
+{% if freelancer_business_name %}<div class="party-line"><span class="label">Đơn vị <span class="eni">/ Business</span>:</span>{{ freelancer_business_name }}</div>{% endif %}
+<div class="party-line"><span class="label">Địa chỉ <span class="eni">/ Address</span>:</span>{{ freelancer_address or "" }}<span class="fill">&nbsp;</span></div>
+<div class="party-line"><span class="label">Số CCCD/MST <span class="eni">/ ID / Tax code</span>:</span><span class="fill">&nbsp;</span></div>
+<div class="party-line"><span class="label">Điện thoại <span class="eni">/ Phone</span>:</span>{{ freelancer_phone or "" }}{% if freelancer_email %} &nbsp; Email: {{ freelancer_email }}{% endif %}</div>
 
-<div class="party-title">Bên B (Bên sử dụng dịch vụ)</div>
-<div class="party-line"><span class="label">{% if client_company %}Tên công ty{% else %}Người nhận{% endif %}:</span>{{ client_company or client_name }}</div>
-{% if client_company and client_name %}<div class="party-line"><span class="label">Người đại diện:</span>{{ client_name }}</div>{% endif %}
-{% if client_address %}<div class="party-line"><span class="label">Địa chỉ:</span>{{ client_address }}</div>{% endif %}
-{% if client_email %}<div class="party-line"><span class="label">Email:</span>{{ client_email }}</div>{% endif %}
-{% if client_phone %}<div class="party-line"><span class="label">Số điện thoại:</span>{{ client_phone }}</div>{% endif %}
+<div class="party-title">Bên B — Bên Sử Dụng Dịch Vụ (Khách Hàng)<span class="en">Party B — Client</span></div>
+<div class="party-line"><span class="label">{% if client_company %}Tên công ty <span class="eni">/ Company</span>{% else %}Họ và tên <span class="eni">/ Full name</span>{% endif %}:</span>{{ client_company or client_name or "……" }}</div>
+{% if client_company and client_name %}<div class="party-line"><span class="label">Người đại diện <span class="eni">/ Representative</span>:</span>{{ client_name }}</div>{% endif %}
+<div class="party-line"><span class="label">Địa chỉ <span class="eni">/ Address</span>:</span>{{ client_address or "" }}<span class="fill">&nbsp;</span></div>
+<div class="party-line"><span class="label">Số CCCD/MST <span class="eni">/ ID / Tax code</span>:</span><span class="fill">&nbsp;</span></div>
+<div class="party-line"><span class="label">Điện thoại <span class="eni">/ Phone</span>:</span>{{ client_phone or "" }}{% if client_email %} &nbsp; Email: {{ client_email }}{% endif %}</div>
 
-<p style="margin-top:14px;">Hai bên thống nhất ký kết Hợp đồng này với các điều khoản như sau:</p>
+<p style="margin-top:14px;">Sau khi bàn bạc, hai Bên thống nhất ký kết Hợp đồng Dịch vụ này (gọi tắt là "Hợp Đồng") với các điều khoản như sau:</p>
 
 {% set ns = namespace(n=0) %}
 
 {% set ns.n = ns.n + 1 %}
-<h2>Điều {{ ns.n }}. Nội dung và phạm vi công việc</h2>
+<h2>Điều {{ ns.n }}. Nội Dung và Phạm Vi Công Việc<span class="en">Article {{ ns.n }}. Scope of Work</span></h2>
 <p class="clause" data-field="scope_of_work" data-label="Nội dung và phạm vi công việc">{{ scope_of_work }}</p>
 
 {% set ns.n = ns.n + 1 %}
-<h2>Điều {{ ns.n }}. Giá trị hợp đồng và phương thức thanh toán</h2>
+<h2>Điều {{ ns.n }}. Thời Hạn Thực Hiện<span class="en">Article {{ ns.n }}. Term of Performance</span></h2>
+<p class="clause">Hợp đồng có hiệu lực từ ngày {{ effective_date or "hai Bên ký kết" }}{% if end_date %} và kéo dài đến ngày {{ end_date }}{% endif %}. Tiến độ và các mốc bàn giao thực hiện theo lịch tại Điều 3 và nội dung công việc hai Bên đã thống nhất.</p>
+
+{% set ns.n = ns.n + 1 %}
+<h2>Điều {{ ns.n }}. Giá Trị Hợp Đồng và Phương Thức Thanh Toán<span class="en">Article {{ ns.n }}. Contract Value and Payment</span></h2>
 <p class="clause" data-field="payment_terms" data-label="Giá trị hợp đồng và phương thức thanh toán">{{ payment_terms }}</p>
 {% if milestones %}
 <table class="schedule">
-    <thead>
-        <tr>
-            <th>Mốc thanh toán</th>
-            <th>Hạn</th>
-            <th class="amount">Số tiền</th>
-        </tr>
-    </thead>
+    <thead><tr><th>Đợt thanh toán <span class="eni">/ Milestone</span></th><th>Hạn <span class="eni">/ Due</span></th><th class="amount">Số tiền <span class="eni">/ Amount</span></th></tr></thead>
     <tbody>
-        {% for m in milestones %}
-        <tr>
-            <td>{{ m.description }}</td>
-            <td>{{ m.due_date }}</td>
-            <td class="amount">{{ m.amount }}</td>
-        </tr>
-        {% endfor %}
+        {% for m in milestones %}<tr><td>{{ m.description }}</td><td>{{ m.due_date }}</td><td class="amount">{{ m.amount }}</td></tr>{% endfor %}
     </tbody>
-    {% if total_amount %}
-    <tfoot>
-        <tr>
-            <td>Tổng giá trị hợp đồng</td>
-            <td></td>
-            <td class="amount">{{ total_amount }}</td>
-        </tr>
-    </tfoot>
-    {% endif %}
+    {% if total_amount %}<tfoot><tr><td>Tổng giá trị hợp đồng <span class="eni">/ Total</span></td><td></td><td class="amount">{{ total_amount }}</td></tr></tfoot>{% endif %}
 </table>
 {% endif %}
-
-{% if effective_date or end_date %}
-{% set ns.n = ns.n + 1 %}
-<h2>Điều {{ ns.n }}. Thời gian thực hiện</h2>
-<p class="clause">Hợp đồng có hiệu lực từ ngày {{ effective_date or "hai bên ký kết" }}{% if end_date %} và kéo dài đến ngày {{ end_date }}{% endif %}. Tiến độ và các mốc bàn giao thực hiện theo lịch thanh toán và nội dung công việc hai bên đã thống nhất.</p>
-{% endif %}
-
-{% if revision_policy or editable %}
-{% set ns.n = ns.n + 1 %}
-<h2>Điều {{ ns.n }}. Chính sách chỉnh sửa và phát sinh</h2>
-<p class="clause" data-field="revision_policy" data-label="Chính sách chỉnh sửa và phát sinh">{{ revision_policy }}</p>
-{% endif %}
-
-{% if ip_ownership or editable %}
-{% set ns.n = ns.n + 1 %}
-<h2>Điều {{ ns.n }}. Quyền sở hữu trí tuệ</h2>
-<p class="clause" data-field="ip_ownership" data-label="Quyền sở hữu trí tuệ">{{ ip_ownership }}</p>
-{% endif %}
-
-{% if termination_clause or editable %}
-{% set ns.n = ns.n + 1 %}
-<h2>Điều {{ ns.n }}. Chấm dứt hợp đồng</h2>
-<p class="clause" data-field="termination_clause" data-label="Chấm dứt hợp đồng">{{ termination_clause }}</p>
-{% endif %}
+<p>Trường hợp Bên B thanh toán trễ hạn, Bên B chịu lãi suất chậm trả <span class="fill" style="min-width:40px">&nbsp;</span>%/tháng trên số tiền chậm thanh toán.</p>
 
 {% set ns.n = ns.n + 1 %}
-<h2>Điều {{ ns.n }}. Bảo mật thông tin</h2>
-<p class="clause">Hai bên cam kết bảo mật mọi thông tin, tài liệu, dữ liệu trao đổi trong quá trình thực hiện Hợp đồng, không tiết lộ cho bên thứ ba nếu không có sự đồng ý bằng văn bản của bên còn lại, trừ trường hợp pháp luật yêu cầu. Nghĩa vụ bảo mật vẫn có hiệu lực sau khi Hợp đồng kết thúc hoặc chấm dứt.</p>
+<h2>Điều {{ ns.n }}. Quyền và Nghĩa Vụ Của Bên A<span class="en">Article {{ ns.n }}. Rights and Obligations of Party A</span></h2>
+<ul>
+    <li>Thực hiện công việc đúng nội dung, chất lượng và tiến độ đã cam kết tại Điều 1 và Điều 2.</li>
+    <li>Chủ động thông báo cho Bên B khi có phát sinh ảnh hưởng đến tiến độ hoặc phạm vi công việc.</li>
+    <li>Bảo mật thông tin, tài liệu của Bên B theo Điều {{ ns.n + 2 }}.</li>
+    <li>Có quyền yêu cầu Bên B thanh toán đầy đủ, đúng hạn theo Điều 3.</li>
+</ul>
 
 {% set ns.n = ns.n + 1 %}
-<h2>Điều {{ ns.n }}. Luật áp dụng và giải quyết tranh chấp</h2>
-<p class="clause">Hợp đồng này được điều chỉnh bởi pháp luật {{ governing_law or "Việt Nam" }}. Mọi tranh chấp phát sinh trước hết được hai bên giải quyết thông qua thương lượng, hòa giải; nếu không đạt được thỏa thuận, tranh chấp sẽ được đưa ra giải quyết tại Tòa án có thẩm quyền theo quy định pháp luật.</p>
+<h2>Điều {{ ns.n }}. Quyền và Nghĩa Vụ Của Bên B<span class="en">Article {{ ns.n }}. Rights and Obligations of Party B</span></h2>
+<ul>
+    <li>Cung cấp đầy đủ, kịp thời thông tin, tài liệu, quyền truy cập cần thiết để Bên A thực hiện công việc.</li>
+    <li>Thanh toán đầy đủ, đúng hạn theo Điều 3.</li>
+    <li>Có quyền yêu cầu Bên A báo cáo tiến độ và nghiệm thu sản phẩm theo các mốc đã thỏa thuận.</li>
+</ul>
+
+{% set ns.n = ns.n + 1 %}
+<h2>Điều {{ ns.n }}. Bảo Mật Thông Tin<span class="en">Article {{ ns.n }}. Confidentiality</span></h2>
+<p class="clause">Hai Bên cam kết bảo mật mọi thông tin, tài liệu không công khai trao đổi trong quá trình thực hiện Hợp đồng, không tiết lộ cho bên thứ ba nếu không có sự đồng ý bằng văn bản của Bên còn lại, trừ trường hợp pháp luật yêu cầu. Nghĩa vụ này vẫn có hiệu lực sau khi Hợp đồng kết thúc.</p>
+
+{% set ns.n = ns.n + 1 %}
+<h2>Điều {{ ns.n }}. Quyền Sở Hữu Trí Tuệ<span class="en">Article {{ ns.n }}. Intellectual Property</span></h2>
+<p class="clause" data-field="ip_ownership" data-label="Quyền sở hữu trí tuệ">{{ ip_ownership or "Toàn bộ quyền sở hữu trí tuệ đối với sản phẩm bàn giao thuộc về Bên B kể từ thời điểm Bên B thanh toán đầy đủ giá trị Hợp đồng, trừ khi hai Bên có thỏa thuận khác bằng văn bản." }}</p>
+
+{% set ns.n = ns.n + 1 %}
+<h2>Điều {{ ns.n }}. Sửa Đổi và Chấm Dứt Hợp Đồng<span class="en">Article {{ ns.n }}. Amendment and Termination</span></h2>
+<p class="clause" data-field="termination_clause" data-label="Sửa đổi và chấm dứt hợp đồng">{{ termination_clause }}</p>
+{% if revision_policy %}<p class="clause" data-field="revision_policy" data-label="Chính sách chỉnh sửa và phát sinh">{{ revision_policy }}</p>{% endif %}
+
+{% set ns.n = ns.n + 1 %}
+<h2>Điều {{ ns.n }}. Giải Quyết Tranh Chấp<span class="en">Article {{ ns.n }}. Dispute Resolution</span></h2>
+<p class="clause">Hợp đồng được điều chỉnh bởi pháp luật {{ governing_law or "Việt Nam" }}. Mọi tranh chấp trước hết được hai Bên giải quyết qua thương lượng, hòa giải; nếu không đạt thỏa thuận, tranh chấp được đưa ra Tòa án nhân dân có thẩm quyền giải quyết theo quy định pháp luật.</p>
 
 {% if standard_terms %}
 {% set ns.n = ns.n + 1 %}
-<h2>Điều {{ ns.n }}. Điều khoản chuẩn theo lĩnh vực</h2>
+<h2>Điều {{ ns.n }}. Điều Khoản Chuẩn Theo Lĩnh Vực<span class="en">Article {{ ns.n }}. Standard Terms</span></h2>
 <p class="clause" data-field="standard_terms" data-label="Điều khoản chuẩn theo lĩnh vực" style="white-space:pre-line">{{ standard_terms }}</p>
 {% endif %}
 
-{% if custom_clauses or editable %}
+{% if custom_clauses %}
 {% set ns.n = ns.n + 1 %}
-<h2>Điều {{ ns.n }}. Điều khoản bổ sung</h2>
+<h2>Điều {{ ns.n }}. Điều Khoản Bổ Sung<span class="en">Article {{ ns.n }}. Additional Terms</span></h2>
 <p class="clause" data-field="custom_clauses" data-label="Điều khoản bổ sung">{{ custom_clauses }}</p>
 {% endif %}
 
 {% set ns.n = ns.n + 1 %}
-<h2>Điều {{ ns.n }}. Điều khoản chung</h2>
-<p class="clause">Hợp đồng có hiệu lực kể từ ngày ký và có giá trị đến khi hai bên hoàn thành toàn bộ nghĩa vụ hoặc theo điều khoản chấm dứt. Hợp đồng được lập thành 02 (hai) bản có giá trị pháp lý như nhau, mỗi bên giữ 01 (một) bản.</p>
+<h2>Điều {{ ns.n }}. Điều Khoản Chung<span class="en">Article {{ ns.n }}. General Provisions</span></h2>
+<p class="clause">Hợp đồng có hiệu lực kể từ ngày ký, được lập thành 02 (hai) bản có giá trị pháp lý như nhau, mỗi Bên giữ 01 (một) bản.</p>
 
 <table class="signature">
     <tr>
         <td>
-            <div class="role">Đại diện Bên A</div>
-            <div style="font-size:10pt;color:#777;">Bên cung cấp dịch vụ</div>
+            <div class="role">Đại Diện Bên A<span class="en">Party A</span></div>
             <div style="font-size:10pt;color:#777;">(Ký, ghi rõ họ tên)</div>
         </td>
         <td>
-            <div class="role">Đại diện Bên B</div>
-            <div style="font-size:10pt;color:#777;">Bên sử dụng dịch vụ</div>
+            <div class="role">Đại Diện Bên B<span class="en">Party B</span></div>
             <div style="font-size:10pt;color:#777;">(Ký, ghi rõ họ tên)</div>
         </td>
     </tr>
 </table>
 
-<div class="footer-note">
-    Tài liệu được tạo bởi SoloDesk{% if version_number and version_number > 1 %} · Phiên bản {{ version_number }}{% endif %}.
-</div>
+<div class="footer-note">Đây là mẫu hợp đồng dịch vụ đơn giản giữa freelancer và khách hàng, không thay thế tư vấn pháp lý chuyên sâu. Tạo bởi SoloDesk{% if version_number and version_number > 1 %} · Phiên bản {{ version_number }}{% endif %}.<span class="en">Simple freelancer–client service agreement; not a substitute for professional legal advice. Generated by SoloDesk.</span></div>
 
 </body>
-
 </html>

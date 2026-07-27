@@ -1,11 +1,13 @@
 from typing import Any
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 # Hai hàm ép kiểu này giờ nằm ở src/ai/shared/text_coercion.py vì contract_generator
 # cũng cần đúng như vậy.  #Huynh
 from src.ai.shared.text_coercion import to_text as _to_text
 from src.ai.shared.text_coercion import to_text_list as _to_text_list
+
+from .proposal_document import PaymentMilestone, default_payment_milestones
 
 
 class ProposalContent(BaseModel):
@@ -27,6 +29,10 @@ class ProposalContent(BaseModel):
     pricing: str
 
     payment_terms: str
+
+    # Các đợt thanh toán có cấu trúc (linh hoạt N đợt). AI xuất ra để render bảng + (Stage 2)
+    # sinh task. Mặc định rỗng nếu model không trả — khi đó vẫn còn `payment_terms` dạng prose.
+    payment_milestones: list[PaymentMilestone] = Field(default_factory=list)
 
     assumptions: str
 
@@ -97,3 +103,61 @@ class ProposalContent(BaseModel):
             if label and weight > 0:
                 items.append({"label": label, "weight": weight})
         return items
+
+    @field_validator("payment_milestones", mode="before")
+    @classmethod
+    def _coerce_milestones(cls, value: Any) -> list[dict[str, Any]]:
+        """Model trả về đủ kiểu: mảng chuỗi, object thay vì mảng, percent là "50%"...
+
+        Bỏ qua entry hỏng thay vì ném lỗi — mất một đợt còn hơn mất cả báo giá.  #Huynh
+        """
+        if isinstance(value, dict):
+            value = [value]
+        if not isinstance(value, list):
+            return []
+
+        items: list[dict[str, Any]] = []
+        for entry in value:
+            if isinstance(entry, str):
+                label = entry.strip()
+                if label:
+                    items.append({"label": label, "percent": None, "amount": "", "due": ""})
+                continue
+            if not isinstance(entry, dict):
+                continue
+            label = _to_text(
+                entry.get("label")
+                or entry.get("description")
+                or entry.get("name")
+                or entry.get("stage")
+            )
+            if not label:
+                continue
+            raw_percent = entry.get("percent", entry.get("percentage"))
+            try:
+                percent: int | None = (
+                    int(float(str(raw_percent).strip().rstrip("%")))
+                    if raw_percent not in (None, "")
+                    else None
+                )
+            except (TypeError, ValueError):
+                percent = None
+            amount = _to_text(entry.get("amount") or entry.get("value"))
+            due = _to_text(
+                entry.get("due")
+                or entry.get("when")
+                or entry.get("condition")
+                or entry.get("timing")
+                or entry.get("date")
+            )
+            items.append({"label": label, "percent": percent, "amount": amount, "due": due})
+        return items
+
+    @model_validator(mode="after")
+    def _ensure_payment_milestones(self) -> "ProposalContent":
+        """Model không trả mốc có cấu trúc (hay chỉ ghi văn xuôi ở `payment_terms`) thì điền
+        lịch chuẩn 50/50 — prompt vốn đã yêu cầu mặc định này. Nhờ vậy mọi báo giá luôn có
+        mốc để render bảng thanh toán VÀ để Stage 2 sinh task "Thu tiền:".  #Huynh"""
+        if not self.payment_milestones:
+            self.payment_milestones = default_payment_milestones()
+        return self

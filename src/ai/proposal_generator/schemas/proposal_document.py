@@ -8,6 +8,40 @@ class PricingLineItem(BaseModel):
     amount: str
 
 
+class PaymentMilestone(BaseModel):
+    """Một ĐỢT thanh toán — mô tả + % (của tổng) HOẶC số tiền + thời điểm/điều kiện.
+
+    Linh hoạt N đợt (mặc định 2: đặt cọc khi ký + phần còn lại khi bàn giao). Đây là nguồn
+    cấu trúc để render "Điều khoản thanh toán" trên báo giá và (Stage 2) sinh task thanh toán.
+    """
+
+    label: str
+    percent: int | None = None
+    amount: str = ""
+    due: str = ""
+
+
+def default_payment_milestones() -> list[PaymentMilestone]:
+    """Lịch thanh toán CHUẨN khi báo giá không nêu mốc nào: đặt cọc 50% + bàn giao 50%.
+
+    Trùng với mặc định nêu trong prompt. Dùng làm điểm neo để LUÔN có mốc thu tiền — kể cả
+    khi model không trả về `payment_milestones` có cấu trúc (chỉ ghi văn xuôi ở
+    `payment_terms`) — nhờ đó Stage 2 vẫn sinh được task "Thu tiền:".  #Huynh
+    """
+    return [
+        PaymentMilestone(
+            label="Đặt cọc khi ký hợp đồng",
+            percent=50,
+            due="Khi ký hợp đồng / trước khi bắt đầu",
+        ),
+        PaymentMilestone(
+            label="Thanh toán khi nghiệm thu & bàn giao",
+            percent=50,
+            due="Khi nghiệm thu & bàn giao",
+        ),
+    ]
+
+
 class ProposalDocument(BaseModel):
     # --- Bên A: người gửi báo giá ---
     #
@@ -52,6 +86,10 @@ class ProposalDocument(BaseModel):
     pricing: str
 
     payment_terms: str
+
+    # Các ĐỢT thanh toán có cấu trúc (linh hoạt N đợt). Template render thành bảng
+    # "Điều khoản thanh toán"; khi rỗng thì rơi về chuỗi `payment_terms`.
+    payment_milestones: list[PaymentMilestone] = []
 
     assumptions: str
 

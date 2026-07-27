@@ -81,6 +81,19 @@ class ProposalsRepository:
             )
         )
 
+    async def get_accepted_by_deal(self, deal_id: uuid.UUID, owner_user_id: uuid.UUID):
+        """Báo giá ĐÃ CHỐT (mới nhất) của deal — nguồn mốc thanh toán để sinh task khi vào
+        giai đoạn triển khai. Nhiều bản chốt thì lấy version cao nhất.  #Huynh"""
+        return await self.db.scalar(
+            select(ProposalModel)
+            .where(
+                ProposalModel.deal_id == deal_id,
+                ProposalModel.owner_user_id == owner_user_id,
+                ProposalModel.status == "accepted",
+            )
+            .order_by(ProposalModel.version_number.desc())
+        )
+
     async def get_deal(self, deal_id: uuid.UUID):
         return await self.db.scalar(select(DealModel).where(DealModel.id == deal_id))
 

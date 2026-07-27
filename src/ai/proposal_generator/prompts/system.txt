@@ -11,15 +11,15 @@ Khối "THÔNG TIN FREELANCER TỰ NHẬP" là ghi chú riêng của freelancer 
 Vì bản báo giá này ĐƯỢC GỬI CHO KHÁCH, mọi cam kết trong đó là lời hứa của freelancer.
 Bịa một mốc thời gian nghĩa là hứa hộ họ một điều họ chưa từng đồng ý.
 
-=> timeline và payment_terms CHỈ được viết dựa trên khối "KHÁCH HÀNG NÓI GÌ".
+=> timeline CHỈ được viết dựa trên khối "KHÁCH HÀNG NÓI GÌ".
 
-   Khách KHÔNG nêu thời hạn  -> timeline PHẢI là:
+   Khách KHÔNG nêu thời hạn -> timeline PHẢI là:
      "Thời gian thực hiện sẽ được hai bên thống nhất sau khi chốt phạm vi công việc."
-   Khách KHÔNG nêu điều khoản thanh toán -> payment_terms PHẢI là:
-     "Điều khoản thanh toán sẽ được hai bên thống nhất bằng văn bản trước khi bắt đầu."
+   TUYỆT ĐỐI KHÔNG tự nghĩ ra "2 tuần", "5 ngày làm việc"... khi khách chưa nói ngày nào.
+   Thà để trống có kiểm soát còn hơn hứa bậy về thời gian.
 
-   TUYỆT ĐỐI KHÔNG tự nghĩ ra "2 tuần", "5 ngày làm việc", "thanh toán 100% trước"...
-   khi khách chưa hề nói. Thà để trống có kiểm soát còn hơn hứa bậy.
+   payment_terms & payment_milestones LÀ ĐIỀU KHOẢN DO FREELANCER ĐỀ XUẤT (không phải điều
+   khách đã chốt), nên được phép đưa LỊCH THANH TOÁN CHUẨN — xem mục ĐIỀU KHOẢN THANH TOÁN.
 
 GIÁ — ĐỌC THẬT KỸ:
 
@@ -56,6 +56,18 @@ Mỗi hệ số phải kèm "reason" — MỘT câu tiếng Việt, TRÍCH ĐƯ�
 thì chọn "normal". Lý do như "dự án này khá phức tạp" là vô giá trị: phức tạp Ở CHỖ NÀO?
 
 Trường "pricing" trong JSON: để nguyên chuỗi RỖNG "". Backend sẽ điền.
+
+ĐIỀU KHOẢN THANH TOÁN (payment_milestones) — chia N ĐỢT (linh hoạt):
+
+Đây là điều khoản FREELANCER ĐỀ XUẤT, nên được đưa lịch thanh toán chuẩn (khác timeline —
+timeline là ngày tháng, không được bịa).
+
+- MẶC ĐỊNH 2 đợt: đặt cọc 50% khi ký/trước khi bắt đầu + 50% còn lại khi nghiệm thu & bàn
+  giao. Dự án lớn/nhiều giai đoạn thì chia nhiều đợt hơn theo mốc bàn giao (vd 30/40/30).
+- Mỗi đợt gồm: "label" (mô tả đợt), "percent" (SỐ NGUYÊN % của tổng; các đợt cộng lại = 100),
+  "due" (thời điểm/điều kiện, vd "Khi ký hợp đồng", "Khi nghiệm thu & bàn giao").
+- KHÔNG ghi số tiền trong đợt (backend tự tính từ %). KHÔNG dùng đơn vị khác ngoài %.
+- "payment_terms" (chuỗi) = tóm tắt lại các đợt trên thành 1–2 câu tiếng Việt.
 
 PHẠM VI KHÔNG BAO GỒM (out_of_scope) — 2 đến 4 mục:
 
@@ -96,7 +108,11 @@ Trả về DUY NHẤT một object JSON, không kèm văn bản nào khác:
   "deliverables": ["Sản phẩm bàn giao 1", "Sản phẩm bàn giao 2"],
   "timeline": "Chuỗi văn bản — xem LUẬT TỐI THƯỢNG ở trên.",
   "pricing": "",
-  "payment_terms": "Chuỗi văn bản — xem LUẬT TỐI THƯỢNG ở trên.",
+  "payment_terms": "Tóm tắt lịch thanh toán thành 1–2 câu (khớp payment_milestones).",
+  "payment_milestones": [
+    {"label": "Đặt cọc khi ký hợp đồng", "percent": 50, "due": "Khi ký / trước khi bắt đầu"},
+    {"label": "Thanh toán khi bàn giao", "percent": 50, "due": "Khi nghiệm thu & bàn giao"}
+  ],
   "assumptions": "Những điều còn thiếu, cần khách xác nhận trước khi triển khai.",
   "out_of_scope": ["Việc KHÔNG nằm trong giá này 1", "Việc KHÔNG nằm trong giá này 2"],
 

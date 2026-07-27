@@ -101,3 +101,34 @@ class TestBuildProposalDocument:
         """Shape hợp đồng KHÔNG có `deliverables` — phải ra list rỗng, không nổ.  #Huynh"""
         doc = build_proposal_document(DTO_CONTENT, **META)
         assert doc.deliverables == []
+
+
+class TestPricingItemsOverride:
+    """Freelancer sửa danh sách hạng mục ở mục 7 → `pricing_items` (chỉ nhãn) chia đều giá chốt."""
+
+    def test_override_splits_total_equally_and_sums_exact(self):
+        content = {
+            "pricing_detail": {"final_price": 200_000_000, "suggested": 180_000_000},
+            "pricing_items": ["Thiet ke UI", "Lap trinh", "Kiem thu"],
+        }
+        doc = build_proposal_document(content, **META)
+        assert [i.description for i in doc.pricing_line_items] == [
+            "Thiet ke UI",
+            "Lap trinh",
+            "Kiem thu",
+        ]
+        assert doc.pricing_total == "200.000.000 VND"
+        # Tổng các dòng phải cộng ĐÚNG bằng giá chốt (dòng cuối gánh phần lẻ).
+        nums = [int(i.amount.replace(".", "").replace(" VND", "")) for i in doc.pricing_line_items]
+        assert sum(nums) == 200_000_000
+
+    def test_override_ignored_when_no_price(self):
+        # Chưa có giá → không dựng được bảng override, rơi về hành vi cũ (không nổ).
+        doc = build_proposal_document({"pricing_items": ["A", "B"]}, **META)
+        assert doc.pricing_line_items == []
+
+    def test_empty_override_falls_back_to_pricing_detail(self):
+        content = {**DTO_CONTENT, "pricing_items": []}
+        doc = build_proposal_document(content, **META)
+        # Override rỗng → dùng bảng cũ (pricing_detail/DTO), giữ nguyên hành vi.
+        assert any(item.description == "Thiet ke UI" for item in doc.pricing_line_items)

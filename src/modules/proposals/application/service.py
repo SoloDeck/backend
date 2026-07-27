@@ -14,11 +14,20 @@ from src.ai.proposal_generator.pricing import (
     compute_quote,
     parse_deadline,
 )
+from src.ai.proposal_generator.schemas.proposal_document import (
+    PaymentMilestone,
+    default_payment_milestones,
+)
 from src.modules.deals.infrastructure.repository import DealsRepository
-from src.modules.proposals.application.pdf_content import build_proposal_document
+from src.modules.proposals.application.pdf_content import (
+    build_proposal_document,
+    extract_payment_milestones,
+)
 from src.modules.proposals.infrastructure.repository import ProposalsRepository
 from src.modules.proposals.schemas.request import ProposalRequest
 from src.modules.subscriptions.application.ai_usage import AiUsageService
+from src.modules.tasks.application.service import PAYMENT_TASK_PREFIX
+from src.modules.tasks.schemas.request import CreateTaskRequest
 from src.shared.events.bus import event_bus
 from src.shared.exceptions.domain import (
     BusinessRuleError,
@@ -60,6 +69,57 @@ _VALID_TRANSITIONS: dict[str, frozenset[str]] = {
     "expired": frozenset(),
     "superseded": frozenset(),
 }
+
+
+def _milestones_to_payloads(milestones: list[PaymentMilestone]) -> list[CreateTaskRequest]:
+    """Mốc thanh toán → task "Thu tiền:". Title mang tiền tố `PAYMENT_TASK_PREFIX` để guard
+    "hoàn thành dự án" nhận ra đâu là mốc thu tiền cần tick xong; số liệu (% hoặc số tiền)
+    và điều kiện đưa vào phần mô tả để title gọn.  #Huynh"""
+    payloads: list[CreateTaskRequest] = []
+    for m in milestones:
+        if m.percent is not None:
+            share = f"{m.percent}%"
+        elif m.amount:
+            share = m.amount
+        else:
+            share = ""
+        title = f"{PAYMENT_TASK_PREFIX} {m.label}"[:500]
+        desc_parts = []
+        if share:
+            desc_parts.append(f"Giá trị: {share} của tổng báo giá")
+        if m.due:
+            desc_parts.append(f"Thời điểm/điều kiện: {m.due}")
+        payloads.append(
+            CreateTaskRequest(title=title, description="\n".join(desc_parts) or None)
+        )
+    return payloads
+
+
+def _payment_task_payloads(content: dict) -> list[CreateTaskRequest]:
+    """Từ các mốc thanh toán của báo giá → task "Thu tiền:" (Phase B — mục 8/9).
+
+    Dùng ĐÚNG nguồn milestone với bảng in trên PDF (`extract_payment_milestones`) nên task
+    và tờ báo giá luôn khớp.  #Huynh"""
+    return _milestones_to_payloads(extract_payment_milestones(content or {}))
+
+
+async def payment_task_payloads_for_deal(
+    db: AsyncSession, deal_id: uuid.UUID, owner_user_id: uuid.UUID
+) -> list[CreateTaskRequest]:
+    """Payloads task "Thu tiền:" lấy từ báo giá ĐÃ CHỐT của deal (rỗng nếu chưa có báo giá
+    nào được chốt).
+
+    Deals gọi hàm này khi deal vào "active" để gắn các mốc thanh toán vào project. Đặt ở
+    proposals vì cấu trúc mốc thanh toán là chuyện của báo giá.
+
+    Báo giá đã chốt mà KHÔNG có mốc có cấu trúc (báo giá cũ, hoặc model chỉ ghi văn xuôi ở
+    `payment_terms`) thì rơi về lịch CHUẨN 50/50 — để luôn có task thu tiền cho freelancer
+    theo dõi, thay vì để trống.  #Huynh"""
+    proposal = await ProposalsRepository(db).get_accepted_by_deal(deal_id, owner_user_id)
+    if proposal is None:
+        return []
+    milestones = extract_payment_milestones(proposal.content or {}) or default_payment_milestones()
+    return _milestones_to_payloads(milestones)
 
 
 @dataclass
@@ -584,6 +644,11 @@ class ProposalsService:
         await self.repo.save(proposal)
 
         if target_status == "accepted":
+            # KHÔNG sinh task thanh toán ở đây: lúc chốt báo giá deal chưa vào "active" nên
+            # CHƯA có Project — mà bảng "Công việc" của deal hiển thị task theo PROJECT. Việc
+            # sinh task "Thu tiền:" từ mốc thanh toán được làm khi deal vào active (project
+            # được tạo), xem `DealsService.transition_stage` + `payment_task_payloads_for_deal`
+            # bên dưới. Ở đây chỉ phát sự kiện.  #Huynh
             await event_bus.publish(
                 "proposals.proposal_accepted",
                 {

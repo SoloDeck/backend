@@ -1,6 +1,7 @@
 import uuid
 from dataclasses import dataclass
-from unittest.mock import AsyncMock, MagicMock
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import structlog
@@ -19,9 +20,12 @@ from src.shared.exceptions.domain import (
 class DealStub:
     id: uuid.UUID
     stage: str
+    title: str = "Deal"
     closed_at: object | None = None
     document_url: str | None = None
     document_filename: str | None = None
+    estimated_value: object | None = None
+    actual_value: object | None = None
 
 
 @dataclass
@@ -78,16 +82,59 @@ async def test_transition_to_active_requires_accepted_proposal() -> None:
         )
 
 
-async def test_transition_to_completed_requires_invoice() -> None:
+def _patch_completion_services(project_id, progress):
+    """Patch ProjectService + TaskService (import lười trong service) cho nhánh hoàn thành.
+
+    Trả về context manager kép; `progress` = (tổng, đã xong) task 'Thu tiền:' của project."""
+    proj_svc = AsyncMock()
+    proj_svc.get_or_create_for_deal.return_value = SimpleNamespace(id=project_id)
+    task_svc = AsyncMock()
+    task_svc.payment_task_progress.return_value = progress
+    return (
+        patch(
+            "src.modules.projects.application.service.ProjectService",
+            return_value=proj_svc,
+        ),
+        patch(
+            "src.modules.tasks.application.service.TaskService",
+            return_value=task_svc,
+        ),
+    )
+
+
+async def test_transition_to_completed_blocked_by_unfinished_payment_tasks() -> None:
+    """Guard mới (Phase B): còn mốc 'Thu tiền:' chưa xong thì chưa cho hoàn thành."""
+    deal_id = uuid.uuid4()
+    owner = uuid.uuid4()
     repo = AsyncMock()
-    repo.get_by_id.return_value = DealStub(id=uuid.uuid4(), stage="active")
-    repo.has_invoice.return_value = False
+    repo.get_by_id.return_value = DealStub(id=deal_id, stage="active")
     service = DealsService(db=AsyncMock(), repo=repo, usage=AsyncMock())
 
-    with pytest.raises(BusinessRuleError):
+    proj_patch, task_patch = _patch_completion_services(uuid.uuid4(), (2, 1))
+    with proj_patch, task_patch, pytest.raises(BusinessRuleError):
         await service.transition_stage(
-            uuid.uuid4(), uuid.uuid4(), DealStageRequest(target_stage="completed_and_billed")
+            owner, deal_id, DealStageRequest(target_stage="completed_and_billed")
         )
+
+
+async def test_transition_to_completed_allowed_when_payment_tasks_done() -> None:
+    """Thu đủ (mọi mốc 'Thu tiền:' đã xong) → cho hoàn thành; actual_value = giá đã chốt."""
+    deal_id = uuid.uuid4()
+    owner = uuid.uuid4()
+    deal = DealStub(id=deal_id, stage="active", estimated_value=30_000_000)
+    repo = AsyncMock()
+    repo.get_by_id.return_value = deal
+    repo.save.side_effect = lambda d: d
+    service = DealsService(db=AsyncMock(), repo=repo, usage=AsyncMock())
+
+    proj_patch, task_patch = _patch_completion_services(uuid.uuid4(), (2, 2))
+    with proj_patch, task_patch:
+        result = await service.transition_stage(
+            owner, deal_id, DealStageRequest(target_stage="completed_and_billed")
+        )
+
+    assert result.stage == "completed_and_billed"
+    assert result.actual_value == 30_000_000
 
 
 async def test_transition_from_terminal_stage_is_rejected() -> None:

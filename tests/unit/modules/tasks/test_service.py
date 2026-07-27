@@ -113,3 +113,39 @@ async def test_get_task_raises_not_found() -> None:
 
     with pytest.raises(NotFoundError):
         await service.get(uuid.uuid4(), uuid.uuid4())
+
+
+async def test_create_many_skips_existing_titles() -> None:
+    deal_id = uuid.uuid4()
+    owner = uuid.uuid4()
+    repo = AsyncMock()
+    repo.entity_exists_for_owner.return_value = True
+    # Deal đã có sẵn task "Thu tiền: Đặt cọc" → phải bỏ qua, chỉ tạo mốc còn lại.
+    repo.list_by_entity.return_value = ([_task_stub(title="Thu tiền: Đặt cọc")], 1)
+    repo.create.side_effect = lambda **kw: _task_stub(**kw)
+    service = TaskService(db=AsyncMock(), repo=repo)
+
+    created = await service.create_many_for_entity(
+        "deal",
+        deal_id,
+        owner,
+        [
+            CreateTaskRequest(title="Thu tiền: Đặt cọc"),
+            CreateTaskRequest(title="Thu tiền: Bàn giao"),
+        ],
+    )
+
+    assert [t.title for t in created] == ["Thu tiền: Bàn giao"]
+    assert repo.create.await_count == 1
+
+
+async def test_create_many_checks_ownership_once() -> None:
+    repo = AsyncMock()
+    repo.entity_exists_for_owner.return_value = False
+    service = TaskService(db=AsyncMock(), repo=repo)
+
+    with pytest.raises(NotFoundError):
+        await service.create_many_for_entity(
+            "deal", uuid.uuid4(), uuid.uuid4(), [CreateTaskRequest(title="x")]
+        )
+    repo.create.assert_not_awaited()
