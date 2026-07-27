@@ -1,13 +1,11 @@
 """Proposals API api."""
 
-import asyncio
 import uuid
+from io import BytesIO
 from typing import Annotated
 
-from io import BytesIO
-from fastapi.responses import StreamingResponse
-
 from fastapi import APIRouter, Depends, Query
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -15,10 +13,11 @@ from src.infrastructure.database.session import get_db_session
 from src.modules.proposals.application.service import ProposalsService
 from src.modules.proposals.schemas.request import (
     AiProposalRequest,
+    ProposalPriceRequest,
     ProposalRequest,
     ProposalStatusRequest,
 )
-from src.modules.proposals.schemas.response import ProposalResponse
+from src.modules.proposals.schemas.response import ProposalResponse, TermTemplateOption
 from src.shared.dependencies.ai import AIFacadeDep
 from src.shared.dependencies.auth import CurrentUserId
 from src.shared.responses.response import ApiResponse, PaginatedResponse
@@ -37,46 +36,89 @@ async def ai_generate_proposal(
     payload: AiProposalRequest,
     user_id: CurrentUserId,
     db: DBSession,
+    ai: AIFacadeDep,
 ) -> ApiResponse[ProposalResponse]:
-    from google import genai
+    """Sinh báo giá bằng AI cho một deal.
 
-    from src.ai.proposal_generator.application.service import ProposalGenerationService
-    from src.ai.proposal_generator.schemas.proposal_generation_input import ProposalGenerationInput
-    from src.config.settings import settings
+    Endpoint này giờ đi CHUNG một đường với `/generate-from-deal`: cả hai đều dựng ngữ
+    cảnh từ database (deal + phiếu tiếp nhận của khách + hồ sơ freelancer).
 
-    gen_input = ProposalGenerationInput(
-        client_name=payload.client_name,
-        company_name=payload.company_name,
-        project_type=payload.project_type,
-        project_description=payload.project_description,
-        estimated_scope=payload.estimated_scope,
-        budget=payload.budget,
-        urgency=payload.urgency,
-        service_category=payload.service_category,
-        pricing_tier=payload.pricing_tier,
-        freelancer_name=payload.freelancer_name,
-    )
-    client = genai.Client(api_key=settings.gemini_api_key)
-    svc = ProposalGenerationService(client=client)
-    content = await asyncio.to_thread(svc.generate, gen_input)
+    Vì sao đổi: trước đây nó KHÔNG đọc database, chỉ dùng đúng những gì frontend nhét vào
+    payload. Mà frontend thì gửi `project_description = ghi chú nội bộ` và KHÔNG hề gửi
+    nguyên văn yêu cầu của khách — dù nó nằm sẵn trong bảng `deal_intakes`. Kết quả: khách
+    viết cả đoạn mô tả mà báo giá vẫn mỏng dính, vì AI bị bịt mắt.
 
-    proposal = await ProposalsService(db=db).create(
-        user_id,
-        ProposalRequest(deal_id=payload.deal_id, content=content.model_dump()),
-        ai_generated=True,
+    Các trường trong payload giờ là dư thừa (đều suy ra được từ `deal_id`), nhưng vẫn nhận
+    để không phá hợp đồng API. Nguồn sự thật là DATABASE, không phải payload.  #Huynh
+    """
+    proposal = await ProposalsService(db=db).generate_from_deal(
+        user_id, payload.deal_id, ai, template_id=payload.template_id
     )
     return ApiResponse.created(ProposalResponse.model_validate(proposal))
 
 
-@router.post("/generate-from-deal/{deal_id}", response_model=ApiResponse[ProposalResponse], status_code=201)
+@router.post(
+    "/generate-from-deal/{deal_id}",
+    response_model=ApiResponse[ProposalResponse],
+    status_code=201,
+)
 async def generate_proposal_from_deal(
     deal_id: uuid.UUID,
     user_id: CurrentUserId,
     db: DBSession,
     ai: AIFacadeDep,
+    template_id: uuid.UUID | None = Query(default=None),
 ) -> ApiResponse[ProposalResponse]:
-    proposal = await ProposalsService(db=db).generate_from_deal(user_id, deal_id, ai)
+    proposal = await ProposalsService(db=db).generate_from_deal(
+        user_id, deal_id, ai, template_id=template_id
+    )
     return ApiResponse.created(ProposalResponse.model_validate(proposal))
+
+
+@router.get("/term-templates", response_model=ApiResponse[list[TermTemplateOption]])
+async def list_proposal_term_templates(
+    user_id: CurrentUserId,
+    db: DBSession,
+) -> ApiResponse[list[TermTemplateOption]]:
+    """Mẫu điều khoản báo giá freelancer được chọn (theo nghề của họ + dùng chung, đang bật).
+
+    Freelancer gọi được (khác `/admin/templates` chỉ admin). FE dùng để dựng danh sách chọn
+    trước khi sinh báo giá.
+    """
+    templates = await ProposalsService(db=db).list_term_templates(user_id)
+    return ApiResponse.ok([TermTemplateOption(id=t.id, name=t.name) for t in templates])
+
+
+@router.patch("/{proposal_id}/price", response_model=ApiResponse[ProposalResponse])
+async def set_proposal_price(
+    proposal_id: uuid.UUID,
+    payload: ProposalPriceRequest,
+    user_id: CurrentUserId,
+    db: DBSession,
+) -> ApiResponse[ProposalResponse]:
+    """Freelancer chốt giá cuối cùng. AI chỉ đề xuất khoảng — con người quyết con số."""
+    proposal = await ProposalsService(db=db).set_price(user_id, proposal_id, payload.price)
+    return ApiResponse.ok(ProposalResponse.model_validate(proposal))
+
+
+class ProposalPreviewResponse(BaseModel):
+    html: str
+
+
+@router.get("/{proposal_id}/preview", response_model=ApiResponse[ProposalPreviewResponse])
+async def preview_proposal(
+    proposal_id: uuid.UUID,
+    user_id: CurrentUserId,
+    db: DBSession,
+) -> ApiResponse[ProposalPreviewResponse]:
+    """HTML xem trước — CHÍNH XÁC bản PDF khách sẽ nhận.
+
+    Frontend nhúng HTML này vào card thay vì tự dựng lại. Cùng một template với PDF nên
+    hai bên KHÔNG THỂ lệch nhau — đó là cái gốc khiến bản trên màn hình trước đây khác bản
+    tải về, nhìn như lừa đảo.  #Huynh
+    """
+    html = await ProposalsService(db=db).render_preview_html(user_id, proposal_id)
+    return ApiResponse.ok(ProposalPreviewResponse(html=html))
 
 
 @router.get("/{proposal_id}/pdf")
@@ -93,12 +135,9 @@ async def generate_proposal_pdf(
     return StreamingResponse(
         BytesIO(pdf_bytes),
         media_type="application/pdf",
-        headers={
-            "Content-Disposition": (
-                f'attachment; filename="proposal-{proposal_id}.pdf"'
-            )
-        },
+        headers={"Content-Disposition": (f'attachment; filename="proposal-{proposal_id}.pdf"')},
     )
+
 
 @router.post("", response_model=ApiResponse[ProposalResponse], status_code=201)
 async def create_proposal(

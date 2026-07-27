@@ -82,6 +82,31 @@ class AnalyticsRepository:
             "total_outstanding": row[0] - row[1],
         }
 
+    async def revenue_monthly(self, owner_user_id: uuid.UUID, since: date) -> list[dict]:
+        """Doanh thu gom theo tháng, tính từ `since` trở đi.
+
+        `date_trunc('month', ...)` dồn mọi hoá đơn trong tháng về ngày đầu tháng để GROUP BY.
+        Chỉ trả các tháng CÓ hoá đơn; việc điền tháng trống thành 0 để service lo — repository
+        chỉ truy vấn, không dựng khung thời gian.
+        """
+        month = func.date_trunc("month", InvoiceModel.issue_date)
+        rows = (
+            await self.db.execute(
+                select(
+                    month.label("month"),
+                    func.coalesce(func.sum(InvoiceModel.total), 0),
+                    func.coalesce(func.sum(InvoiceModel.amount_paid), 0),
+                )
+                .where(
+                    InvoiceModel.owner_user_id == owner_user_id,
+                    InvoiceModel.issue_date >= since,
+                )
+                .group_by(month)
+                .order_by(month)
+            )
+        ).all()
+        return [{"month": r[0].date(), "invoiced": r[1], "collected": r[2]} for r in rows]
+
     async def pipeline(self, owner_user_id: uuid.UUID) -> list[dict]:
         rows = (
             await self.db.execute(

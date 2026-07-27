@@ -1,4 +1,5 @@
 import uuid
+from decimal import Decimal
 
 from pydantic import BaseModel, Field
 
@@ -25,3 +26,19 @@ class AiProposalRequest(BaseModel):
     service_category: str
     pricing_tier: str
     freelancer_name: str
+    # Mẫu điều khoản freelancer chọn (từ thư viện admin). None = "AI tự viết", không mẫu.
+    template_id: uuid.UUID | None = None
+
+
+class ProposalPriceRequest(BaseModel):
+    """Freelancer CHỐT giá cuối cùng cho bản báo giá.
+
+    Bộ định giá chỉ đưa ra một KHOẢNG kèm cách suy ra. Con số gửi cho khách phải do CON
+    NGƯỜI quyết — đó là ranh giới đạo đức của cả tính năng: AI hỗ trợ, không thay mặt.
+
+    Cố ý KHÔNG chặn giá nằm ngoài khoảng đề xuất. Freelancer biết những điều hệ thống không
+    biết (khách quen, muốn lấy dự án làm portfolio, đang cần việc gấp). Ngoài khoảng thì
+    CẢNH BÁO, không CẤM.  #Huynh
+    """
+
+    price: Decimal = Field(gt=0, description="Giá chào cuối cùng, VND")

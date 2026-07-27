@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "solodesk-backend"
-version = "0.2.2"
+version = "0.4.1"
 description = "AI-powered CRM and deal management platform for Vietnamese freelancers"
 requires-python = ">=3.13"
 dependencies = [
@@ -29,9 +29,6 @@ dependencies = [
     # AI
     "langchain>=1.3.9",
     "langchain-openai>=1.3.2",
-    "langchain-community>=0.4.2",
-    "langchain-text-splitters>=1.1.2",
-    "faiss-cpu>=1.14.3",
     "openai>=1.59",
     "groq>=1.5.0",
     "google-genai>=2.0.0",
@@ -45,11 +42,13 @@ dependencies = [
     # Env
     "python-dotenv>=1.0",
     "google-auth[requests]>=2.53.0",
+    # Object storage S3-compatible (MinIO khi dev, AWS S3/R2 khi deploy)
+    "boto3>=1.35",
+    # ĐỌC pdf (weasyprint chỉ GHI pdf). Dùng để bóc chữ trong file brief khách gửi,
+    # rồi đưa cho AI chấm điểm deal.
+    "pypdf>=5.1",
     "weasyprint>=69.0",
     "jinja2>=3.1.6",
-    # Object storage
-    "boto3>=1.35",
-    "langchain-google-genai>=4.3.1",
 ]
 
 [project.optional-dependencies]

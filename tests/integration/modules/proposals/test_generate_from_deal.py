@@ -8,6 +8,7 @@ from httpx import AsyncClient
 from src.main import app
 from src.shared.dependencies.ai import get_ai_facade
 from src.shared.exceptions.domain import EntitlementError
+from tests.conftest import grant_ai_plan
 
 # ---------------------------------------------------------------------------
 # Fake AI facades
@@ -27,14 +28,23 @@ _FAKE_CONTENT = {
 class _PermissiveAIFacade:
     """Always returns fake content regardless of entitlement."""
 
-    async def generate_proposal(self, *, deal_data, client_data, user_profile, template, user_can_use_ai):
+    async def generate_proposal(
+        self, *, deal_data, client_data, user_profile, template, user_can_use_ai
+    ):
         return _FAKE_CONTENT
+
+    def last_usage(self, module):
+        """Facade thật trả về token đã dùng để ghi `ai_cost_records`. Stub thì không tốn
+        đồng nào, nên trả None — dịch vụ hiểu là "không có gì để ghi".  #Huynh"""
+        return None
 
 
 class _StrictAIFacade:
     """Mirrors real entitlement check — raises 402 when user_can_use_ai=False."""
 
-    async def generate_proposal(self, *, deal_data, client_data, user_profile, template, user_can_use_ai):
+    async def generate_proposal(
+        self, *, deal_data, client_data, user_profile, template, user_can_use_ai
+    ):
         if not user_can_use_ai:
             raise EntitlementError(
                 "Your plan does not include AI features. Upgrade to Pro.",
@@ -42,13 +52,16 @@ class _StrictAIFacade:
             )
         return _FAKE_CONTENT
 
+    def last_usage(self, module):
+        return None
+
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
 
-async def _auth(client: AsyncClient) -> dict:
+async def _auth(client: AsyncClient, db_session=None) -> dict:
     resp = await client.post(
         "/api/v1/auth/register",
         json={
@@ -58,7 +71,18 @@ async def _auth(client: AsyncClient) -> dict:
         },
     )
     assert resp.status_code == 201, resp.text
-    return {"Authorization": f"Bearer {resp.json()['data']['access_token']}"}
+
+    headers = {"Authorization": f"Bearer {resp.json()['data']['access_token']}"}
+
+    # Cấp gói CÓ AI. Endpoint AI giờ kiểm tra quyền + hạn mức qua `AiUsageService.consume()`
+    # — user đăng ký mới trong test không có gói nào (test DB không seed bảng gói), nên mọi
+    # lệnh gọi AI trả 402. Việc CHẶN 402/429 có class test riêng (`...Entitlement`) và class
+    # đó CỐ Ý không gọi hàm này.  #Huynh
+    if db_session is not None:
+        me = await client.get("/api/v1/users/me", headers=headers)
+        await grant_ai_plan(db_session, uuid.UUID(me.json()["data"]["id"]))
+
+    return headers
 
 
 async def _make_deal(http: AsyncClient, headers: dict, title: str = "Website Redesign") -> str:
@@ -90,8 +114,8 @@ class TestGenerateFromDeal:
         yield
         app.dependency_overrides.pop(get_ai_facade, None)
 
-    async def test_happy_path_returns_201(self, client: AsyncClient) -> None:
-        headers = await _auth(client)
+    async def test_happy_path_returns_201(self, client: AsyncClient, db_session) -> None:
+        headers = await _auth(client, db_session)
         deal_id = await _make_deal(client, headers)
 
         resp = await client.post(
@@ -104,8 +128,8 @@ class TestGenerateFromDeal:
         assert data["ai_generated"] is True
         assert data["status"] == "draft"
 
-    async def test_content_contains_expected_fields(self, client: AsyncClient) -> None:
-        headers = await _auth(client)
+    async def test_content_contains_expected_fields(self, client: AsyncClient, db_session) -> None:
+        headers = await _auth(client, db_session)
         deal_id = await _make_deal(client, headers)
 
         resp = await client.post(
@@ -117,8 +141,8 @@ class TestGenerateFromDeal:
         for key in ("project_overview", "scope_of_work", "deliverables", "timeline", "pricing"):
             assert key in content, f"Missing key: {key}"
 
-    async def test_first_proposal_is_version_1(self, client: AsyncClient) -> None:
-        headers = await _auth(client)
+    async def test_first_proposal_is_version_1(self, client: AsyncClient, db_session) -> None:
+        headers = await _auth(client, db_session)
         deal_id = await _make_deal(client, headers)
 
         resp = await client.post(
@@ -128,22 +152,18 @@ class TestGenerateFromDeal:
         assert resp.status_code == 201, resp.text
         assert resp.json()["data"]["version_number"] == 1
 
-    async def test_second_call_increments_version(self, client: AsyncClient) -> None:
-        headers = await _auth(client)
+    async def test_second_call_increments_version(self, client: AsyncClient, db_session) -> None:
+        headers = await _auth(client, db_session)
         deal_id = await _make_deal(client, headers)
 
-        r1 = await client.post(
-            f"/api/v1/proposals/generate-from-deal/{deal_id}", headers=headers
-        )
-        r2 = await client.post(
-            f"/api/v1/proposals/generate-from-deal/{deal_id}", headers=headers
-        )
+        r1 = await client.post(f"/api/v1/proposals/generate-from-deal/{deal_id}", headers=headers)
+        r2 = await client.post(f"/api/v1/proposals/generate-from-deal/{deal_id}", headers=headers)
         assert r1.status_code == 201
         assert r2.status_code == 201
         assert r2.json()["data"]["version_number"] == r1.json()["data"]["version_number"] + 1
 
-    async def test_proposal_appears_in_list(self, client: AsyncClient) -> None:
-        headers = await _auth(client)
+    async def test_proposal_appears_in_list(self, client: AsyncClient, db_session) -> None:
+        headers = await _auth(client, db_session)
         deal_id = await _make_deal(client, headers)
 
         gen_resp = await client.post(
@@ -155,8 +175,8 @@ class TestGenerateFromDeal:
         ids = [p["id"] for p in list_resp.json()["data"]]
         assert proposal_id in ids
 
-    async def test_proposal_retrievable_by_id(self, client: AsyncClient) -> None:
-        headers = await _auth(client)
+    async def test_proposal_retrievable_by_id(self, client: AsyncClient, db_session) -> None:
+        headers = await _auth(client, db_session)
         deal_id = await _make_deal(client, headers)
 
         gen_resp = await client.post(
@@ -168,17 +188,17 @@ class TestGenerateFromDeal:
         assert get_resp.status_code == 200
         assert get_resp.json()["data"]["ai_generated"] is True
 
-    async def test_nonexistent_deal_returns_404(self, client: AsyncClient) -> None:
-        headers = await _auth(client)
+    async def test_nonexistent_deal_returns_404(self, client: AsyncClient, db_session) -> None:
+        headers = await _auth(client, db_session)
         resp = await client.post(
             f"/api/v1/proposals/generate-from-deal/{uuid.uuid4()}",
             headers=headers,
         )
         assert resp.status_code == 404
 
-    async def test_other_users_deal_returns_404(self, client: AsyncClient) -> None:
-        headers_a = await _auth(client)
-        headers_b = await _auth(client)
+    async def test_other_users_deal_returns_404(self, client: AsyncClient, db_session) -> None:
+        headers_a = await _auth(client, db_session)
+        headers_b = await _auth(client, db_session)
         deal_id = await _make_deal(client, headers_a)
 
         resp = await client.post(
@@ -187,21 +207,17 @@ class TestGenerateFromDeal:
         )
         assert resp.status_code == 404
 
-    async def test_unauthenticated_returns_401(self, client: AsyncClient) -> None:
-        resp = await client.post(
-            f"/api/v1/proposals/generate-from-deal/{uuid.uuid4()}"
-        )
+    async def test_unauthenticated_returns_401(self, client: AsyncClient, db_session) -> None:
+        resp = await client.post(f"/api/v1/proposals/generate-from-deal/{uuid.uuid4()}")
         assert resp.status_code == 401
 
-    async def test_tenant_isolation_in_list(self, client: AsyncClient) -> None:
+    async def test_tenant_isolation_in_list(self, client: AsyncClient, db_session) -> None:
         """Generated proposal from user A is not visible to user B."""
-        headers_a = await _auth(client)
-        headers_b = await _auth(client)
+        headers_a = await _auth(client, db_session)
+        headers_b = await _auth(client, db_session)
         deal_id = await _make_deal(client, headers_a)
 
-        await client.post(
-            f"/api/v1/proposals/generate-from-deal/{deal_id}", headers=headers_a
-        )
+        await client.post(f"/api/v1/proposals/generate-from-deal/{deal_id}", headers=headers_a)
 
         list_resp = await client.get("/api/v1/proposals", headers=headers_b)
         assert list_resp.status_code == 200

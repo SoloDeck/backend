@@ -41,9 +41,18 @@ async def _create_deal(http: AsyncClient, headers: dict, client_id: str) -> str:
 
 
 async def _create_proposal(http: AsyncClient, headers: dict, deal_id: str) -> str:
+    # `pricing.total` để báo giá CÓ GIÁ CỤ THỂ — nếu không, chuyển sang "sent" bị chặn
+    # (409): không gửi được báo giá không có giá. Đây là báo giá tự soạn (có sẵn tổng), nên
+    # không cần `pricing_detail`.  #Huynh
     resp = await http.post(
         "/api/v1/proposals",
-        json={"deal_id": deal_id, "content": {"body": "proposal body"}},
+        json={
+            "deal_id": deal_id,
+            "content": {
+                "body": "proposal body",
+                "pricing": {"total": 5_000_000, "currency": "VND"},
+            },
+        },
         headers=headers,
     )
     assert resp.status_code == 201, resp.text

@@ -16,5 +16,50 @@ class ReminderResponse(BaseModel):
     status: str
     scheduled_at: datetime
     message_preview: str | None
+    # Để giao diện phân biệt "tôi tự đặt" với "hệ thống tự sinh, đang chờ tôi duyệt" —
+    # người dùng cần biết trước khi bấm gửi một tin nhắn tới khách hàng thật.
+    requires_approval: bool = False
+    created_by_rule: bool = False
     created_at: datetime
     updated_at: datetime
+
+
+class ReminderTemplateVariable(BaseModel):
+    """Một biến chèn được vào template lời nhắc, kèm nhãn tiếng Việt cho giao diện."""
+
+    token: str
+    label: str
+
+
+class ReminderRuleResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    rule_type: str
+    is_enabled: bool
+    offset_days: int
+    repeat_every_days: int | None
+    channel: str
+    auto_send: bool
+    send_at_hour: int
+    # Câu mô tả lấy từ danh mục ở backend thay vì để frontend tự chế — hai nơi viết hai
+    # kiểu thì người dùng đọc tài liệu và đọc màn hình sẽ thấy khác nhau.
+    label: str = ""
+    supports_repeat: bool = False
+    # Nội dung mẫu ĐANG hiệu lực (bản tự soạn nếu có, ngược lại là mặc định) + các biến
+    # template này hỗ trợ, để màn cài đặt hiển thị và cho sửa.
+    message_template: str = ""
+    is_custom_template: bool = False
+    template_variables: list[ReminderTemplateVariable] = []
+
+
+class ReminderDeliveryResponse(BaseModel):
+    """Kết quả bấm "Gửi ngay".
+
+    Trả kèm `detail` — một câu tiếng Việt hiện thẳng lên toast — thay vì bắt frontend tự
+    đoán nghĩa của `status`. Lý do hỏng ("khách chưa có email") chỉ backend mới biết.
+    """
+
+    reminder: ReminderResponse
+    status: str
+    detail: str
+    delivered: bool

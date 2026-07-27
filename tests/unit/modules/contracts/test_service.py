@@ -230,3 +230,61 @@ class TestUpdate:
             await ContractsService(db=db).update(
                 contract.owner_user_id, contract.id, _make_payload()
             )
+
+
+class TestApplyChosenTemplate:
+    """Chèn điều khoản từ mẫu freelancer CHỌN, NGUYÊN VĂN. AI không đụng tới."""
+
+    def _service(self, template):  # type: ignore[no-untyped-def]
+        repo = AsyncMock()
+        repo.get_template_for_use.return_value = template
+        return ContractsService(db=AsyncMock(), repo=repo), repo
+
+    async def test_khong_chon_thi_khong_chen(self) -> None:
+        """template_id=None ("AI tự viết") → không tra, không chèn."""
+        service, repo = self._service(MagicMock())
+
+        result = await service._apply_chosen_template(
+            {"x": 1}, None, MagicMock(profession="ui-ux-design"), template_type="contract"
+        )
+
+        assert "standard_terms" not in result
+        repo.get_template_for_use.assert_not_awaited()
+
+    async def test_chon_mau_hop_le_chen_nguyen_van(self) -> None:
+        tid = uuid.uuid4()
+        template = MagicMock(content={"body": "Bàn giao file nguồn sau thanh toán đủ."})
+        service, repo = self._service(template)
+
+        result = await service._apply_chosen_template(
+            {"scope_of_work": "..."},
+            tid,
+            MagicMock(profession="ui-ux-design"),
+            template_type="contract",
+        )
+
+        assert result["standard_terms"] == "Bàn giao file nguồn sau thanh toán đủ."
+        assert result["scope_of_work"] == "..."  # AI sinh gì vẫn giữ, chỉ THÊM
+        # Tra theo đúng id + nghề của freelancer (chặn mượn mẫu nghề khác).
+        assert repo.get_template_for_use.await_args.args[0] == tid
+        assert repo.get_template_for_use.await_args.kwargs["profession"] == "ui-ux-design"
+
+    async def test_mau_khong_dung_duoc_thi_bao_loi(self) -> None:
+        """Mẫu đã tắt / nghề khác / không tồn tại → repo trả None → chặn, không im lặng."""
+        from src.shared.exceptions.domain import ValidationError
+
+        service, _ = self._service(None)
+
+        with pytest.raises(ValidationError):
+            await service._apply_chosen_template(
+                {}, uuid.uuid4(), MagicMock(profession="graphic-design"), template_type="contract"
+            )
+
+    async def test_mau_body_rong_thi_khong_chen(self) -> None:
+        service, _ = self._service(MagicMock(content={"body": "   "}))
+
+        result = await service._apply_chosen_template(
+            {}, uuid.uuid4(), MagicMock(profession=None), template_type="contract"
+        )
+
+        assert "standard_terms" not in result

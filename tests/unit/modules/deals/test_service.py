@@ -1,6 +1,6 @@
 import uuid
 from dataclasses import dataclass
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 import structlog
@@ -28,12 +28,14 @@ class DealStub:
 class OwnerStub:
     id: uuid.UUID
     currency: str = "VND"
+    email: str | None = None
+    full_name: str = "Owner"
 
 
 async def test_create_requires_owned_client() -> None:
     repo = AsyncMock()
     repo.get_client_by_id.return_value = None
-    service = DealsService(db=AsyncMock(), repo=repo)
+    service = DealsService(db=AsyncMock(), repo=repo, usage=AsyncMock())
 
     with pytest.raises(NotFoundError):
         await service.create(uuid.uuid4(), DealRequest(client_id=uuid.uuid4(), title="Deal"))
@@ -42,7 +44,7 @@ async def test_create_requires_owned_client() -> None:
 async def test_transition_rejects_backward_stage() -> None:
     repo = AsyncMock()
     repo.get_by_id.return_value = DealStub(id=uuid.uuid4(), stage="in_negotiation")
-    service = DealsService(db=AsyncMock(), repo=repo)
+    service = DealsService(db=AsyncMock(), repo=repo, usage=AsyncMock())
 
     with pytest.raises(InvalidStateTransitionError):
         await service.transition_stage(
@@ -50,22 +52,25 @@ async def test_transition_rejects_backward_stage() -> None:
         )
 
 
-async def test_transition_rejects_unknown_stage_as_domain_error() -> None:
-    repo = AsyncMock()
-    repo.get_by_id.return_value = DealStub(id=uuid.uuid4(), stage="new_lead")
-    service = DealsService(db=AsyncMock(), repo=repo)
+def test_giai_doan_rac_bi_chan_ngay_o_schema() -> None:
+    """Giai đoạn rác là DỮ LIỆU KHÔNG HỢP LỆ (422), không phải xung đột trạng thái (409).
 
-    with pytest.raises(BusinessRuleError):
-        await service.transition_stage(
-            uuid.uuid4(), uuid.uuid4(), DealStageRequest(target_stage="not_a_stage")
-        )
+    Trước đây `target_stage` là `str` trần nên chuỗi rác lọt qua schema, xuống tới service
+    mới bị chặn → trả 409 CONFLICT. Sai ngữ nghĩa: 409 nghĩa là "trạng thái hiện tại không
+    cho phép", còn đây là "giá trị này không tồn tại". Giờ dùng enum, pydantic chặn ở cửa
+    và FastAPI tự trả 422 kèm danh sách giá trị hợp lệ.  #Huynh
+    """
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        DealStageRequest(target_stage="not_a_stage")
 
 
 async def test_transition_to_active_requires_accepted_proposal() -> None:
     repo = AsyncMock()
     repo.get_by_id.return_value = DealStub(id=uuid.uuid4(), stage="in_negotiation")
     repo.has_accepted_proposal.return_value = False
-    service = DealsService(db=AsyncMock(), repo=repo)
+    service = DealsService(db=AsyncMock(), repo=repo, usage=AsyncMock())
 
     with pytest.raises(BusinessRuleError):
         await service.transition_stage(
@@ -77,7 +82,7 @@ async def test_transition_to_completed_requires_invoice() -> None:
     repo = AsyncMock()
     repo.get_by_id.return_value = DealStub(id=uuid.uuid4(), stage="active")
     repo.has_invoice.return_value = False
-    service = DealsService(db=AsyncMock(), repo=repo)
+    service = DealsService(db=AsyncMock(), repo=repo, usage=AsyncMock())
 
     with pytest.raises(BusinessRuleError):
         await service.transition_stage(
@@ -88,7 +93,7 @@ async def test_transition_to_completed_requires_invoice() -> None:
 async def test_transition_from_terminal_stage_is_rejected() -> None:
     repo = AsyncMock()
     repo.get_by_id.return_value = DealStub(id=uuid.uuid4(), stage="completed_and_billed")
-    service = DealsService(db=AsyncMock(), repo=repo)
+    service = DealsService(db=AsyncMock(), repo=repo, usage=AsyncMock())
 
     with pytest.raises(InvalidStateTransitionError):
         await service.transition_stage(
@@ -210,7 +215,7 @@ def _intake_payload(**overrides) -> PublicIntakeRequest:
 
 
 async def test_create_public_intake_creates_client_deal_and_intake() -> None:
-    owner = OwnerStub(id=uuid.uuid4())
+    owner = OwnerStub(id=uuid.uuid4(), email="owner@example.com")
     client_id = uuid.uuid4()
     intake = IntakeStub(id=uuid.uuid4(), client_id=client_id)
     repo = AsyncMock()
@@ -218,14 +223,24 @@ async def test_create_public_intake_creates_client_deal_and_intake() -> None:
     repo.create_client.return_value = DealStub(id=client_id, stage="prospect")
     repo.create.return_value = DealStub(id=uuid.uuid4(), stage="new_lead")
     repo.create_intake.return_value = intake
-    service = DealsService(db=AsyncMock(), repo=repo)
+
+    # `Session.add()` là hàm ĐỒNG BỘ. Để AsyncMock tự sinh thì nó trả về một coroutine
+    # không ai await → RuntimeWarning "coroutine was never awaited" và test đỏ vì một lý do
+    # chẳng liên quan gì tới thứ đang được kiểm tra.  #Huynh
+    db = AsyncMock()
+    db.add = MagicMock()
+    service = DealsService(db=db, repo=repo, usage=AsyncMock())
 
     # Unique token per test run so the shared process limiter is never the cause of failure.
+    sent_email = AsyncMock()
     with pytest.MonkeyPatch().context() as mp:
         mp.setattr("src.workers.ai_jobs.tasks.qualify_deal_async_by_id.delay", lambda *a: None)
+        mp.setattr("src.shared.email.smtp.send_email", sent_email)
         result = await service.create_public_intake(f"tok-{uuid.uuid4().hex}", _intake_payload())
 
     assert result is intake
+    # Owner có email -> phải gửi thông báo email "Deal mới" (ngoài chuông in-app).
+    sent_email.assert_awaited_once()
     repo.create_client.assert_awaited_once()
     repo.create.assert_awaited_once()
     repo.create_intake.assert_awaited_once()
@@ -234,11 +249,18 @@ async def test_create_public_intake_creates_client_deal_and_intake() -> None:
     assert deal_kwargs["owner_user_id"] == owner.id
     assert deal_kwargs["stage"] == "new_lead"
 
+    # Freelancer PHẢI được báo là có khách mới. Thiếu bước này thì deal nằm im trong cột
+    # "Deal Mới" cho tới khi họ tự mở ra xem — deal nóng để vài ngày là mất khách.
+    notification = db.add.call_args.args[0]
+    assert notification.type == "intake_submitted"
+    assert notification.user_id == owner.id
+    assert notification.is_read is False
+
 
 async def test_create_public_intake_rejects_unknown_token() -> None:
     repo = AsyncMock()
     repo.get_owner_by_intake_token.return_value = None
-    service = DealsService(db=AsyncMock(), repo=repo)
+    service = DealsService(db=AsyncMock(), repo=repo, usage=AsyncMock())
 
     with pytest.raises(NotFoundError):
         await service.create_public_intake(f"bad-{uuid.uuid4().hex}", _intake_payload())
@@ -336,8 +358,11 @@ def _make_qualify_service(ai_result: dict):
 
     ai_facade = AsyncMock()
     ai_facade.qualify_lead.return_value = ai_result
+    # last_usage() là hàm ĐỒNG BỘ. Để AsyncMock thì nó trả coroutine không ai await,
+    # pytest báo lỗi (filterwarnings = error).
+    ai_facade.last_usage = MagicMock(return_value=None)
 
-    service = DealsService(db=AsyncMock(), repo=repo, ai_facade=ai_facade)
+    service = DealsService(db=AsyncMock(), repo=repo, ai_facade=ai_facade, usage=AsyncMock())
     return service, intake, deal_model
 
 
@@ -365,43 +390,72 @@ async def test_qualify_deal_writes_all_signal_fields_to_deal() -> None:
     assert deal_model.ai_qualification_detected_signals[2]["is_positive"] is False
 
 
-async def test_qualify_deal_hot_score_maps_to_80_and_qualify() -> None:
+# Ba test dưới đây TRƯỚC ĐÂY khoá lại bảng tra {"HOT": 80, "WARM": 50, "COLD": 20} —
+# tức là chúng đang bảo vệ đúng cái thứ khiến điểm số vô nghĩa: mọi deal WARM đều ra
+# đúng 50/100 dù là deal 20 triệu hay deal 700 nghìn. Giờ điểm được cộng từ thang 5
+# tiêu chí do AI chấm, và NHÃN suy ra TỪ điểm.  #Huynh
+
+
+def _breakdown(scope: int, budget: int, timeline: int, detail: int, context: int) -> dict:
+    return {
+        "scope": {"points": scope, "reason": ""},
+        "budget": {"points": budget, "reason": ""},
+        "timeline": {"points": timeline, "reason": ""},
+        "detail": {"points": detail, "reason": ""},
+        "context": {"points": context, "reason": ""},
+    }
+
+
+async def test_qualify_deal_diem_cong_tu_thang_tieu_chi() -> None:
     service, _, deal_model = _make_qualify_service(
-        {**_AI_RESULT, "suggested_lead_score": "HOT"}
+        {**_AI_RESULT, "score_breakdown": _breakdown(28, 25, 18, 13, 8)}
     )
 
     await service.qualify_deal(deal_model.owner_user_id, deal_model.id)
 
-    assert deal_model.ai_qualification_score == 80
+    assert deal_model.ai_qualification_score == 92  # 28+25+18+13+8
     assert deal_model.ai_qualification_recommendation == "qualify"
 
 
-async def test_qualify_deal_cold_score_maps_to_20_and_pass() -> None:
+async def test_qualify_deal_nhan_suy_ra_tu_diem_chu_khong_tu_model() -> None:
+    """Model bảo HOT nhưng điểm chỉ 30 → hệ thống phải nghe ĐIỂM, không nghe nhãn."""
     service, _, deal_model = _make_qualify_service(
-        {**_AI_RESULT, "suggested_lead_score": "COLD"}
+        {
+            **_AI_RESULT,
+            "suggested_lead_score": "HOT",
+            "score_breakdown": _breakdown(10, 10, 5, 3, 2),
+        }
     )
 
-    await service.qualify_deal(deal_model.owner_user_id, deal_model.id)
+    result = await service.qualify_deal(deal_model.owner_user_id, deal_model.id)
 
-    assert deal_model.ai_qualification_score == 20
+    assert deal_model.ai_qualification_score == 30
+    assert result["suggested_lead_score"] == "COLD"
     assert deal_model.ai_qualification_recommendation == "pass"
 
 
-async def test_qualify_deal_warm_score_maps_to_50() -> None:
-    service, _, deal_model = _make_qualify_service(
-        {**_AI_RESULT, "suggested_lead_score": "WARM"}
+async def test_qualify_deal_hai_deal_khac_nhau_ra_diem_khac_nhau() -> None:
+    """Chính là thứ bảng tra cũ không làm được: deal nào cũng ra đúng 50."""
+    service_a, _, deal_a = _make_qualify_service(
+        {**_AI_RESULT, "score_breakdown": _breakdown(30, 25, 20, 15, 10)}
+    )
+    service_b, _, deal_b = _make_qualify_service(
+        {**_AI_RESULT, "score_breakdown": _breakdown(5, 20, 0, 5, 0)}
     )
 
-    await service.qualify_deal(deal_model.owner_user_id, deal_model.id)
+    await service_a.qualify_deal(deal_a.owner_user_id, deal_a.id)
+    await service_b.qualify_deal(deal_b.owner_user_id, deal_b.id)
 
-    assert deal_model.ai_qualification_score == 50
+    assert deal_a.ai_qualification_score == 100
+    assert deal_b.ai_qualification_score == 30
+    assert deal_a.ai_qualification_score != deal_b.ai_qualification_score
 
 
 async def test_qualify_deal_missing_ai_facade_raises() -> None:
     deal_model = DealModelStub(id=uuid.uuid4(), owner_user_id=uuid.uuid4(), client_id=uuid.uuid4())
     repo = AsyncMock()
     repo.get_by_id.return_value = deal_model
-    service = DealsService(db=AsyncMock(), repo=repo, ai_facade=None)
+    service = DealsService(db=AsyncMock(), repo=repo, ai_facade=None, usage=AsyncMock())
 
     with pytest.raises(RuntimeError, match="AIFacade not initialized"):
         await service.qualify_deal(deal_model.owner_user_id, deal_model.id)

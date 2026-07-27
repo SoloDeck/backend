@@ -47,6 +47,9 @@ class AdminSubscriptionOverrideRequest(BaseModel):
 class AdminCreateTemplateRequest(BaseModel):
     name: str
     template_type: Literal["proposal", "contract"]
+    # Slug nghề (intake_form/professions.py) hoặc None = mẫu dùng chung. Service validate
+    # qua seam professions, sai slug → 422.
+    profession: str | None = None
     content: dict
     plan_tier_required: str | None = None
     is_active: bool = False
@@ -54,6 +57,7 @@ class AdminCreateTemplateRequest(BaseModel):
 
 class AdminUpdateTemplateRequest(BaseModel):
     name: str | None = None
+    profession: str | None = None
     content: dict | None = None
     is_active: bool | None = None
     plan_tier_required: str | None = None

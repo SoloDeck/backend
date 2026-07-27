@@ -47,7 +47,11 @@ class ClientsRepository:
             conditions.append(ClientModel.name.ilike(f"%{name}%"))
         if email is not None:
             conditions.append(ClientModel.email.ilike(f"%{email}%"))
-        result = await self.db.execute(select(ClientModel).where(*conditions))
+        result = await self.db.execute(
+            # Trước đây không có order_by -> thứ tự trả về tùy DB. Sắp theo ngày cập nhật
+            # mới nhất để client vừa thêm/sửa luôn ở đầu danh sách.
+            select(ClientModel).where(*conditions).order_by(ClientModel.updated_at.desc())
+        )
         return list(result.scalars().all())
 
     async def add_comm_log(self, **values):

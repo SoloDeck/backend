@@ -18,7 +18,11 @@ from src.modules.admin.schemas.request import (
     AdminUpdateTemplateRequest,
     AdminUpdateUserRequest,
 )
-from src.shared.exceptions.domain import AlreadyExistsError, NotFoundError
+from src.shared.exceptions.domain import (
+    AlreadyExistsError,
+    NotFoundError,
+    ValidationError,
+)
 
 
 @dataclass
@@ -167,12 +171,12 @@ class AdminService:
             raise NotFoundError(f"Plan {plan_id} not found")
         return plan
 
-    async def create_plan(self, payload: AdminPlanRequest):
+    async def create_plan(self, payload: AdminPlanRequest, *, admin_id: uuid.UUID | None = None):
         if await self.repo.get_plan_by_name(payload.name) is not None:
             raise AlreadyExistsError(f"Plan name '{payload.name}' is already in use")
         if await self.repo.get_plan_by_slug(payload.slug) is not None:
             raise AlreadyExistsError(f"Plan slug '{payload.slug}' is already in use")
-        return await self.repo.create_plan(
+        plan = await self.repo.create_plan(
             name=payload.name,
             slug=payload.slug,
             price_monthly=payload.price_monthly,
@@ -183,8 +187,22 @@ class AdminService:
             max_deals=payload.max_deals,
             max_ai_generations_per_month=payload.max_ai_generations_per_month,
         )
+        await self.repo.create_audit_log(
+            event_type="plan.created",
+            actor_user_id=admin_id,
+            target_type="plan",
+            target_id=plan.id,
+            description=f"Admin tạo gói '{plan.name}' ({plan.slug})",
+        )
+        return plan
 
-    async def update_plan(self, plan_id: uuid.UUID, payload: AdminUpdatePlanRequest):
+    async def update_plan(
+        self,
+        plan_id: uuid.UUID,
+        payload: AdminUpdatePlanRequest,
+        *,
+        admin_id: uuid.UUID | None = None,
+    ):
         plan = await self.repo.get_plan(plan_id)
         if plan is None:
             raise NotFoundError(f"Plan {plan_id} not found")
@@ -199,7 +217,16 @@ class AdminService:
 
         for field in fields:
             setattr(plan, field, getattr(payload, field))
-        return await self.repo.save(plan)
+        plan = await self.repo.save(plan)
+
+        await self.repo.create_audit_log(
+            event_type="plan.updated",
+            actor_user_id=admin_id,
+            target_type="plan",
+            target_id=plan_id,
+            description=f"Admin sửa gói '{plan.name}': {', '.join(sorted(fields))}",
+        )
+        return plan
 
     # -------------------------------------------------------------------------
     # Subscriptions
@@ -249,6 +276,21 @@ class AdminService:
 
         sub = await self.repo.save(sub)
         plan = await self.repo.get_plan(sub.plan_id)
+
+        # Freelancer KHÔNG tự nâng cấp gói được (tự nâng cấp đòi cổng thanh toán thật).
+        # Admin thu tiền ngoài hệ thống rồi kích hoạt tay. Mô hình đó chỉ đứng vững nếu
+        # MỌI lần kích hoạt đều để lại dấu vết: ai làm, cho ai, lúc nào. Không có nhật ký
+        # thì "admin kích hoạt thủ công" chỉ là một cái cửa sau.  #Huynh
+        await self.repo.create_audit_log(
+            event_type="subscription.overridden",
+            actor_user_id=admin_id,
+            target_type="subscription",
+            target_id=subscription_id,
+            description=(
+                f"Admin đổi gói của user {sub.user_id} sang "
+                f"'{plan.name if plan else sub.plan_id}'"
+            ),
+        )
         if plan is None:
             raise NotFoundError(f"Plan {sub.plan_id} not found")
         return sub, plan
@@ -326,10 +368,12 @@ class AdminService:
         self,
         *,
         template_type: str | None = None,
+        profession: str | None = None,
         is_active: bool | None = None,
     ) -> list:
         return await self.repo.list_templates(
             template_type=template_type,
+            profession=profession,
             is_active=is_active,
         )
 
@@ -342,6 +386,7 @@ class AdminService:
         return await self.repo.create_template(
             name=payload.name,
             template_type=payload.template_type,
+            profession=self._clean_profession(payload.profession),
             content=payload.content,
             plan_tier_required=payload.plan_tier_required,
             is_active=payload.is_active,
@@ -358,6 +403,8 @@ class AdminService:
             raise NotFoundError(f"Template {template_id} not found")
         if payload.name is not None:
             template.name = payload.name
+        if payload.profession is not None:
+            template.profession = self._clean_profession(payload.profession)
         if payload.content is not None:
             template.content = payload.content
             template.version_number = (template.version_number or 1) + 1
@@ -366,6 +413,21 @@ class AdminService:
         if payload.plan_tier_required is not None:
             template.plan_tier_required = payload.plan_tier_required
         return await self.repo.save(template)
+
+    @staticmethod
+    def _clean_profession(profession: str | None) -> str | None:
+        """Chuẩn hoá + kiểm nghề qua SEAM, trả về giá trị để lưu.
+
+        Chuỗi rỗng "" nghĩa là "mẫu dùng chung" → quy về None để cột lưu NULL, thay vì một
+        slug rỗng vô nghĩa. Kiểm qua `is_valid_profession` (seam professions) chứ không đọc
+        thẳng dict — sau này nghề chuyển sang bảng DB thì chỗ này không phải sửa.  #Huynh
+        """
+        from src.modules.intake_form.professions import is_valid_profession
+
+        value = (profession or "").strip() or None
+        if not is_valid_profession(value):
+            raise ValidationError(f"Nghề không hợp lệ: {profession!r}")
+        return value
 
     # -------------------------------------------------------------------------
     # Feature Flags

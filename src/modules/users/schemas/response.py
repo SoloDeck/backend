@@ -37,6 +37,7 @@ def build_user_fields(obj: Any) -> dict[str, Any]:
         "phone": obj.phone,
         "avatar_url": obj.avatar_url,
         "bio": obj.bio,
+        "profession": obj.profession,
         "intake_share_token": obj.intake_share_token,
         "professional_profile": obj,
         "preferences": obj,
@@ -56,6 +57,7 @@ class UserResponse(BaseModel):
     phone: str | None
     avatar_url: str | None
     bio: str | None
+    profession: str | None = None
     intake_share_token: str | None
     professional_profile: ProfessionalProfileDTO
     preferences: PreferencesDTO

@@ -354,3 +354,44 @@ class TestChangePassword:
             json={"current_password": "x", "new_password": "y"},
         )
         assert resp.status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# PATCH /users/me/freelancer-profile — profession (gói 2)
+# ---------------------------------------------------------------------------
+
+
+class TestFreelancerProfileProfession:
+    async def test_sets_valid_profession(self, client: AsyncClient) -> None:
+        headers, _ = await _register(client)
+        resp = await client.patch(
+            "/api/v1/users/me/freelancer-profile",
+            json={"profession": "ui-ux-design"},
+            headers=headers,
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["data"]["profession"] == "ui-ux-design"
+
+    async def test_profession_persists_on_get_me(self, client: AsyncClient) -> None:
+        headers, _ = await _register(client)
+        await client.patch(
+            "/api/v1/users/me/freelancer-profile",
+            json={"profession": "graphic-design"},
+            headers=headers,
+        )
+        resp = await client.get("/api/v1/users/me", headers=headers)
+        assert resp.json()["data"]["profession"] == "graphic-design"
+
+    async def test_invalid_profession_returns_422(self, client: AsyncClient) -> None:
+        headers, _ = await _register(client)
+        resp = await client.patch(
+            "/api/v1/users/me/freelancer-profile",
+            json={"profession": "phi-hanh-gia"},
+            headers=headers,
+        )
+        assert resp.status_code == 422
+
+    async def test_profession_defaults_to_none(self, client: AsyncClient) -> None:
+        headers, _ = await _register(client)
+        resp = await client.get("/api/v1/users/me", headers=headers)
+        assert resp.json()["data"]["profession"] is None

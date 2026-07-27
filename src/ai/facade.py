@@ -44,13 +44,17 @@ class AIFacade:
         self,
         *,
         inquiry_text: str,
-        profession: str | None,
         user_can_use_ai: bool,
+        profession: str | None = None,
+        scam_hint: str | None = None,
     ) -> dict[str, Any]:
         self._check_entitlement(user_can_use_ai)
 
-        return await self.lead_qualifier.run(profession=profession,
-                                             inquiry_context=inquiry_text)
+        return await self.lead_qualifier.run(
+            inquiry_text=inquiry_text,
+            profession=profession,
+            scam_hint=scam_hint,
+        )
 
     async def generate_proposal(
         self,
@@ -102,3 +106,16 @@ class AIFacade:
             communication_history=communication_history,
             reminder_type=reminder_type,
         )
+
+    def last_usage(self, module: str) -> dict[str, Any] | None:
+        """Token của lần gọi gần nhất cho một module.
+
+        Facade được dựng MỚI mỗi request (xem `get_ai_facade`), nên đọc state trên
+        instance là an toàn — không có chuyện lẫn token của request khác.  #Huynh
+        """
+        chain = getattr(self, module, None)
+        if chain is None:
+            return None
+        # proposal_generator bọc một service riêng, token nằm ở tầng trong.
+        inner = getattr(chain, "generation_service", None)
+        return getattr(inner or chain, "last_usage", None)

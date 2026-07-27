@@ -1,15 +1,17 @@
 import uuid
 from dataclasses import dataclass
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.infrastructure.database.models import (
     ClientModel,
+    DealIntakeModel,
     DealModel,
     PlanModel,
     ProposalModel,
     SubscriptionModel,
+    SystemTemplateModel,
     UserModel,
 )
 
@@ -87,6 +89,85 @@ class ProposalsRepository:
 
     async def get_user(self, user_id: uuid.UUID):
         return await self.db.scalar(select(UserModel).where(UserModel.id == user_id))
+
+    def _usable_template_conditions(self, template_type: str, profession: str | None) -> list:
+        """Mẫu freelancer được phép dùng: active + đúng loại + (đúng nghề HOẶC dùng chung).
+
+        Giống hệt bản ở ContractsRepository — cố ý lặp thay vì chia sẻ, để mỗi module giữ
+        đường DB riêng theo AGENTS.md.  #Huynh
+        """
+        conditions = [
+            SystemTemplateModel.template_type == template_type,
+            SystemTemplateModel.is_active.is_(True),
+        ]
+        if profession:
+            conditions.append(
+                or_(
+                    SystemTemplateModel.profession == profession,
+                    SystemTemplateModel.profession.is_(None),
+                )
+            )
+        else:
+            conditions.append(SystemTemplateModel.profession.is_(None))
+        return conditions
+
+    async def list_active_templates(self, *, template_type: str, profession: str | None) -> list:
+        result = await self.db.execute(
+            select(SystemTemplateModel)
+            .where(*self._usable_template_conditions(template_type, profession))
+            .order_by(
+                SystemTemplateModel.profession.is_(None),
+                SystemTemplateModel.name,
+            )
+        )
+        return list(result.scalars().all())
+
+    async def get_template_for_use(
+        self, template_id: uuid.UUID, *, template_type: str, profession: str | None
+    ):
+        return await self.db.scalar(
+            select(SystemTemplateModel).where(
+                SystemTemplateModel.id == template_id,
+                *self._usable_template_conditions(template_type, profession),
+            )
+        )
+
+    async def get_intake_for_deal(
+        self, deal_id: uuid.UUID, client_id: uuid.UUID, owner_user_id: uuid.UUID
+    ):
+        """Phiếu tiếp nhận của ĐÚNG deal này.
+
+        Trước đây tra theo client: một khách gửi Biểu mẫu tiếp nhận hai lần cho hai dự án
+        → báo giá của deal cũ được soạn bằng brief của dự án MỚI. Freelancer gửi cho khách
+        một bản báo giá cho DỰ ÁN SAI.  #Huynh
+        """
+        intake = await self.db.scalar(
+            select(DealIntakeModel).where(
+                DealIntakeModel.deal_id == deal_id,
+                DealIntakeModel.owner_user_id == owner_user_id,
+                DealIntakeModel.deleted_at.is_(None),
+            )
+        )
+        if intake is not None:
+            return intake
+
+        return await self.get_intake_by_client_id(client_id, owner_user_id)
+
+    async def get_intake_by_client_id(self, client_id: uuid.UUID, owner_user_id: uuid.UUID):
+        """Phiếu tiếp nhận mới nhất của khách — chứa NGUYÊN VĂN yêu cầu họ viết.
+
+        AI soạn báo giá trước đây không đọc bảng này (chỉ lead_qualifier đọc), nên nguồn
+        tin giàu nhất bị bỏ phí và báo giá viết ra rất mỏng.  #Huynh
+        """
+        return await self.db.scalar(
+            select(DealIntakeModel)
+            .where(
+                DealIntakeModel.client_id == client_id,
+                DealIntakeModel.owner_user_id == owner_user_id,
+                DealIntakeModel.deleted_at.is_(None),
+            )
+            .order_by(DealIntakeModel.created_at.desc())
+        )
 
     async def get_subscription(self, user_id: uuid.UUID):
         return await self.db.scalar(

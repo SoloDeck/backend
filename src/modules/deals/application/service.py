@@ -8,6 +8,12 @@ import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.ai.facade import AIFacade
+from src.ai.lead_qualifier.scoring import (
+    compute_readiness,
+    compute_win_likelihood,
+    level_from_score,
+    normalize_price_range,
+)
 from src.integrations.storage.client import StorageClient
 from src.modules.deals.domain.aggregates.deal_aggregate import DealAggregate
 from src.modules.deals.domain.entities.deal import Deal
@@ -20,6 +26,8 @@ from src.modules.deals.domain.value_objects.deal_stage import (
 )
 from src.modules.deals.infrastructure.repository import DealsRepository
 from src.modules.deals.schemas.request import DealRequest, DealStageRequest, PublicIntakeRequest
+from src.modules.intake_form.professions import profession_label, profession_scam_hint
+from src.modules.subscriptions.application.ai_usage import AiUsageService
 from src.shared.exceptions.domain import (
     BusinessRuleError,
     InvalidStateTransitionError,
@@ -62,10 +70,14 @@ class DealsService:
     ai_facade: AIFacade | None = None
     repo: DealsRepository | None = None
     storage: StorageClient | None = None
+    # Tiêm được như repo/ai_facade để test không phải dựng DB thật.
+    usage: AiUsageService | None = None
 
     def __post_init__(self) -> None:
         if self.repo is None:
             self.repo = DealsRepository(self.db)
+        if self.usage is None:
+            self.usage = AiUsageService(db=self.db)
 
     async def _get_deal(self, user_id: uuid.UUID, deal_id: uuid.UUID):  # type: ignore[return]
         deal = await self.repo.get_by_id(deal_id, user_id)
@@ -151,17 +163,63 @@ class DealsService:
         intake = await self.repo.create_intake(
             owner_user_id=owner.id,
             client_id=client.id,
+            # Gắn phiếu vào ĐÚNG deal vừa tạo. Thiếu dòng này là khách gửi form lần hai
+            # thì deal cũ bị chấm điểm (và báo giá) bằng brief của dự án mới.  #Huynh
+            deal_id=deal.id,
             inquiry_text=payload.inquiry_text or "",
             estimated_budget=payload.estimated_budget,
             desired_timeline=payload.desired_timeline,
             source="inbound",
         )
 
+        # Báo cho freelancer biết có khách mới. Thiếu bước này thì deal nằm im trong cột
+        # "Deal Mới" cho tới khi freelancer tự mở ra xem — deal nóng để vài ngày là mất
+        # khách, mà cả điểm mạnh của sản phẩm là "AI chấm điểm NGAY khi khách gửi form".
+        #
+        # Ghi vào cùng transaction với deal: hoặc cả hai cùng có, hoặc cả hai cùng không.
+        # Không thể có deal mà không có thông báo.  #Huynh
+        from src.modules.notifications.application.service import NotificationService
+
+        await NotificationService(db=self.db).notify_intake_submitted(
+            owner_user_id=owner.id,
+            deal_id=deal.id,
+            client_name=payload.name,
+            project_name=payload.project_name,
+        )
+
+        # Ngoài chuông in-app, GỬI EMAIL cho freelancer: nhiều người không mở app cả ngày,
+        # deal nóng để lâu là mất khách. Best-effort — mail hỏng (SMTP lỗi, chưa cấu hình)
+        # KHÔNG được làm hỏng việc nhận form của khách, nên nuốt lỗi và chỉ ghi log.
+        await self._email_owner_new_deal(owner, deal.id, payload)
+
         from src.workers.ai_jobs.tasks import qualify_deal_async_by_id
 
         qualify_deal_async_by_id.delay(str(owner.id), str(deal.id))
 
         return intake
+
+    async def _email_owner_new_deal(self, owner, deal_id, payload) -> None:  # type: ignore[no-untyped-def]
+        if not owner.email:
+            return
+        from src.config.settings import settings
+        from src.modules.deals.application.emails import build_new_deal_email
+        from src.shared.email.smtp import send_email
+
+        content = build_new_deal_email(
+            owner_name=owner.full_name,
+            client_name=payload.name,
+            project_name=payload.project_name,
+            deal_url=f"{settings.frontend_url.rstrip('/')}/deals/{deal_id}",
+        )
+        try:
+            await send_email(
+                to=owner.email,
+                subject=content.subject,
+                html=content.html,
+                plain=content.plain,
+            )
+        except Exception as exc:  # noqa: BLE001 — best-effort, không chặn luồng intake
+            log.warning("intake.owner_email_failed", owner_id=str(owner.id), error=str(exc))
 
     async def list_all(
         self,
@@ -258,16 +316,39 @@ class DealsService:
             raise BusinessRuleError("Invalid deal stage") from exc
         if target not in STAGE_TRANSITIONS.get(current, frozenset()):
             raise InvalidStateTransitionError("deal", deal.stage, payload.stage)
-        if target == DealStage.ACTIVE and not await self.repo.has_accepted_proposal(
-            deal_id, user_id
-        ):
-            raise BusinessRuleError("Transitioning to active requires an accepted proposal")
-        if target == DealStage.COMPLETED_AND_BILLED and not await self.repo.has_invoice(
-            deal_id, user_id
-        ):
-            raise BusinessRuleError(
-                "Transitioning to completed_and_billed requires a linked invoice"
-            )
+        if target == DealStage.ACTIVE:
+            if not await self.repo.has_accepted_proposal(deal_id, user_id):
+                raise BusinessRuleError("Transitioning to active requires an accepted proposal")
+            # Không cho bắt tay làm việc khi chưa có hợp đồng đã ký.
+            #
+            # Trước đây chỗ này CHỈ đòi báo giá được chấp nhận. Freelancer triển khai dự án
+            # mà không có hợp đồng nào — đúng cái rủi ro SoloDesk sinh ra để ngăn. Giao diện
+            # có chặn (nút bị khoá), nhưng API thì không: gọi thẳng là qua. Luật nghiệp vụ
+            # phải nằm ở backend, giao diện chỉ là lớp lịch sự.  #Huynh
+            if not await self.repo.has_signed_contract(deal_id, user_id):
+                raise BusinessRuleError(
+                    "Transitioning to active requires a signed contract "
+                    "(record the client's signature on the contract first)"
+                )
+        if target == DealStage.COMPLETED_AND_BILLED:
+            if not await self.repo.has_invoice(deal_id, user_id):
+                raise BusinessRuleError(
+                    "Transitioning to completed_and_billed requires a linked invoice"
+                )
+
+            # GHI LẠI GIÁ THẬT — đây là chỗ đóng vòng lặp học của bộ định giá.
+            #
+            # `actual_value` trước đây KHÔNG BAO GIỜ được điền (0/63 deal trong DB), nên bộ
+            # định giá chẳng có gì để neo và mọi báo giá đều rơi về "AI ước lượng, tin cậy
+            # thấp". Deal chốt xong mà không ghi lại giá thì hệ thống không học được gì.
+            #
+            # Không bắt người dùng gõ tay: hoá đơn đã BẮT BUỘC có ở bước này (luật ngay
+            # trên), và tổng hoá đơn CHÍNH LÀ tiền thật đã xuất. Bắt gõ lại một con số hệ
+            # thống đã biết là mời sai sót.  #Huynh
+            invoiced = await self.repo.invoiced_total(deal_id, user_id)
+            if invoiced:
+                deal.actual_value = invoiced
+
         deal.stage = payload.stage
         if target in TERMINAL_STAGES and hasattr(deal, "closed_at"):
             deal.closed_at = datetime.now(UTC)
@@ -287,10 +368,34 @@ class DealsService:
 
     async def _run_ai_qualification(self, deal_model, inquiry_context: str) -> dict:
         """Run AI lead qualification against inquiry_context and persist scores on deal_model."""
-        result = await self.ai_facade.qualify_lead(
-            profession=deal_model.profession,# type: ignore[union-attr]
+        # Trước đây chỗ này truyền thẳng `user_can_use_ai=True` kèm `# TODO: get from
+        # subscriptions`. Nghĩa là AI chấm điểm deal MIỄN PHÍ cho mọi user, kể cả gói
+        # `free` (can_use_ai = false). Lỗ thủng doanh thu, và hạn mức 50 lượt/tháng của
+        # gói Pro cũng không ai đếm.
+        #
+        # `consume()` làm cả ba việc: kiểm tra gói (402), kiểm tra hạn mức (429), và GHI
+        # NHẬN lượt dùng vào usage_records.  #Huynh
+        await self.usage.consume(deal_model.owner_user_id)  # type: ignore[union-attr]
+
+        # Nghề của freelancer (chủ deal) → ngữ cảnh cho AI: ước giá đúng nghề + cảnh báo
+        # scam đặc thù nghề. Đổi slug -> nhãn + gợi ý scam Ở ĐÂY (tầng business) rồi mới
+        # truyền chuỗi xuống AI — src/ai/ không được import ngược lên src/modules/.  #Huynh
+        profession_slug = await self.repo.get_owner_profession(  # type: ignore[union-attr]
+            deal_model.owner_user_id
+        )
+
+        result = await self.ai_facade.qualify_lead(  # type: ignore[union-attr]
             inquiry_text=inquiry_context,
-            user_can_use_ai=True,  # TODO: get from subscriptions
+            user_can_use_ai=True,  # đã kiểm tra ở consume() ngay trên
+            profession=profession_label(profession_slug),
+            scam_hint=profession_scam_hint(profession_slug),
+        )
+
+        # Ghi token + chi phí ước tính vào ai_cost_records (màn hình admin đọc bảng này).
+        await self.usage.record_cost(  # type: ignore[union-attr]
+            deal_model.owner_user_id,
+            ai_module="lead_qualifier",
+            usage=self.ai_facade.last_usage("lead_qualifier"),  # type: ignore[union-attr]
         )
 
         missing_keys = sorted(
@@ -303,17 +408,37 @@ class DealsService:
                 missing_keys=missing_keys,
             )
 
-        _score_map = {"HOT": 80, "WARM": 50, "COLD": 20}
+        # Trước đây điểm chỉ là bảng tra ba nấc {"HOT": 80, "WARM": 50, "COLD": 20} —
+        # AI không hề chấm điểm, nên deal 20 triệu và deal 700 nghìn đều ra đúng 50/100.
+        # Giờ AI chấm TỪNG tiêu chí, backend cộng tổng (không giao phép cộng cho LLM),
+        # và nhãn HOT/WARM/COLD suy ra TỪ điểm nên không bao giờ mâu thuẫn với nó.  #Huynh
+        score, readiness_breakdown = compute_readiness(result.get("score_breakdown"))
+        lead_level = level_from_score(score)
+        result["suggested_lead_score"] = lead_level  # ghi đè nhãn model tự đoán
+        result["score_breakdown"] = readiness_breakdown
+
         _confidence_map = {
             "HOT": AIConfidence.high(),
             "WARM": AIConfidence.medium(),
             "COLD": AIConfidence.low(),
         }
-        raw = str(result.get("suggested_lead_score", "")).upper()
-        score = _score_map.get(raw, 50)
-        confidence = _confidence_map.get(raw, AIConfidence.medium())
+        confidence = _confidence_map.get(lead_level, AIConfidence.medium())
         reasoning = str(result.get("reasoning", ""))
-        model_version = "gemma-4-31b-it"
+        # Trước ghi "gemma-4-31b-it" — SAI. Model chạy thật là llama-4-scout (xem
+        # lead_qualifier/chain.py). Ghi sai model là ghi sai bằng chứng.  #Huynh
+        model_version = "meta-llama/llama-4-scout-17b-16e-instruct"
+
+        # Khả năng chốt deal — tính bằng CODE từ CHÍNH bảng phân rã ở trên, không hỏi AI
+        # và không dò chuỗi trong câu văn của model.  #Huynh
+        points = {item["key"]: item["points"] for item in readiness_breakdown}
+        result["win_likelihood"] = compute_win_likelihood(
+            budget_points=points.get("budget", 0),
+            timeline_points=points.get("timeline", 0),
+            detail_points=points.get("detail", 0),
+            estimated_value=deal_model.estimated_value,
+            price_range_min=result.get("price_range_min"),
+            source=deal_model.source,
+        )
 
         deal_domain = Deal(
             id=deal_model.id,
@@ -340,6 +465,15 @@ class DealsService:
             model_version=model_version,
         )
 
+        detected_signals_raw = result.get("detected_signals")
+        detected_signals = (
+            [s if isinstance(s, dict) else s.model_dump() for s in detected_signals_raw]
+            if detected_signals_raw
+            else None
+        )
+
+        # Lưu CẢ PHẦN CHỨNG MINH vào lịch sử, không chỉ con số. `breakdown` (bảng căn cứ
+        # chấm điểm) trước đây chỉ nằm ở localStorage của trình duyệt — đổi máy là mất.
         await self.repo.create_lead_score(
             id=lead_score.id,
             deal_id=lead_score.deal_id,
@@ -353,13 +487,10 @@ class DealsService:
             timeline_signal=result.get("timeline_signal"),
             urgency_signal=result.get("urgency_signal"),
             red_flags=result.get("red_flags"),
-        )
-
-        detected_signals_raw = result.get("detected_signals")
-        detected_signals = (
-            [s if isinstance(s, dict) else s.model_dump() for s in detected_signals_raw]
-            if detected_signals_raw
-            else None
+            breakdown=result.get("score_breakdown"),
+            next_step=result.get("next_step"),
+            detected_signals=detected_signals,
+            prompt_version=result.get("prompt_version"),
         )
 
         deal_model.ai_qualification_score = lead_score.score
@@ -374,8 +505,14 @@ class DealsService:
         deal_model.ai_qualification_next_step = result.get("next_step")
         deal_model.ai_qualification_detected_signals = detected_signals
         deal_model.ai_qualification_suggested_actions = result.get("suggested_actions")
-        deal_model.ai_qualification_price_range_min = result.get("price_range_min") or None
-        deal_model.ai_qualification_price_range_max = result.get("price_range_max") or None
+        # Model hay viết tắt "30 triệu" thành 30 → giao diện in ra "30 ₫". Chữa ở đây.
+        price_low, price_high = normalize_price_range(
+            result.get("price_range_min"), result.get("price_range_max")
+        )
+        result["price_range_min"] = price_low
+        result["price_range_max"] = price_high
+        deal_model.ai_qualification_price_range_min = price_low or None
+        deal_model.ai_qualification_price_range_max = price_high or None
         await self.repo.save(deal_model)
 
         return {
@@ -384,6 +521,15 @@ class DealsService:
             "ai_qualification_score": score,
             "ai_qualification_recommendation": aggregate.deal.ai_recommendation,
         }
+
+    async def list_qualifications(self, user_id: uuid.UUID, deal_id: uuid.UUID) -> list:
+        """Lịch sử chấm điểm của deal — mới nhất trước.
+
+        Mỗi lần chấm là một dòng RIÊNG, không ghi đè. Sửa deal rồi chấm lại thì bản cũ vẫn
+        còn nguyên để đối chiếu — đó là lý do có bảng lịch sử.  #Huynh
+        """
+        await self._get_deal(user_id, deal_id)  # 404 nếu deal không phải của người này
+        return await self.repo.list_lead_scores(deal_id, user_id)
 
     async def qualify_deal(
         self,
@@ -395,37 +541,66 @@ class DealsService:
         if not self.ai_facade:
             raise RuntimeError("AIFacade not initialized")
 
-        # Build inquiry context from all available deal fields, then layer in intake if present
-        parts = [f"Profession: {deal_model.profession}",f"Project: {deal_model.title}"]
+        # Tách bạch AI NÓI GÌ và FREELANCER TỰ NHẬP GÌ.
+        #
+        # Trước đây tất cả gộp thành một danh sách phẳng, trong đó có dòng
+        # "Estimated value: 200000 VND" — mà đó là ô "Giá trị dự kiến" do FREELANCER tự
+        # điền lúc tạo deal, KHÔNG PHẢI khách báo giá. AI đọc thấy con số thì tưởng khách
+        # đã nêu ngân sách và chấm 20/25 "khách cung cấp giá trị cụ thể", trong khi khách
+        # chưa hề nói gì về tiền. Nhãn dữ liệu mập mờ thì AI có giỏi mấy cũng chấm sai.
+        #
+        # Giờ chia hai khối rõ ràng, và prompt bắt buộc chỉ chấm ngân sách/thời gian dựa
+        # trên khối "KHÁCH HÀNG NÓI GÌ".  #Huynh
+        intake = await self.repo.get_intake_for_deal(deal_model.id, deal_model.client_id, user_id)
+
+        own: list[str] = [f"- Tên dự án: {deal_model.title}"]
         if deal_model.source:
-            parts.append(f"Source: {deal_model.source}")
+            own.append(f"- Nguồn deal: {deal_model.source}")
         if deal_model.project_type:
-            parts.append(f"Project type: {deal_model.project_type}")
+            own.append(f"- Loại dự án: {deal_model.project_type}")
         if deal_model.service_category:
-            parts.append(f"Service category: {deal_model.service_category}")
-        if deal_model.pricing_tier:
-            parts.append(f"Pricing tier: {deal_model.pricing_tier}")
-        if deal_model.estimated_value:
-            parts.append(f"Estimated value: {deal_model.estimated_value} {deal_model.currency}")
-        if deal_model.desired_timeline:
-            parts.append(f"Desired timeline: {deal_model.desired_timeline}")
+            own.append(f"- Nhóm dịch vụ: {deal_model.service_category}")
         if deal_model.notes:
-            parts.append(f"Notes: {deal_model.notes}")
-        if deal_model.profession_fields:
-            parts.append("Structured Intake:")
+            own.append(f"- Ghi chú nội bộ: {deal_model.notes}")
+        if deal_model.estimated_value:
+            own.append(
+                f"- Giá trị dự kiến (FREELANCER TỰ ƯỚC, KHÔNG PHẢI KHÁCH BÁO): "
+                f"{deal_model.estimated_value} {deal_model.currency}"
+            )
 
-            for key, value in deal_model.profession_fields.items():
-                parts.append(f"{key}: {value}")
+        said: list[str] = []
+        client_budget = getattr(intake, "estimated_budget", None) if intake else None
+        client_timeline = getattr(intake, "desired_timeline", None) if intake else None
+        if intake is not None and intake.inquiry_text:
+            said.append(f"- Nguyên văn yêu cầu: {intake.inquiry_text}")
 
-        intake = await self.repo.get_intake_by_client_id(deal_model.client_id, user_id)
-        if intake is not None:
-            if intake.inquiry_text:
-                parts.append(f"Client inquiry: {intake.inquiry_text}")
-            if intake.estimated_budget:
-                parts.append(f"Client budget: {intake.estimated_budget}")
-            if intake.desired_timeline and intake.desired_timeline != deal_model.desired_timeline:
-                parts.append(f"Client timeline: {intake.desired_timeline}")
+        # Chữ bóc từ file khách gửi kèm (brief dự án PDF).
+        #
+        # Đây là mảnh còn thiếu quan trọng nhất: deal tạo TAY luôn mất trọn 25 điểm ngân
+        # sách vì luật chấm điểm chỉ tính những gì KHÁCH nói — mà khách thì "chưa nói gì"
+        # (ô "Giá trị dự kiến" là freelancer tự nhập). Nên deal tự tạo gần như luôn COLD.
+        #
+        # Nhưng khách GỬI HẲN MỘT FILE BRIEF thì đó CHÍNH LÀ LỜI KHÁCH. Đưa vào đây, AI
+        # đọc được yêu cầu thật, ngân sách thật, deadline thật.  #Huynh
+        attachments = await self.repo.list_attachments_with_text(deal_model.id, user_id)
+        for att in attachments:
+            said.append(f"- Nội dung file khách gửi ({att.filename}):")
+            said.append(att.extracted_text or "")
+        if client_budget:
+            said.append(f"- Ngân sách khách nêu: {client_budget}")
+        if client_timeline:
+            said.append(f"- Thời gian khách muốn: {client_timeline}")
+        if deal_model.desired_timeline:
+            said.append(f"- Thời hạn ghi nhận được: {deal_model.desired_timeline}")
 
-        inquiry_context = "\n".join(parts)
+        inquiry_context = "\n".join(
+            [
+                "## THÔNG TIN FREELANCER TỰ NHẬP (không phải lời khách)",
+                *own,
+                "",
+                "## KHÁCH HÀNG NÓI GÌ",
+                *(said or ["- (Khách chưa cung cấp thông tin nào)"]),
+            ]
+        )
 
         return await self._run_ai_qualification(deal_model, inquiry_context)

@@ -8,6 +8,7 @@ import asyncio
 import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+from email.utils import formataddr
 from functools import partial
 
 import structlog
@@ -17,11 +18,37 @@ from src.config.settings import settings
 logger = structlog.get_logger(__name__)
 
 
-def _send_sync(*, to: str, subject: str, html: str, plain: str) -> None:
+def _send_sync(
+    *,
+    to: str,
+    subject: str,
+    html: str,
+    plain: str,
+    from_name: str | None = None,
+    reply_to: str | None = None,
+) -> None:
     msg = MIMEMultipart("alternative")
     msg["Subject"] = subject
-    msg["From"] = f"{settings.smtp_from_name} <{settings.smtp_from_email}>"
+    # TÊN hiển thị đổi được, ĐỊA CHỈ thì không.
+    #
+    # Thư nhắc khách là freelancer nhắn cho khách của họ, nên khách phải thấy tên
+    # freelancer. Nhưng KHÔNG thể đặt luôn địa chỉ của freelancer vào đây: hộp thư đi là
+    # tài khoản của SoloDesk, khai địa chỉ người khác là mạo danh — Gmail ghi đè lại, còn
+    # máy chủ của khách thì trượt SPF/DKIM và ném thư vào spam. Danh tính freelancer đi
+    # bằng tên hiển thị + Reply-To, đó cũng là cách mọi SaaS gửi thay người dùng.  #Huynh
+    sender_name = (from_name or "").strip() or settings.smtp_from_name
+    # `formataddr(..., charset)` chứ KHÔNG phải f-string: tên freelancer có dấu tiếng Việt
+    # nên header phải mã hoá — mà ghép chuỗi thì Python mã hoá luôn cả địa chỉ email
+    # (`<a@b.com>` thành `=3Ca=40b=2Ecom=3E`), sai RFC 2047 và máy chủ thư có quyền từ
+    # chối. `formataddr` chỉ mã hoá phần tên, để địa chỉ nguyên vẹn.  #Huynh
+    msg["From"] = formataddr((sender_name, settings.smtp_from_email), charset="utf-8")
     msg["To"] = to
+    if reply_to:
+        # Khách bấm "Trả lời" là thư về thẳng freelancer, không vòng qua SoloDesk.
+        msg["Reply-To"] = reply_to
+    # Không khai thì Gmail đoán nhầm thư tiếng Việt là tiếng Anh và chìa ra banner
+    # "Dịch sang Tiếng Việt" ngay trên đầu thư freelancer gửi khách — trông rất nghiệp dư.
+    msg["Content-Language"] = "vi"
 
     msg.attach(MIMEText(plain, "plain", "utf-8"))
     msg.attach(MIMEText(html, "html", "utf-8"))
@@ -37,15 +64,35 @@ def _send_sync(*, to: str, subject: str, html: str, plain: str) -> None:
         server.sendmail(settings.smtp_from_email, [to], msg.as_string())
 
 
-async def send_email(*, to: str, subject: str, html: str, plain: str) -> None:
-    """Send an email asynchronously (runs SMTP in a thread pool)."""
+async def send_email(
+    *,
+    to: str,
+    subject: str,
+    html: str,
+    plain: str,
+    from_name: str | None = None,
+    reply_to: str | None = None,
+) -> None:
+    """Gửi email (chạy SMTP trong thread pool để không chặn event loop).
+
+    `from_name` / `reply_to` để gửi THAY MẶT một freelancer: khách thấy tên họ và trả lời
+    về đúng hộp thư của họ. Bỏ trống thì thư mang danh SoloDesk (thư hệ thống như OTP).
+    """
     loop = asyncio.get_event_loop()
     try:
         await loop.run_in_executor(
             None,
-            partial(_send_sync, to=to, subject=subject, html=html, plain=plain),
+            partial(
+                _send_sync,
+                to=to,
+                subject=subject,
+                html=html,
+                plain=plain,
+                from_name=from_name,
+                reply_to=reply_to,
+            ),
         )
-        logger.info("email.sent", to=to, subject=subject)
+        logger.info("email.sent", to=to, subject=subject, reply_to=reply_to)
     except Exception as exc:
         logger.error("email.send_failed", to=to, subject=subject, error=str(exc))
         raise
