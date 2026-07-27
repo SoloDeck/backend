@@ -1,183 +1,139 @@
 <!DOCTYPE html>
-
 <html lang="vi">
-
 <head>
-    <meta charset="UTF-8">
-    <title>Đề Xuất Dịch Vụ</title>
+<meta charset="UTF-8">
+<title>Đề Xuất Dịch Vụ</title>
 <style>
-    @page {
-        size: A4;
-        margin: 2cm;
-    }
-
-    body {
-        font-family: Arial, sans-serif;
-        font-size: 12pt;
-        line-height: 1.6;
-        color: #222;
-    }
-
-    h1 {
-        text-align: center;
-        margin-bottom: 5px;
-    }
-
-    h2 {
-        margin-top: 25px;
-        padding-bottom: 4px;
-        border-bottom: 1px solid #ccc;
-    }
-
-    .subtitle {
-        text-align: center;
-        color: #666;
-        margin-bottom: 30px;
-    }
-
-    .info-table {
-        width: 100%;
-        border-collapse: collapse;
-        margin-bottom: 20px;
-    }
-
-    .info-table td {
-        padding: 6px 0;
-        vertical-align: top;
-    }
-
-    .label {
-        width: 180px;
-        font-weight: bold;
-    }
-
-    ul {
-        padding-left: 20px;
-    }
-
-    .pricing-box {
-        border: 1px solid #ccc;
-        padding: 12px;
-        margin-top: 10px;
-    }
-
-    .signature {
-        width: 100%;
-        margin-top: 60px;
-    }
-
-    .signature td {
-        width: 50%;
-        text-align: center;
-        vertical-align: top;
-    }
-
-    .footer-note {
-        margin-top: 40px;
-        font-size: 10pt;
-        color: #777;
-        text-align: center;
-    }
+    @page { size: A4; margin: 2cm; }
+    body { font-family: "Times New Roman", Times, serif; font-size: 12pt; line-height: 1.6; color: #222; max-width: 780px; margin: 0 auto; }
+    h1 { text-align: center; margin-bottom: 4px; }
+    h2 { margin-top: 24px; padding-bottom: 4px; border-bottom: 1px solid #ccc; font-size: 13pt; }
+    .subtitle { text-align: center; color: #666; margin-bottom: 26px; }
+    .info-table { width: 100%; border-collapse: collapse; margin-bottom: 16px; }
+    .info-table td { padding: 5px 0; vertical-align: top; }
+    .label { width: 190px; font-weight: bold; }
+    ul { padding-left: 20px; }
+    li { margin: 4px 0; }
+    table.data-table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 11pt; }
+    table.data-table th, table.data-table td { border: 1px solid #ccc; padding: 8px; text-align: left; vertical-align: top; }
+    table.data-table th { background: #f5f5f5; font-size: 10.5pt; }
+    table.data-table td.amount, table.data-table th.amount { text-align: right; white-space: nowrap; }
+    table.data-table tfoot td { font-weight: bold; border-top: 2px solid #333; }
+    .pricing-box { border: 1px solid #ccc; padding: 12px; margin-top: 10px; }
+    .signature { width: 100%; margin-top: 56px; }
+    .signature td { width: 50%; text-align: center; vertical-align: top; }
+    .footer-note { margin-top: 36px; font-size: 10pt; color: #777; text-align: center; }
+    /* Nhãn tiếng Anh phụ dưới tiêu đề song ngữ — kín đáo, in nghiêng. */
+    .en { display: block; font-weight: normal; font-size: 0.72em; font-style: italic; color: #888; letter-spacing: 0; text-transform: none; margin-top: 1px; }
+    .eni { font-weight: normal; font-style: italic; color: #888; font-size: 0.85em; }
 </style>
-
 </head>
-
 <body>
 
-<h1>ĐỀ XUẤT DỊCH VỤ</h1>
+<h1>ĐỀ XUẤT DỊCH VỤ<span class="en">Service Proposal</span></h1>
+<div class="subtitle">{{ project_type }}</div>
 
-<div class="subtitle">
-    Được chuẩn bị bởi {{ freelancer_name }}
-</div>
-
+<h2>1. Bên Cung Cấp Dịch Vụ<span class="en">Service Provider (Party A)</span></h2>
 <table class="info-table">
-    <tr>
-        <td class="label">Khách hàng:</td>
-        <td>{{ client_name }}</td>
-    </tr>
-
-    <tr>
-        <td class="label">Loại dự án:</td>
-        <td>{{ project_type }}</td>
-    </tr>
-
-    <tr>
-        <td class="label">Ngày đề xuất:</td>
-        <td>{{ proposal_date }}</td>
-    </tr>
+    <tr><td class="label">Họ và tên <span class="eni">/ Full name</span>:</td><td>{{ freelancer_name }}</td></tr>
+    {% if freelancer_email %}<tr><td class="label">Email:</td><td>{{ freelancer_email }}</td></tr>{% endif %}
+    {% if freelancer_phone %}<tr><td class="label">Điện thoại <span class="eni">/ Phone</span>:</td><td>{{ freelancer_phone }}</td></tr>{% endif %}
 </table>
 
-<h2>1. Tổng Quan Dự Án</h2>
+<h2>2. Khách Hàng<span class="en">Client (Party B)</span></h2>
+<table class="info-table">
+    <tr><td class="label">{% if company_name %}Tên công ty <span class="eni">/ Company</span>{% else %}Người nhận <span class="eni">/ Recipient</span>{% endif %}:</td><td>{{ company_name or client_name }}</td></tr>
+    {% if company_name %}<tr><td class="label">Người liên hệ <span class="eni">/ Contact</span>:</td><td>{{ client_name }}</td></tr>{% endif %}
+    {% if client_email %}<tr><td class="label">Email:</td><td>{{ client_email }}</td></tr>{% endif %}
+    {% if client_phone %}<tr><td class="label">Điện thoại <span class="eni">/ Phone</span>:</td><td>{{ client_phone }}</td></tr>{% endif %}
+    <tr><td class="label">Ngày đề xuất <span class="eni">/ Proposal date</span>:</td><td>{{ proposal_date }}</td></tr>
+    {% if valid_until %}<tr><td class="label">Hiệu lực đến <span class="eni">/ Valid until</span>:</td><td><span data-field="valid_until" data-kind="date" data-label="Hiệu lực đến">{{ valid_until }}</span></td></tr>{% endif %}
+</table>
 
-<p>
-    {{ project_overview }}
-</p>
+<h2>3. Tổng Quan Dự Án<span class="en">Project Overview</span></h2>
+<p data-field="project_overview" data-label="Tổng quan dự án">{{ project_overview }}</p>
 
-<h2>2. Phạm Vi Công Việc</h2>
-
-<ul>
-    {% for item in scope_of_work %}
-    <li>{{ item }}</li>
-    {% endfor %}
+<h2>4. Phạm Vi Công Việc<span class="en">Scope of Work</span></h2>
+<ul data-field="scope_of_work" data-kind="list" data-label="Phạm vi công việc">
+    {% for item in scope_of_work %}<li>{{ item }}</li>{% endfor %}
 </ul>
 
-<h2>3. Sản Phẩm Bàn Giao</h2>
-
-<ul>
-    {% for item in deliverables %}
-    <li>{{ item }}</li>
-    {% endfor %}
+<h2>5. Sản Phẩm Bàn Giao<span class="en">Deliverables</span></h2>
+<ul data-field="deliverables" data-kind="list" data-label="Sản phẩm bàn giao">
+    {% for item in deliverables %}<li>{{ item }}</li>{% endfor %}
 </ul>
 
-<h2>4. Thời Gian Thực Hiện</h2>
+<h2>6. Thời Gian Thực Hiện<span class="en">Timeline</span></h2>
+<p data-field="timeline" data-label="Thời gian thực hiện">{{ timeline }}</p>
 
-<p>
-    {{ timeline }}
-</p>
+<h2>7. Chi Phí Dự Kiến<span class="en">Estimated Cost</span></h2>
+{% if pricing_line_items %}
+<table class="data-table">
+    <thead><tr><th>Hạng mục <span class="eni">/ Item</span></th><th class="amount">Thành tiền <span class="eni">/ Amount</span></th></tr></thead>
+    <tbody>
+        {% for item in pricing_line_items %}<tr><td>{{ item.description }}</td><td class="amount">{{ item.amount }}</td></tr>{% endfor %}
+    </tbody>
+    <tfoot><tr><td>Tổng báo giá <span class="eni">/ Total</span></td><td class="amount">{{ pricing_total }}</td></tr></tfoot>
+</table>
+{% else %}
+<div class="pricing-box"><strong>Tổng chi phí dự án <span class="eni">/ Total project cost</span>:</strong> {{ pricing }}</div>
+{% endif %}
 
-<h2>5. Chi Phí Dự Kiến</h2>
+<h2>8. Điều Khoản Thanh Toán<span class="en">Payment Terms</span></h2>
+{% if payment_milestones %}
+<table class="data-table">
+    <thead><tr><th>Đợt <span class="eni">/ Milestone</span></th><th class="amount">Tỷ lệ <span class="eni">/ %</span></th><th>Thời điểm <span class="eni">/ When</span></th></tr></thead>
+    <tbody>
+        {% for m in payment_milestones %}
+        <tr>
+            <td>{{ m.label }}</td>
+            <td class="amount">{% if m.percent is not none %}{{ m.percent }}%{% elif m.amount %}{{ m.amount }}{% endif %}</td>
+            <td>{{ m.due }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% endif %}
+{% if payment_terms %}<p data-field="payment_terms" data-label="Điều khoản thanh toán">{{ payment_terms }}</p>{% endif %}
 
-<div class="pricing-box">
-    <strong>Tổng chi phí dự án:</strong>
-    {{ pricing }}
-</div>
+{% if out_of_scope or revision_policy %}
+<h2>9. Điều Khoản Bổ Sung<span class="en">Additional Terms</span></h2>
+{% if out_of_scope %}
+<p><strong>Phạm vi KHÔNG bao gồm <span class="eni">/ Out of scope</span>:</strong></p>
+<ul data-field="out_of_scope" data-kind="list" data-label="Phạm vi không bao gồm">
+    {% for item in out_of_scope %}<li>{{ item }}</li>{% endfor %}
+</ul>
+{% endif %}
+{% if revision_policy %}<p><strong>Chính sách chỉnh sửa <span class="eni">/ Revision policy</span>:</strong> <span data-field="revision_policy" data-label="Chính sách chỉnh sửa">{{ revision_policy }}</span></p>{% endif %}
+{% endif %}
 
-<h2>6. Điều Khoản Thanh Toán</h2>
+<h2>10. Ghi Chú &amp; Giả Định<span class="en">Notes &amp; Assumptions</span></h2>
+<p data-field="assumptions" data-label="Ghi chú và giả định">{{ assumptions }}</p>
 
-<p>
-    {{ payment_terms }}
-</p>
+{% if standard_terms %}
+<h2>11. Điều Khoản Chuẩn Theo Lĩnh Vực<span class="en">Standard Terms</span></h2>
+<p data-field="standard_terms" data-label="Điều khoản chuẩn theo lĩnh vực" style="white-space:pre-line">{{ standard_terms }}</p>
+{% endif %}
 
-<h2>7. Ghi Chú Và Giả Định</h2>
-
-<p>
-    {{ assumptions }}
-</p>
+<h2>{% if standard_terms %}12{% else %}11{% endif %}. Xác Nhận<span class="en">Confirmation</span></h2>
+<p>{% if valid_until %}Đề xuất này có hiệu lực đến {{ valid_until }}. {% endif %}Vui lòng xác nhận đồng ý để bắt đầu triển khai dự án.<span class="eni"> / Please confirm to proceed.</span></p>
 
 <table class="signature">
     <tr>
         <td>
-            <strong>{{ client_name }}</strong>
-            <br>
-            Khách hàng
-            <br><br><br><br>
-            ____________________
+            <strong>{{ company_name or client_name }}</strong>
+            <div style="font-size:10pt;color:#777;">Khách hàng <span class="eni">/ Client</span></div>
+            <br><br><br><br>____________________
         </td>
-
         <td>
             <strong>{{ freelancer_name }}</strong>
-            <br>
-            Nhà cung cấp dịch vụ
-            <br><br><br><br>
-            ____________________
+            <div style="font-size:10pt;color:#777;">Nhà cung cấp dịch vụ <span class="eni">/ Service Provider</span></div>
+            <br><br><br><br>____________________
         </td>
     </tr>
 </table>
 
-<div class="footer-note">
-    Tài liệu được tạo bởi SoloDesk.
-</div>
+<div class="footer-note">Tài liệu được tạo bởi SoloDesk.<span class="en">Generated by SoloDesk.</span></div>
 
 </body>
-
 </html>

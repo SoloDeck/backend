@@ -4,6 +4,8 @@ from typing import Any
 
 from pydantic import AliasChoices, BaseModel, Field
 
+from src.modules.deals.domain.value_objects.deal_stage import DealStage
+
 
 class DealRequest(BaseModel):
     model_config = {
@@ -28,8 +30,10 @@ class DealRequest(BaseModel):
     title: str
     stage: str = "new_lead"
     source: str | None = None
-    estimated_value: Decimal | None = None
-    actual_value: Decimal | None = None
+    # ge=0: trước đây tạo được deal giá trị ÂM (-1.000.000 đ) và nó cộng luôn vào tổng
+    # doanh thu trên bảng Kanban. API trả 201 vô tư.  #Huynh
+    estimated_value: Decimal | None = Field(default=None, ge=0)
+    actual_value: Decimal | None = Field(default=None, ge=0)
     currency: str = "VND"
     notes: str | None = None
     desired_timeline: str | None = None
@@ -42,7 +46,11 @@ class DealRequest(BaseModel):
 
 
 class DealStageRequest(BaseModel):
-    target_stage: str = Field(validation_alias=AliasChoices("target_stage", "stage"))
+    # Kiểu là DealStage (enum) chứ không phải str trần: giai đoạn rác ("khong_ton_tai")
+    # trước đây lọt qua schema rồi mới bị service chặn, nên trả 409 CONFLICT — sai ngữ
+    # nghĩa. 409 nghĩa là "xung đột trạng thái", còn đây là DỮ LIỆU KHÔNG HỢP LỆ → 422.
+    # Để pydantic chặn ngay ở cửa, FastAPI tự trả 422 kèm danh sách giá trị hợp lệ.  #Huynh
+    target_stage: DealStage = Field(validation_alias=AliasChoices("target_stage", "stage"))
 
     @property
     def stage(self) -> str:

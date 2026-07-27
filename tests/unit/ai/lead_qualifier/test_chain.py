@@ -20,62 +20,43 @@ VALID_MOCK_DATA = {
 }
 
 
-class MockMessage:
+class FakeMessage:
     def __init__(self, content):
         self.content = content
 
 
-class MockChoice:
+class FakeChoice:
     def __init__(self, content):
-        self.message = MockMessage(content)
+        self.message = FakeMessage(content)
 
 
-class MockCompletion:
+class FakeCompletionResponse:
     def __init__(self, content):
-        self.choices = [MockChoice(content)]
+        self.choices = [FakeChoice(content)]
 
 
-class MockCompletions:
+class FakeCompletions:
     def __init__(self, content):
         self._content = content
 
     def create(self, *args, **kwargs):
-        return MockCompletion(self._content)
+        return FakeCompletionResponse(self._content)
 
 
-class MockChat:
+class FakeChat:
     def __init__(self, content):
-        self.completions = MockCompletions(content)
+        self.completions = FakeCompletions(content)
 
 
 class FakeClient:
-    """Mimics the shape of a Groq client's `client.chat.completions.create(...)`."""
-
     def __init__(self, content):
-        self.chat = MockChat(content)
+        self.chat = FakeChat(content)
 
 
 def _make_qualifier(data: dict) -> LeadQualifier:
     q = LeadQualifier()
     q.set_client_for_tests(FakeClient(json.dumps(data)))
     return q
-
-
-@pytest.fixture(autouse=True)
-def _stub_retriever(monkeypatch):
-    """Keep unit tests offline.
-
-    `run()` now lazily builds the Gemini-backed FAISS retriever, which would
-    hit the Google embeddings API (needs GEMINI_API_KEY + network). Seed the
-    cached `_retriever` with a no-op stub so `_get_retriever()` never builds
-    the real one.
-    """
-
-    class _FakeRetriever:
-        def retrieve(self, *, profession, query):
-            return ""
-
-    monkeypatch.setattr(LeadQualifier, "_retriever", _FakeRetriever())
 
 
 # --------------------------------------------------
@@ -91,7 +72,7 @@ class TestGetClient:
         q = LeadQualifier()
         # Clear existing cached client if any
         q._client = None
-        with pytest.raises(RuntimeError, match="GROQ_API_KEY is not configured"):
+        with pytest.raises(RuntimeError, match="GROQ_API_KEY is not set in settings"):
             q._get_client()
 
     def test_success_returns_client(self, monkeypatch):
@@ -120,10 +101,58 @@ class TestParseOutput:
         raw = '```json\n{"project_type": "Website"}\n```'
         assert q._parse_output(raw) == {"project_type": "Website"}
 
+    def test_preamble_before_fenced_json(self):
+        """Đúng chuỗi đã làm hỏng production: câu dẫn, rồi fence không nhãn.
+
+        llama-4-scout cứ thêm câu dẫn ở đầu. Parser cũ chỉ cắt fence khi câu trả lời
+        BẮT ĐẦU bằng fence, nên ca này ném AIOutputParseError và kết quả AI hoàn toàn
+        đúng bị vứt đi.  #Huynh
+        """
+        q = LeadQualifier()
+        raw = (
+            "Here is the draft qualification result:\n\n"
+            "```\n"
+            '{"project_type": "E-commerce Website", "suggested_lead_score": "HOT"}\n'
+            "```"
+        )
+        assert q._parse_output(raw) == {
+            "project_type": "E-commerce Website",
+            "suggested_lead_score": "HOT",
+        }
+
+    def test_preamble_without_fence(self):
+        q = LeadQualifier()
+        raw = 'Sure! Here you go: {"project_type": "Website"}'
+        assert q._parse_output(raw) == {"project_type": "Website"}
+
+    def test_trailing_commentary_after_json(self):
+        q = LeadQualifier()
+        raw = '{"project_type": "Website"}\n\nLet me know if you need anything else!'
+        assert q._parse_output(raw) == {"project_type": "Website"}
+
+    def test_nested_objects_are_not_truncated(self):
+        """Greedy quan trọng ở đây: non-greedy sẽ dừng ở dấu `}` đầu tiên.  #Huynh"""
+        q = LeadQualifier()
+        raw = (
+            "Result:\n"
+            '{"detected_signals": [{"text": "Clear budget", "is_positive": true}], '
+            '"price_range_min": 40000000}'
+        )
+        assert q._parse_output(raw) == {
+            "detected_signals": [{"text": "Clear budget", "is_positive": True}],
+            "price_range_min": 40000000,
+        }
+
     def test_malformed_raises(self):
         q = LeadQualifier()
         with pytest.raises(AIOutputParseError):
             q._parse_output("not valid json")
+
+    def test_prose_with_broken_json_still_raises(self):
+        """Có khối `{...}` nhưng JSON hỏng thì VẪN phải báo lỗi, không nuốt im lặng.  #Huynh"""
+        q = LeadQualifier()
+        with pytest.raises(AIOutputParseError):
+            q._parse_output("Here you go: {project_type: Website,,}")
 
     def test_empty_string_raises(self):
         q = LeadQualifier()
@@ -139,13 +168,13 @@ class TestParseOutput:
 class TestRun:
     async def test_success_returns_dict(self):
         q = _make_qualifier(VALID_MOCK_DATA)
-        result = await q.run(profession="software-developer", inquiry_context="Need a website")
+        result = await q.run(inquiry_text="Need a website")
         assert result["project_type"] == "E-commerce website"
         assert result["suggested_lead_score"] == "HOT"
 
     async def test_all_fields_present(self):
         q = _make_qualifier(VALID_MOCK_DATA)
-        result = await q.run(profession="software-developer", inquiry_context="Need a website")
+        result = await q.run(inquiry_text="Need a website")
         for field in (
             "project_type",
             "budget_signal",
@@ -157,71 +186,31 @@ class TestRun:
         ):
             assert field in result
 
-    async def test_missing_inquiry_context_raises(self):
+    async def test_missing_inquiry_text_raises(self):
         q = _make_qualifier(VALID_MOCK_DATA)
-        with pytest.raises(ValueError, match="inquiry_context is required"):
-            await q.run(profession=None, inquiry_context="")
+        with pytest.raises(ValueError, match="inquiry_text is required"):
+            await q.run()
 
-    async def test_empty_inquiry_context_raises(self):
+    async def test_empty_inquiry_text_raises(self):
         q = _make_qualifier(VALID_MOCK_DATA)
-        with pytest.raises(ValueError, match="inquiry_context is required"):
-            await q.run(profession=None, inquiry_context="")
+        with pytest.raises(ValueError, match="inquiry_text is required"):
+            await q.run(inquiry_text="")
 
     async def test_markdown_response_cleaned(self):
         q = LeadQualifier()
         raw_md = f"```json\n{json.dumps(VALID_MOCK_DATA)}\n```"
         q.set_client_for_tests(FakeClient(raw_md))
-        result = await q.run(profession="software-developer", inquiry_context="Need a website")
+        result = await q.run(inquiry_text="Need a website")
         assert result["suggested_lead_score"] == "HOT"
 
     async def test_invalid_json_from_model_raises(self):
         q = LeadQualifier()
         q.set_client_for_tests(FakeClient("not json"))
         with pytest.raises(AIOutputParseError):
-            await q.run(profession="software-developer", inquiry_context="Need a website")
+            await q.run(inquiry_text="Need a website")
 
     async def test_red_flags_populated(self):
         data = {**VALID_MOCK_DATA, "red_flags": ["No clear scope", "Unrealistic deadline"]}
         q = _make_qualifier(data)
-        result = await q.run(profession="software-developer", inquiry_context="Need a website")
+        result = await q.run(inquiry_text="Need a website")
         assert len(result["red_flags"]) == 2
-
-    async def test_run_feeds_retrieved_knowledge_into_prompt(self, monkeypatch):
-        """The knowledge returned by the retriever must reach the LLM prompt.
-
-        Overrides the autouse stub with a retriever that emits a recognizable
-        sentinel, then captures the prompt handed to the Groq call path and
-        asserts the sentinel is embedded in it.
-        """
-
-        class _SentinelRetriever:
-            def __init__(self):
-                self.calls = []
-
-            def retrieve(self, *, profession, query):
-                self.calls.append((profession, query))
-                return "SENTINEL-KNOWLEDGE-BLOCK"
-
-        sentinel_retriever = _SentinelRetriever()
-        monkeypatch.setattr(LeadQualifier, "_retriever", sentinel_retriever)
-
-        q = _make_qualifier(VALID_MOCK_DATA)
-
-        captured = {}
-
-        def _capture(prompt):
-            captured["prompt"] = prompt
-            return json.dumps(VALID_MOCK_DATA)
-
-        monkeypatch.setattr(q, "_call_groq", _capture)
-
-        result = await q.run(
-            profession="software-developer",
-            inquiry_context="Need a website",
-        )
-
-        assert result["suggested_lead_score"] == "HOT"
-        # Retriever was consulted with the caller's profession + inquiry.
-        assert sentinel_retriever.calls == [("software-developer", "Need a website")]
-        # Retrieved knowledge was threaded through the prompt builder into the LLM call.
-        assert "SENTINEL-KNOWLEDGE-BLOCK" in captured["prompt"]

@@ -231,6 +231,10 @@ class UserModel(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     professional_title: Mapped[str | None] = mapped_column(String(255), nullable=True)
     service_categories: Mapped[list[str] | None] = mapped_column(ARRAY(Text), nullable=True)
     is_listed: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+    # Nghề chuẩn hoá — slug trong src/modules/intake_form/professions.py. Dùng làm ngữ cảnh cho
+    # lead qualifier (chủ deal làm nghề gì). Khác professional_title (headline tự do): đây là MỘT
+    # trong N nghề cố định. Nullable = freelancer chưa chọn.  #Huynh
+    profession: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     # Payment info
     momo_phone_number: Mapped[str | None] = mapped_column(String(20), nullable=True)
@@ -508,6 +512,10 @@ class ClientModel(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     status: Mapped[str] = mapped_column(_client_status, nullable=False, server_default="prospect")
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Id của khách trong OA của freelancer (follower id). Lấy từ webhook Zalo khi khách nhắn/
+    # follow OA — gửi tin CS phải theo id này, KHÔNG theo số điện thoại. NULL = khách chưa nối
+    # Zalo với OA nên chưa gửi CS được.  #Huynh
+    zalo_user_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     __table_args__ = (
         Index("idx_clients_owner_status", "owner_user_id", "status"),
@@ -622,6 +630,29 @@ class DealIntakeModel(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
         nullable=False,
     )
 
+    # Phiếu này thuộc về deal NÀO.
+    #
+    # BUG CŨ: bảng này CHỈ có `client_id`. Một khách gửi form hai lần cho hai dự án khác
+    # nhau → hai deal, cùng một client. Khi chấm điểm, `get_intake_by_client_id()` trả về
+    # phiếu MỚI NHẤT, nên deal cũ bị chấm bằng brief của dự án MỚI.
+    #
+    # Kiểm chứng thật: khách gửi "Website bán hoa (25 triệu, 20/8)" rồi "App giao hàng
+    # (80 triệu, 30/12)" → CẢ HAI deal đều bị AI đọc thành "80 triệu, 30/12".
+    #
+    # Không chỉ chấm điểm sai: báo giá AI dùng chung hàm đó, nên freelancer gửi cho khách
+    # một bản báo giá cho DỰ ÁN SAI.
+    #
+    # Nullable vì phiếu cũ (tạo trước khi có cột này) không biết thuộc deal nào.  #Huynh
+    # Phiếu thuộc về ĐÚNG deal nào. Nullable vì phiếu cũ (trước migration n2b3c4d5e6f7)
+    # không biết thuộc deal nào — code phải chịu được NULL và rơi về tra theo client.
+    #
+    # Có index: tra phiếu theo deal chạy mỗi lần chấm điểm VÀ mỗi lần sinh báo giá.  #Huynh
+    deal_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("deals.id", ondelete="CASCADE"),
+        nullable=True,
+    )
+
     inquiry_text: Mapped[str] = mapped_column(
         Text,
         nullable=False,
@@ -653,6 +684,10 @@ class DealIntakeModel(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
         Index("idx_deal_intakes_client", "client_id"),
         Index("idx_deal_intakes_submitted", "submitted_at"),
         Index("idx_deal_intakes_owner_deleted", "owner_user_id", "deleted_at"),
+        # Tra phiếu theo deal chạy mỗi lần chấm điểm VÀ mỗi lần sinh báo giá. Đặt tên
+        # tường minh cho khớp migration n2b3c4d5e6f7 — thiếu dòng này thì metadata lệch
+        # DB, và autogenerate đòi XOÁ index ở mọi lần chạy sau.  #Huynh
+        Index("idx_deal_intakes_deal", "deal_id"),
     )
 
 
@@ -735,6 +770,26 @@ class LeadScoreModel(Base):
     urgency_signal: Mapped[str | None] = mapped_column(String(200), nullable=True)
     red_flags: Mapped[list | None] = mapped_column(JSONB, nullable=True)
 
+    # --- Bốn cột dưới đây thêm sau: đây là phần CHỨNG MINH của kết quả chấm điểm ---
+    #
+    # Bảng này vốn đã lưu lịch sử append-only (mỗi lần chấm một dòng) — nhưng chỉ lưu CON SỐ
+    # mà vứt phần chứng minh. Bảng "Căn cứ chấm điểm" (5 tiêu chí, điểm từng mục, lý do, dữ
+    # kiện trích từ lời khách) chỉ nằm ở **localStorage của trình duyệt**.
+    #
+    # Hệ quả: đổi máy/xoá cache là deal vẫn hiện "78/100" nhưng KHÔNG còn căn cứ nào — điểm
+    # rơi từ trên trời, đúng cái bệnh mà bảng căn cứ sinh ra để chữa. Căn cứ ra quyết định
+    # tiền bạc thì không thể để ở chỗ mất lúc nào không hay.
+    #
+    # Nullable vì các bản ghi CŨ (84 dòng đã có) không có mấy trường này — đọc bản cũ vẫn
+    # phải chạy, không được nổ.  #Huynh
+    breakdown: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    next_step: Mapped[str | None] = mapped_column(Text, nullable=True)
+    detected_signals: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+
+    # Prompt nào sinh ra bản chấm này. Sửa prompt là đổi hành vi AI — không lưu phiên bản
+    # thì không trả lời được "sao deal này 52 mà deal kia 80".  #Huynh
+    prompt_version: Mapped[str | None] = mapped_column(String(16), nullable=True)
+
     __table_args__ = (
         Index("idx_lead_scores_deal", "deal_id"),
         CheckConstraint("score BETWEEN 0 AND 100", name="ck_lead_scores_score_range"),
@@ -745,6 +800,47 @@ class LeadScoreModel(Base):
 # =============================================================================
 # DOMAIN: Proposals
 # =============================================================================
+
+
+class DealAttachmentModel(UUIDMixin, TimestampMixin, Base):
+    """File khách gửi kèm deal (brief dự án, yêu cầu kỹ thuật, bảng giá tham khảo...).
+
+    Nghiệp vụ: freelancer đính file PDF của khách vào deal, AI ĐỌC file đó để chấm điểm.
+
+    Đây là mảnh còn thiếu quan trọng: deal tạo tay luôn mất 25 điểm ngân sách vì "khách
+    chưa nói gì" — nhưng nếu khách gửi hẳn một file brief thì ĐÓ CHÍNH LÀ LỜI KHÁCH.
+    `extracted_text` được đưa vào khối "KHÁCH HÀNG NÓI GÌ" của prompt.
+
+    `extracted_text` lưu sẵn để KHÔNG phải bóc lại PDF mỗi lần chấm điểm — bóc PDF tốn
+    CPU, và mỗi deal có thể chấm lại nhiều lần.
+
+    File thật nằm trên object storage (MinIO/S3), DB chỉ giữ `storage_key`. Trước đây
+    frontend nhét cả nội dung file dạng base64 vào localStorage — 5MB là vỡ.  #Huynh
+    """
+
+    __tablename__ = "deal_attachments"
+
+    deal_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("deals.id", ondelete="CASCADE"), nullable=False
+    )
+    owner_user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=False
+    )
+
+    filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    content_type: Mapped[str] = mapped_column(String(100), nullable=False)
+    size_bytes: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+
+    # Khoá trên object storage. File KHÔNG nằm trong DB.
+    storage_key: Mapped[str] = mapped_column(String(500), nullable=False)
+
+    # Chữ bóc từ PDF, để AI đọc. NULL = chưa bóc được (PDF scan ảnh, hoặc không phải PDF).
+    extracted_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    __table_args__ = (
+        Index("idx_deal_attachments_deal", "deal_id"),
+        Index("idx_deal_attachments_owner", "owner_user_id"),
+    )
 
 
 class ProposalModel(UUIDMixin, TimestampMixin, Base):
@@ -995,6 +1091,16 @@ class ReminderModel(UUIDMixin, TimestampMixin, Base):
     )
     retry_count: Mapped[int] = mapped_column(SmallInteger, nullable=False, server_default="0")
 
+    # Lời nhắc do quy tắc tự sinh, đang chờ người duyệt. Nó vẫn ở `pending` — nếu không có
+    # cột này thì beat quét thấy và gửi thẳng cho khách, đúng cái người dùng chưa cho phép.
+    # `RemindersRepository.list_due()` lọc theo cột này.  #Huynh
+    requires_approval: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default="false"
+    )
+    # Để giao diện gắn nhãn "Tự động" — người dùng cần phân biệt cái họ tự đặt với cái hệ
+    # thống tự sinh, nhất là khi định bấm gửi.
+    created_by_rule: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+
     __table_args__ = (
         CheckConstraint("retry_count BETWEEN 0 AND 3", name="chk_reminders_retry"),
         Index(
@@ -1014,6 +1120,64 @@ class ReminderModel(UUIDMixin, TimestampMixin, Base):
             "parent_reminder_id",
             postgresql_where=text("parent_reminder_id IS NOT NULL"),
         ),
+        # Chống trùng: mỗi lượt quét phải tra "đã có lời nhắc nào cho đúng đối tượng và
+        # đúng loại này chưa". Không có index thì quét toàn bảng mỗi ngày.
+        Index(
+            "idx_reminders_dedup",
+            "owner_user_id",
+            "target_type",
+            "target_id",
+            "reminder_type",
+            "created_at",
+        ),
+    )
+
+
+class ReminderRuleModel(UUIDMixin, TimestampMixin, Base):
+    """Quy tắc nhắc tự động của một freelancer.
+
+    Trước đây hệ thống chỉ gửi được lời nhắc do người dùng TỰ TẠO TAY — tức họ vẫn phải nhớ
+    hoá đơn nào sắp tới hạn, khách nào im lặng đã lâu. Bảng này để họ khai một lần rồi thôi.
+
+    Mỗi user một bộ 5 quy tắc, sinh lười lần đầu gọi API (xem `ReminderRulesService`) chứ
+    KHÔNG backfill trong migration — user đăng ký sau này vẫn có đủ mà không ai phải nhớ
+    chạy lại script.  #Huynh
+    """
+
+    __tablename__ = "reminder_rules"
+
+    owner_user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    # Dùng lại `reminder_type_enum` sẵn có — nó đã chứa đúng 5 giá trị cần thiết. Tạo enum
+    # mới chỉ để lặp lại y hệt là thêm một thứ nữa phải giữ đồng bộ.
+    rule_type: Mapped[str] = mapped_column(_reminder_type_enum, nullable=False)
+    is_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
+    # Số ngày TRƯỚC (payment_due) hoặc SAU (các loại còn lại) mốc thời gian của quy tắc.
+    offset_days: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+    # Chỉ dùng cho quá hạn và tái kết nối — hai loại đáng nhắc lại. NULL = nhắc đúng một lần.
+    repeat_every_days: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
+    channel: Mapped[str] = mapped_column(
+        _notification_channel, nullable=False, server_default="in_app"
+    )
+    # Mặc định FALSE: hệ thống soạn nháp rồi chờ người duyệt. Bật lên là cho phép email
+    # khách hàng thật mà không ai đọc lại — phải là hành động có ý thức.
+    auto_send: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+    # Giờ trong ngày để gửi, theo `users.timezone`. Quét chạy rạng sáng nhưng không ai muốn
+    # nhận email công việc lúc 1 giờ sáng.
+    send_at_hour: Mapped[int] = mapped_column(SmallInteger, nullable=False, server_default="9")
+    # Nội dung mẫu freelancer tự soạn cho lời nhắc này. NULL = dùng template mặc định trong
+    # `RULE_DEFAULTS`. Placeholder `{client_name}`, `{deal_title}`... được thay khi soạn tin.
+    message_template: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("owner_user_id", "rule_type", name="uq_reminder_rules_owner_type"),
+        CheckConstraint("offset_days BETWEEN 0 AND 365", name="chk_reminder_rules_offset"),
+        CheckConstraint(
+            "repeat_every_days IS NULL OR repeat_every_days BETWEEN 1 AND 365",
+            name="chk_reminder_rules_repeat",
+        ),
+        CheckConstraint("send_at_hour BETWEEN 0 AND 23", name="chk_reminder_rules_hour"),
     )
 
 
@@ -1126,6 +1290,10 @@ class SystemTemplateModel(UUIDMixin, TimestampMixin, Base):
 
     template_type: Mapped[str] = mapped_column(_template_type, nullable=False)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
+    # Nghề áp dụng (slug trong intake_form/professions.py). NULL = mẫu dùng chung cho mọi
+    # nghề. Đây là chiều "thư viện mẫu theo nghề" Phiếu đòi (Gói 6); cột phẳng + validate
+    # qua seam professions, đúng lối đã làm với users.profession.  #Huynh
+    profession: Mapped[str | None] = mapped_column(String(64), nullable=True)
     content: Mapped[dict] = mapped_column(JSONB, nullable=False)
     plan_tier_required: Mapped[str | None] = mapped_column(String(50), nullable=True)
     version_number: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
@@ -1140,6 +1308,8 @@ class SystemTemplateModel(UUIDMixin, TimestampMixin, Base):
     __table_args__ = (
         CheckConstraint("version_number > 0", name="chk_system_templates_version"),
         Index("idx_system_templates_type_active", "template_type", "is_active"),
+        # Admin lọc thư viện theo nghề — index để không quét cả bảng.
+        Index("idx_system_templates_profession", "profession"),
     )
 
 
@@ -1318,3 +1488,41 @@ ProjectModel.done_count = column_property(
     .scalar_subquery(),
     deferred=False,
 )
+
+
+class NotificationModel(UUIDMixin, TimestampMixin, Base):
+    """Thông báo trong ứng dụng cho freelancer (cái chuông trên thanh tiêu đề).
+
+    Vì sao cần: khách gửi Biểu mẫu tiếp nhận → hệ thống tạo deal mới, nhưng freelancer
+    KHÔNG hề biết cho tới khi tự mở cột "Deal Mới" ra xem. Deal nóng nằm im vài ngày là
+    mất khách — mà cả điểm mạnh của sản phẩm là "AI chấm điểm ngay khi khách gửi form".
+
+    KHÔNG gửi email ở đây. Email là việc của module reminders (có hàng đợi, có retry, có
+    ghi nhận gửi thành công/thất bại). Bảng này chỉ là hộp thư trong ứng dụng: rẻ, đọc
+    nhanh, không phụ thuộc dịch vụ ngoài.
+
+    `entity_type` + `entity_id` để bấm vào thông báo là nhảy thẳng tới deal/hoá đơn liên
+    quan, thay vì bắt người dùng tự đi tìm.  #Huynh
+    """
+
+    __tablename__ = "notifications"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    type: Mapped[str] = mapped_column(String(50), nullable=False)
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    body: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    entity_type: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    entity_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+
+    is_read: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        # Truy vấn nóng nhất là "chuông có mấy cái chưa đọc của TÔI" — chạy mỗi lần đổi
+        # trang. Index kép user_id + is_read để không phải quét cả bảng.  #Huynh
+        Index("idx_notifications_user_unread", "user_id", "is_read"),
+        Index("idx_notifications_user_created", "user_id", "created_at"),
+    )

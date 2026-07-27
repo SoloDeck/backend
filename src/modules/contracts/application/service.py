@@ -13,11 +13,13 @@ from src.modules.contracts.domain.value_objects.contract_status import (
 )
 from src.modules.contracts.infrastructure.repository import ContractsRepository
 from src.modules.contracts.schemas.request import ContractRequest
+from src.modules.subscriptions.application.ai_usage import AiUsageService
 from src.shared.exceptions.domain import (
     BusinessRuleError,
     EntitlementError,
     InvalidStateTransitionError,
     NotFoundError,
+    ValidationError,
 )
 
 
@@ -113,7 +115,24 @@ class ContractsService:
         contract.status = target.value
 
         if target == ContractStatus.ACTIVE:
-            contract.signed_by_freelancer_at = now
+            # Freelancer GHI NHẬN rằng hai bên đã ký (ngoài hệ thống: giấy, scan, Zalo).
+            #
+            # Khách hàng của freelancer KHÔNG có tài khoản SoloDesk — bắt họ đăng ký để ký
+            # một hợp đồng vài trăm nghìn là giết luôn tính năng. Nên hai bên ký ở ngoài,
+            # freelancer vào đánh dấu. Đúng khuôn mẫu đã dùng cho báo giá
+            # (PATCH /proposals/{id}/status — "ghi nhận phản hồi của khách bên ngoài").
+            #
+            # Bug cũ: chỗ này CHỈ ghi signed_by_freelancer_at. Hợp đồng thành "đang
+            # hiệu lực" mà DB không có dấu vết nào cho thấy khách đã ký — hỏi "bằng
+            # chứng đâu?" là bí. Giờ ghi cả hai mốc.
+            #
+            # LƯU Ý: đây là SỔ GHI NHẬN, không phải chữ ký số. SoloDesk không xác thực
+            # danh tính người ký. Giao diện phải nói đúng như vậy, đừng gọi là "Khách ký".
+            #   #Huynh
+            if contract.signed_by_freelancer_at is None:
+                contract.signed_by_freelancer_at = now
+            if contract.signed_by_client_at is None:
+                contract.signed_by_client_at = now
         elif target == ContractStatus.PENDING_SIGNATURES or target in TERMINAL_CONTRACT_STATUSES:
             pass
 
@@ -143,12 +162,23 @@ class ContractsService:
         await self.repo.save(contract)
         return new_contract
 
-    async def generate_content(self, user_id: uuid.UUID, contract_id: uuid.UUID, ai_facade):  # type: ignore[return]
+    async def generate_content(  # type: ignore[no-untyped-def]
+        self,
+        user_id: uuid.UUID,
+        contract_id: uuid.UUID,
+        ai_facade,
+        *,
+        template_id: uuid.UUID | None = None,
+    ):
         contract = await self._get_contract(user_id, contract_id)
         if contract.status != ContractStatus.DRAFT:
             raise BusinessRuleError(
                 f"AI generation is only available for draft contracts (current status: '{contract.status}')"
             )
+
+        # Cổng AI: kiểm tra gói (402), kiểm tra hạn mức tháng (429), ghi nhận lượt dùng.
+        # Xem src/modules/subscriptions/application/ai_usage.py  #Huynh
+        await AiUsageService(db=self.db).consume(user_id)
 
         sub = await self.repo.get_subscription(user_id)
         plan = await self.repo.get_plan(sub.plan_id) if sub else None
@@ -169,12 +199,55 @@ class ContractsService:
             user_profile={
                 "name": user.full_name if user else "",
                 "email": user.email if user else "",
+                # Hợp đồng ghi bên cung cấp là hộ kinh doanh/công ty nếu freelancer có
+                # đăng ký. Cột này đã có sẵn trong bảng users, chỉ là chưa ai truyền
+                # xuống.  #Huynh
+                "business_name": (user.business_name or "") if user else "",
             },
             user_can_use_ai=user_can_use_ai,
         )
+        await AiUsageService(db=self.db).record_cost(
+            user_id,
+            ai_module="contract_generator",
+            usage=ai_facade.last_usage("contract_generator"),
+        )
+
+        # Chèn điều khoản chuẩn từ mẫu freelancer CHỌN — NGUYÊN VĂN, AI không đụng tới. AI lo
+        # phần thân (phạm vi, giá, mốc); điều khoản chuẩn giữ đúng chữ admin viết. Freelancer
+        # sửa được khi review. Không chọn mẫu ("AI tự viết") thì để trống.  #Huynh
+        content = await self._apply_chosen_template(
+            content, template_id, user, template_type="contract"
+        )
+
         contract.content = content
         contract.ai_generated = True
         return await self.repo.save(contract)
+
+    async def list_term_templates(self, user_id: uuid.UUID) -> list:
+        """Mẫu điều khoản hợp đồng freelancer được chọn (theo nghề của họ + dùng chung)."""
+        user = await self.repo.get_user(user_id)
+        profession = getattr(user, "profession", None) if user else None
+        return await self.repo.list_active_templates(
+            template_type="contract", profession=profession
+        )
+
+    async def _apply_chosen_template(  # type: ignore[no-untyped-def]
+        self, content: dict, template_id: uuid.UUID | None, user, *, template_type: str
+    ) -> dict:
+        if template_id is None:  # "AI tự viết" — không chèn mẫu
+            return content
+        profession = getattr(user, "profession", None) if user else None
+        template = await self.repo.get_template_for_use(
+            template_id, template_type=template_type, profession=profession
+        )
+        if template is None:
+            # Mẫu không tồn tại / đã tắt / thuộc nghề khác — chặn, không im lặng bỏ qua.
+            raise ValidationError("Mẫu điều khoản không hợp lệ hoặc không dùng được.")
+        body = template.content.get("body") if isinstance(template.content, dict) else None
+        if isinstance(body, str) and body.strip():
+            content = dict(content)
+            content["standard_terms"] = body.strip()
+        return content
 
     async def send(self, user_id: uuid.UUID, contract_id: uuid.UUID):  # type: ignore[return]
         return await self.transition_status(user_id, contract_id, "pending_signatures")
@@ -194,6 +267,53 @@ class ContractsService:
 
     async def terminate(self, user_id: uuid.UUID, contract_id: uuid.UUID):  # type: ignore[return]
         return await self.transition_status(user_id, contract_id, "terminated")
+
+    async def _build_document(self, user_id: uuid.UUID, contract_id: uuid.UUID):
+        """Dựng ContractDocument — DÙNG CHUNG cho HTML preview và (sau này) PDF.
+
+        Tách riêng để bản trên màn hình và bản khách nhận render từ ĐÚNG MỘT document.
+        Nếu hai bên tự dựng lấy thì kiểu gì cũng có ngày lệch — mà tờ hợp đồng trên màn
+        hình khác tờ khách ký là thứ khiến hệ thống nhìn như lừa đảo. Cùng khuôn mẫu với
+        proposals._build_document.  #Huynh
+        """
+        from src.modules.contracts.application.contract_content import (
+            build_contract_document,
+        )
+
+        contract = await self._get_contract(user_id, contract_id)
+        deal = await self.repo.get_deal(contract.deal_id)
+        client = await self.repo.get_client(contract.client_id)
+        user = await self.repo.get_user(user_id)
+        milestones = await self.repo.get_milestones(contract.id)
+
+        return build_contract_document(
+            contract, deal=deal, client=client, user=user, milestones=milestones
+        )
+
+    async def render_preview_html(
+        self, user_id: uuid.UUID, contract_id: uuid.UUID, *, editable: bool = False
+    ) -> str:
+        """HTML xem trước — CHÍNH XÁC những gì bản PDF sẽ in ra. Frontend nhúng iframe.
+
+        `editable=True` (bản nháp): render thêm ô rỗng cho các điều khoản chưa có, để sửa
+        tại chỗ. Bản đọc-only/PDF thì để False.  #Huynh
+        """
+        from src.ai.contract_generator.application.render import ContractPdfRenderer
+
+        document = await self._build_document(user_id, contract_id)
+        return ContractPdfRenderer().render_html(document, editable=editable)
+
+    async def generate_pdf(self, user_id: uuid.UUID, contract_id: uuid.UUID) -> bytes:
+        """Kết xuất PDF NGAY (đồng bộ) từ CÙNG document với bản xem trước — để freelancer
+        tải về gửi khách. Cùng khuôn với proposals.generate_pdf (weasyprint).
+
+        Khác `export_pdf` cũ: cái đó đẩy task Celery `render_contract_pdf` (đang là stub
+        NotImplementedError) nên chưa chạy được. Ở đây render thẳng, không qua worker.  #Huynh
+        """
+        from src.ai.contract_generator.application.render import ContractPdfRenderer
+
+        document = await self._build_document(user_id, contract_id)
+        return ContractPdfRenderer().render_pdf(document)
 
     async def export_pdf(self, user_id: uuid.UUID, contract_id: uuid.UUID) -> dict:
         from src.workers.pdf_jobs.tasks import render_contract_pdf

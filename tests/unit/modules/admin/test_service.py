@@ -54,6 +54,7 @@ class PlanStub:
 class SubscriptionStub:
     id: uuid.UUID
     plan_id: uuid.UUID
+    user_id: uuid.UUID = field(default_factory=uuid.uuid4)
     override_expires_at: datetime | None = None
     override_by_admin_id: uuid.UUID | None = None
 

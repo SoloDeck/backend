@@ -145,7 +145,7 @@ class TestListClients:
             assert resp.status_code == 200
             data = resp.json()["data"]
             assert all(c["status"] == status for c in data), (
-                f"Expected only '{status}' clients, got statuses: " f"{[c['status'] for c in data]}"
+                f"Expected only '{status}' clients, got statuses: {[c['status'] for c in data]}"
             )
 
     async def test_no_filter_returns_all_statuses(self, client: AsyncClient) -> None:
@@ -285,21 +285,33 @@ async def _create_contract(http, headers: dict, client_id: str) -> dict:
 
     proposal = await http.post(
         "/api/v1/proposals",
-        json={"deal_id": deal_id, "content": {"body": "test"}},
+        json={
+            "deal_id": deal_id,
+            "content": {"body": "test", "pricing": {"total": 5_000_000, "currency": "VND"}},
+        },
         headers=headers,
     )
     assert proposal.status_code == 201, proposal.text
     proposal_id = proposal.json()["data"]["id"]
 
     # Contract requires an accepted proposal: draft → sent → accepted
-    r = await http.patch(f"/api/v1/proposals/{proposal_id}/status", json={"status": "sent"}, headers=headers)
+    r = await http.patch(
+        f"/api/v1/proposals/{proposal_id}/status", json={"status": "sent"}, headers=headers
+    )
     assert r.status_code == 200, r.text
-    r = await http.patch(f"/api/v1/proposals/{proposal_id}/status", json={"status": "accepted"}, headers=headers)
+    r = await http.patch(
+        f"/api/v1/proposals/{proposal_id}/status", json={"status": "accepted"}, headers=headers
+    )
     assert r.status_code == 200, r.text
 
     contract = await http.post(
         "/api/v1/contracts",
-        json={"deal_id": deal_id, "proposal_id": proposal_id, "client_id": client_id, "content": {}},
+        json={
+            "deal_id": deal_id,
+            "proposal_id": proposal_id,
+            "client_id": client_id,
+            "content": {},
+        },
         headers=headers,
     )
     assert contract.status_code == 201, contract.text
@@ -371,9 +383,15 @@ class TestDeleteClient:
         resp = await client.delete(f"/api/v1/clients/{created['id']}", headers=headers)
         assert resp.status_code == 409
         message = resp.json()["error"]["message"]
-        assert "deals" in message.lower() or "invoices" in message.lower() or "contracts" in message.lower()
+        assert (
+            "deals" in message.lower()
+            or "invoices" in message.lower()
+            or "contracts" in message.lower()
+        )
 
-    async def test_client_with_soft_deleted_deal_still_returns_409(self, client: AsyncClient) -> None:
+    async def test_client_with_soft_deleted_deal_still_returns_409(
+        self, client: AsyncClient
+    ) -> None:
         """Soft-deleted deals still count — historical records block deletion."""
         headers = await _auth_headers(client)
         created = await _create_client(client, headers)
@@ -418,7 +436,9 @@ class TestDeleteClient:
         assert resp.status_code == 409
         assert resp.json()["error"]["code"] == "BUSINESS_RULE_VIOLATION"
 
-    async def test_client_with_soft_deleted_invoice_still_returns_409(self, client: AsyncClient) -> None:
+    async def test_client_with_soft_deleted_invoice_still_returns_409(
+        self, client: AsyncClient
+    ) -> None:
         """Soft-deleted invoices still count — historical records block deletion."""
         headers = await _auth_headers(client)
         created = await _create_client(client, headers)
@@ -456,7 +476,9 @@ class TestDeleteClient:
         assert resp.status_code == 409
         assert resp.json()["error"]["code"] == "BUSINESS_RULE_VIOLATION"
 
-    async def test_client_with_soft_deleted_contract_still_returns_409(self, client: AsyncClient) -> None:
+    async def test_client_with_soft_deleted_contract_still_returns_409(
+        self, client: AsyncClient
+    ) -> None:
         """Soft-deleted contracts still count — historical records block deletion."""
         headers = await _auth_headers(client)
         created = await _create_client(client, headers)
@@ -478,7 +500,11 @@ class TestDeleteClient:
 
         log_resp = await client.post(
             f"/api/v1/clients/{created['id']}/comm-logs",
-            json={"channel": "email", "summary": "Intro call", "communicated_at": "2026-06-01T10:00:00Z"},
+            json={
+                "channel": "email",
+                "summary": "Intro call",
+                "communicated_at": "2026-06-01T10:00:00Z",
+            },
             headers=headers,
         )
         assert log_resp.status_code == 201, log_resp.text
@@ -612,7 +638,11 @@ class TestCommLogs:
 
         resp = await client.post(
             f"/api/v1/clients/{created['id']}/comm-logs",
-            json={"channel": "email", "summary": "Intro call", "communicated_at": "2026-06-01T10:00:00Z"},
+            json={
+                "channel": "email",
+                "summary": "Intro call",
+                "communicated_at": "2026-06-01T10:00:00Z",
+            },
             headers=headers,
         )
         assert resp.status_code == 201
@@ -626,7 +656,11 @@ class TestCommLogs:
 
         await client.post(
             f"/api/v1/clients/{created['id']}/comm-logs",
-            json={"channel": "phone", "summary": "Follow-up call", "communicated_at": "2026-06-02T14:00:00Z"},
+            json={
+                "channel": "phone",
+                "summary": "Follow-up call",
+                "communicated_at": "2026-06-02T14:00:00Z",
+            },
             headers=headers,
         )
 
@@ -643,7 +677,11 @@ class TestCommLogs:
         for i in range(3):
             await client.post(
                 f"/api/v1/clients/{created['id']}/comm-logs",
-                json={"channel": "email", "summary": f"Message {i}", "communicated_at": "2026-06-01T10:00:00Z"},
+                json={
+                    "channel": "email",
+                    "summary": f"Message {i}",
+                    "communicated_at": "2026-06-01T10:00:00Z",
+                },
                 headers=headers,
             )
 
@@ -654,7 +692,11 @@ class TestCommLogs:
         headers = await _auth_headers(client)
         resp = await client.post(
             f"/api/v1/clients/{uuid.uuid4()}/comm-logs",
-            json={"channel": "email", "summary": "Ghost", "communicated_at": "2026-06-01T10:00:00Z"},
+            json={
+                "channel": "email",
+                "summary": "Ghost",
+                "communicated_at": "2026-06-01T10:00:00Z",
+            },
             headers=headers,
         )
         assert resp.status_code == 404
@@ -670,7 +712,11 @@ class TestCommLogs:
         created = await _create_client(client, headers_a)
         await client.post(
             f"/api/v1/clients/{created['id']}/comm-logs",
-            json={"channel": "email", "summary": "Private", "communicated_at": "2026-06-01T10:00:00Z"},
+            json={
+                "channel": "email",
+                "summary": "Private",
+                "communicated_at": "2026-06-01T10:00:00Z",
+            },
             headers=headers_a,
         )
 
@@ -680,7 +726,11 @@ class TestCommLogs:
     async def test_post_unauthenticated_returns_401(self, client: AsyncClient) -> None:
         resp = await client.post(
             f"/api/v1/clients/{uuid.uuid4()}/comm-logs",
-            json={"channel": "email", "summary": "No auth", "communicated_at": "2026-06-01T10:00:00Z"},
+            json={
+                "channel": "email",
+                "summary": "No auth",
+                "communicated_at": "2026-06-01T10:00:00Z",
+            },
         )
         assert resp.status_code == 401
 

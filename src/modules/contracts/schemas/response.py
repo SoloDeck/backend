@@ -4,6 +4,13 @@ from datetime import date, datetime
 from pydantic import BaseModel, ConfigDict
 
 
+class TermTemplateOption(BaseModel):
+    """Một lựa chọn mẫu điều khoản cho freelancer (chỉ id + tên, đủ để dựng danh sách)."""
+
+    id: uuid.UUID
+    name: str
+
+
 class ContractResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

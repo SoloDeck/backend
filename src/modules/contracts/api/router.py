@@ -1,9 +1,11 @@
 """Contracts API api."""
 
 import uuid
+from io import BytesIO
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -14,7 +16,11 @@ from src.modules.contracts.schemas.request import (
     ContractStatusRequest,
     ContractTerminateRequest,
 )
-from src.modules.contracts.schemas.response import ContractExportResponse, ContractResponse
+from src.modules.contracts.schemas.response import (
+    ContractExportResponse,
+    ContractResponse,
+    TermTemplateOption,
+)
 from src.shared.dependencies.ai import AIFacadeDep
 from src.shared.dependencies.auth import CurrentUserId
 from src.shared.responses.response import ApiResponse, PaginatedResponse
@@ -26,6 +32,10 @@ DBSession = Annotated[AsyncSession, Depends(get_db_session)]
 
 class MsgResp(BaseModel):
     detail: str
+
+
+class ContractPreviewResponse(BaseModel):
+    html: str
 
 
 @router.get("", response_model=PaginatedResponse[ContractResponse])
@@ -61,6 +71,18 @@ async def create_contract(
     return ApiResponse.created(ContractResponse.model_validate(contract))
 
 
+# PHẢI khai TRƯỚC "/{contract_id}" — để sau thì "term-templates" bị nuốt vào route động
+# và trả 422 vì không phải UUID.  #Huynh
+@router.get("/term-templates", response_model=ApiResponse[list[TermTemplateOption]])
+async def list_contract_term_templates(
+    user_id: CurrentUserId,
+    db: DBSession,
+) -> ApiResponse[list[TermTemplateOption]]:
+    """Mẫu điều khoản hợp đồng freelancer được chọn (theo nghề + dùng chung, đang bật)."""
+    templates = await ContractsService(db=db).list_term_templates(user_id)
+    return ApiResponse.ok([TermTemplateOption(id=t.id, name=t.name) for t in templates])
+
+
 @router.get("/{contract_id}", response_model=ApiResponse[ContractResponse])
 async def get_contract(
     contract_id: uuid.UUID,
@@ -69,6 +91,45 @@ async def get_contract(
 ) -> ApiResponse[ContractResponse]:
     contract = await ContractsService(db=db).get_one(user_id, contract_id)
     return ApiResponse.ok(ContractResponse.model_validate(contract))
+
+
+@router.get("/{contract_id}/preview", response_model=ApiResponse[ContractPreviewResponse])
+async def preview_contract(
+    contract_id: uuid.UUID,
+    user_id: CurrentUserId,
+    db: DBSession,
+    editable: bool = Query(
+        default=False,
+        description="True: render thêm ô rỗng cho điều khoản chưa có, để sửa tại chỗ (bản nháp).",
+    ),
+) -> ApiResponse[ContractPreviewResponse]:
+    """HTML xem trước — CHÍNH XÁC bản hợp đồng khách sẽ nhận/ký.
+
+    Frontend nhúng HTML này vào iframe thay vì tự dựng lại từ các trường thô. Cùng một
+    template với bản PDF nên hai bên KHÔNG THỂ lệch — đó là gốc khiến tờ hợp đồng trên
+    màn hình trước đây trông sơ sài, không giống một hợp đồng thật.  #Huynh
+    """
+    html = await ContractsService(db=db).render_preview_html(
+        user_id, contract_id, editable=editable
+    )
+    return ApiResponse.ok(ContractPreviewResponse(html=html))
+
+
+@router.get("/{contract_id}/pdf")
+async def download_contract_pdf(
+    contract_id: uuid.UUID,
+    user_id: CurrentUserId,
+    db: DBSession,
+):
+    """Tải PDF hợp đồng (render đồng bộ) — freelancer gửi cho khách. Cùng document với bản
+    xem trước nên PDF = đúng thứ trên màn hình. Cùng khuôn với GET /proposals/{id}/pdf.  #Huynh
+    """
+    pdf_bytes = await ContractsService(db=db).generate_pdf(user_id, contract_id)
+    return StreamingResponse(
+        BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="contract-{contract_id}.pdf"'},
+    )
 
 
 @router.patch("/{contract_id}", response_model=ApiResponse[ContractResponse])
@@ -88,8 +149,11 @@ async def ai_generate_contract_content(
     user_id: CurrentUserId,
     db: DBSession,
     ai: AIFacadeDep,
+    template_id: uuid.UUID | None = Query(default=None),
 ) -> ApiResponse[ContractResponse]:
-    contract = await ContractsService(db=db).generate_content(user_id, contract_id, ai)
+    contract = await ContractsService(db=db).generate_content(
+        user_id, contract_id, ai, template_id=template_id
+    )
     return ApiResponse.ok(ContractResponse.model_validate(contract))
 
 

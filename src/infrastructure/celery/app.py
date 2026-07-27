@@ -1,4 +1,5 @@
 from celery import Celery
+from celery.schedules import crontab
 
 from src.config.settings import settings
 
@@ -35,6 +36,13 @@ celery_app.conf.update(
             "task": "src.workers.reminder_jobs.tasks.send_pending_reminders",
             "schedule": 60.0,  # every minute
         },
+        # Quét quy tắc nhắc tự động, mỗi ngày một lần lúc 1h sáng (giờ VN — xem `timezone`
+        # ở trên). Chạy SAU `mark-overdue-invoices` để hoá đơn kịp chuyển sang `overdue`
+        # trước khi quy tắc "nhắc quá hạn" đi tìm chúng.  #Huynh
+        "generate-rule-reminders": {
+            "task": "src.workers.reminder_jobs.tasks.generate_rule_reminders",
+            "schedule": crontab(hour=1, minute=0),
+        },
         "refresh-analytics-snapshots": {
             "task": "src.workers.reminder_jobs.tasks.refresh_analytics_snapshots",
             "schedule": 86400.0,  # nightly
@@ -42,6 +50,13 @@ celery_app.conf.update(
         "expire-lapsed-subscriptions": {
             "task": "src.workers.subscription_jobs.tasks.expire_lapsed_subscriptions",
             "schedule": 3600.0,  # every hour
+        },
+        # Cảnh báo EMAIL: sắp hết quota AI (giữa kỳ) + sắp hết kỳ. Mỗi ngày một lần lúc 2h
+        # sáng (giờ VN). KHÔNG hạ gói ở đây — việc hạ Free khi hết kỳ do
+        # `expire-lapsed-subscriptions` (module subscriptions) lo, tránh hạ 2 lần.
+        "run-subscription-maintenance": {
+            "task": "src.workers.reminder_jobs.tasks.run_subscription_maintenance",
+            "schedule": crontab(hour=2, minute=0),
         },
     },
 )

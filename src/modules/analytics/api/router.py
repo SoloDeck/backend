@@ -11,6 +11,7 @@ from src.modules.analytics.application.service import AnalyticsService
 from src.modules.analytics.schemas.response import (
     AiUsageResponse,
     DashboardResponse,
+    MonthlyRevenueResponse,
     PipelineStageResponse,
     RevenueResponse,
     TopClientResponse,
@@ -44,6 +45,17 @@ async def get_revenue(
     return ApiResponse.ok(
         await AnalyticsService(db=db).get_revenue(user_id, period_type, from_date, to_date)
     )
+
+
+# ĐẶT TRƯỚC "/revenue" thì không sao (path khác hẳn), nhưng để cạnh nhau cho dễ đọc.
+@router.get("/revenue/monthly", response_model=ApiResponse[list[MonthlyRevenueResponse]])
+async def get_revenue_monthly(
+    user_id: CurrentUserId,
+    db: DBSession,
+    months: int = Query(default=12, ge=1, le=36),
+) -> ApiResponse[list[MonthlyRevenueResponse]]:
+    """Doanh thu đã xuất/đã thu theo từng tháng, N tháng gần nhất (liền mạch)."""
+    return ApiResponse.ok(await AnalyticsService(db=db).get_revenue_monthly(user_id, months))
 
 
 @router.get("/pipeline", response_model=ApiResponse[list[PipelineStageResponse]])

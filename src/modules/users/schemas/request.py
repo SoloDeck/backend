@@ -1,7 +1,9 @@
 from decimal import Decimal
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
+
+from src.modules.intake_form.professions import is_valid_profession
 
 
 class UpdateUserRequest(BaseModel):
@@ -19,6 +21,15 @@ class FreelancerProfileUpdateRequest(BaseModel):
     avatar_url: str | None = None
     portfolio_url: str | None = None
     is_listed: bool | None = None
+    # Slug nghề chuẩn hoá; validate qua seam của intake_form (None = bỏ chọn, vẫn hợp lệ).
+    profession: str | None = None
+
+    @field_validator("profession")
+    @classmethod
+    def _valid_profession(cls, v: str | None) -> str | None:
+        if not is_valid_profession(v):
+            raise ValueError("Nghề không hợp lệ")
+        return v
 
 
 class UpdateProfessionalProfileRequest(BaseModel):

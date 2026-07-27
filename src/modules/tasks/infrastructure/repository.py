@@ -52,6 +52,26 @@ class TaskRepository:
         await self.db.refresh(task)
         return task
 
+    async def count_by_title_prefix(
+        self, entity_type: str, entity_id: uuid.UUID, prefix: str
+    ) -> tuple[int, int]:
+        """(tổng, đã xong) các task của entity có title bắt đầu bằng `prefix`.
+
+        Dùng cho guard "hoàn thành dự án": đếm các mốc "Thu tiền:" đã tick xong chưa.  #Huynh
+        """
+        base = (
+            TaskModel.entity_type == entity_type,
+            TaskModel.entity_id == entity_id,
+            TaskModel.title.startswith(prefix),
+        )
+        total = await self.db.scalar(select(func.count()).select_from(TaskModel).where(*base))
+        done = await self.db.scalar(
+            select(func.count())
+            .select_from(TaskModel)
+            .where(*base, TaskModel.status == "done")
+        )
+        return int(total or 0), int(done or 0)
+
     async def get_by_id(self, task_id: uuid.UUID) -> TaskModel | None:
         return await self.db.scalar(select(TaskModel).where(TaskModel.id == task_id))  # type: ignore[no-any-return]
 

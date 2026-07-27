@@ -183,10 +183,10 @@ async def get_plan(
 @router.post("/plans", response_model=ApiResponse[AdminPlanResponse], status_code=201)
 async def create_plan(
     payload: AdminPlanRequest,
-    _: AdminUser,
+    admin: AdminUser,
     db: DBSession,
 ) -> ApiResponse[AdminPlanResponse]:
-    plan = await AdminService(db=db).create_plan(payload)
+    plan = await AdminService(db=db).create_plan(payload, admin_id=uuid.UUID(admin.sub))
     return ApiResponse.created(AdminPlanResponse.model_validate(plan))
 
 
@@ -194,10 +194,12 @@ async def create_plan(
 async def update_plan(
     plan_id: uuid.UUID,
     payload: AdminUpdatePlanRequest,
-    _: AdminUser,
+    admin: AdminUser,
     db: DBSession,
 ) -> ApiResponse[AdminPlanResponse]:
-    plan = await AdminService(db=db).update_plan(plan_id, payload)
+    plan = await AdminService(db=db).update_plan(
+        plan_id, payload, admin_id=uuid.UUID(admin.sub)
+    )
     return ApiResponse.ok(AdminPlanResponse.model_validate(plan))
 
 
@@ -289,7 +291,23 @@ async def list_ai_costs(
     )
     return ApiResponse.ok(
         AdminAiCostPagedResponse(
-            data=[AdminAiCostResponse.model_validate(r) for r in records],
+            # Mỗi bản ghi là (record, email, full_name) do repo join users → biết ai gen AI.
+            data=[
+                AdminAiCostResponse(
+                    id=r.id,
+                    user_id=r.user_id,
+                    user_email=email,
+                    user_full_name=full_name,
+                    ai_module=r.ai_module,
+                    model_used=r.model_used,
+                    input_tokens=r.input_tokens,
+                    output_tokens=r.output_tokens,
+                    estimated_cost_usd=r.estimated_cost_usd,
+                    status=r.status,
+                    occurred_at=r.occurred_at,
+                )
+                for (r, email, full_name) in records
+            ],
             total=total,
             page=page,
             page_size=page_size,
@@ -328,7 +346,21 @@ async def list_audit_logs(
     )
     return ApiResponse.ok(
         Paginated[AdminAuditLogResponse](
-            data=[AdminAuditLogResponse.model_validate(e) for e in logs],
+            # Mỗi bản ghi là (entry, actor_email, actor_full_name) do repo join users.
+            data=[
+                AdminAuditLogResponse(
+                    id=e.id,
+                    event_type=e.event_type,
+                    actor_user_id=e.actor_user_id,
+                    actor_email=actor_email,
+                    actor_full_name=actor_full_name,
+                    target_type=e.target_type,
+                    target_id=e.target_id,
+                    description=e.description,
+                    occurred_at=e.occurred_at,
+                )
+                for (e, actor_email, actor_full_name) in logs
+            ],
             total=total,
             page=page,
             page_size=page_size,
@@ -346,10 +378,12 @@ async def list_templates(
     _: AdminUser,
     db: DBSession,
     template_type: Literal["proposal", "contract"] | None = Query(default=None),
+    profession: str | None = Query(default=None),
     is_active: bool | None = Query(default=None),
 ) -> ApiResponse[list[AdminTemplateResponse]]:
     templates = await AdminService(db=db).list_templates(
         template_type=template_type,
+        profession=profession,
         is_active=is_active,
     )
     return ApiResponse.ok([AdminTemplateResponse.model_validate(t) for t in templates])

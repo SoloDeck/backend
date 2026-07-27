@@ -44,7 +44,13 @@ async def _create_deal(http: AsyncClient, headers: dict, client_id: str) -> str:
 async def _create_accepted_proposal(http: AsyncClient, headers: dict, deal_id: str) -> str:
     resp = await http.post(
         "/api/v1/proposals",
-        json={"deal_id": deal_id, "content": {"body": "proposal body"}},
+        json={
+            "deal_id": deal_id,
+            "content": {
+                "body": "proposal body",
+                "pricing": {"total": 5_000_000, "currency": "VND"},
+            },
+        },
         headers=headers,
     )
     assert resp.status_code == 201, resp.text
