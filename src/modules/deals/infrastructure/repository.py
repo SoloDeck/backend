@@ -39,6 +39,18 @@ class DealsRepository:
             select(UserModel.profession).where(UserModel.id == owner_user_id)
         )
 
+    async def get_owner_by_id(self, owner_user_id: uuid.UUID):
+        """Chủ deal — cần khi soạn thư gửi cho chính freelancer (tên để chào, email để gửi).
+
+        Đường chạy nền (Celery) không có sẵn object user như đường HTTP, phải tự tra.  #Huynh
+        """
+        return await self.db.scalar(
+            select(UserModel).where(
+                UserModel.id == owner_user_id,
+                UserModel.deleted_at.is_(None),
+            )
+        )
+
     async def get_owner_by_intake_token(self, share_token: str):
         return await self.db.scalar(
             select(UserModel).where(

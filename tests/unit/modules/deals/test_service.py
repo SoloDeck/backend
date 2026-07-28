@@ -20,6 +20,7 @@ from src.shared.exceptions.domain import (
 class DealStub:
     id: uuid.UUID
     stage: str
+    client_id: uuid.UUID | None = None
     title: str = "Deal"
     closed_at: object | None = None
     document_url: str | None = None
@@ -265,11 +266,19 @@ async def test_create_public_intake_creates_client_deal_and_intake() -> None:
     owner = OwnerStub(id=uuid.uuid4(), email="owner@example.com")
     client_id = uuid.uuid4()
     intake = IntakeStub(id=uuid.uuid4(), client_id=client_id)
+    deal = DealStub(id=uuid.uuid4(), stage="new_lead", client_id=client_id)
     repo = AsyncMock()
     repo.get_owner_by_intake_token.return_value = owner
     repo.create_client.return_value = DealStub(id=client_id, stage="prospect")
-    repo.create.return_value = DealStub(id=uuid.uuid4(), stage="new_lead")
+    repo.create.return_value = deal
     repo.create_intake.return_value = intake
+    # Thư báo deal mới đọc LẠI mọi thứ từ DB (xem `DealsService.send_new_deal_email`) để
+    # đường gửi ngay và đường gửi hoãn qua Celery ra cùng một nội dung — nên mock phải trả
+    # đủ chủ deal / deal / khách / phiếu.  #Huynh
+    repo.get_owner_by_id.return_value = owner
+    repo.get_by_id.return_value = deal
+    repo.get_client_by_id.return_value = ClientStub(id=client_id)
+    repo.get_intake_for_deal.return_value = intake
 
     # `Session.add()` là hàm ĐỒNG BỘ. Để AsyncMock tự sinh thì nó trả về một coroutine
     # không ai await → RuntimeWarning "coroutine was never awaited" và test đỏ vì một lý do
@@ -283,6 +292,11 @@ async def test_create_public_intake_creates_client_deal_and_intake() -> None:
     with pytest.MonkeyPatch().context() as mp:
         mp.setattr("src.workers.ai_jobs.tasks.qualify_deal_async_by_id.delay", lambda *a: None)
         mp.setattr("src.shared.email.smtp.send_email", sent_email)
+        # Đếm tệp đính kèm đụng object storage thật — ở tầng unit thì chặn lại.
+        mp.setattr(
+            "src.modules.deals.application.attachment_service.DealAttachmentService.list_for_deal",
+            AsyncMock(return_value=[]),
+        )
         result = await service.create_public_intake(f"tok-{uuid.uuid4().hex}", _intake_payload())
 
     assert result is intake
@@ -302,6 +316,169 @@ async def test_create_public_intake_creates_client_deal_and_intake() -> None:
     assert notification.type == "intake_submitted"
     assert notification.user_id == owner.id
     assert notification.is_read is False
+
+
+async def test_thu_bao_deal_moi_gui_NGAY_va_neu_so_tep_khach_khai() -> None:
+    """Thư phải đi NGAY trong request nhận form, không qua hàng đợi.
+
+    Đo trên bản chạy thật: bản trước hoãn thư 60 giây qua Celery cho tệp kịp lên rồi mới
+    đếm — worker trả `Received unregistered task ... KeyError` vì nó đọc danh sách task lúc
+    KHỞI ĐỘNG, nên message bị vứt và freelancer KHÔNG nhận được gì. Bất kỳ lần deploy nào
+    mà worker còn chạy code cũ đều dính lại y hệt, và im lặng. Số tệp lấy theo con số khách
+    khai (tệp tải lên sau, lúc này DB đếm ra 0).  #Huynh
+    """
+    owner = OwnerStub(id=uuid.uuid4(), email="owner@example.com")
+    client_id = uuid.uuid4()
+    deal = DealStub(id=uuid.uuid4(), stage="new_lead", client_id=client_id)
+    repo = AsyncMock()
+    repo.get_owner_by_intake_token.return_value = owner
+    repo.create_client.return_value = DealStub(id=client_id, stage="prospect")
+    repo.create.return_value = deal
+    repo.create_intake.return_value = IntakeStub(id=uuid.uuid4(), client_id=client_id)
+    repo.get_owner_by_id.return_value = owner
+    repo.get_by_id.return_value = deal
+    repo.get_client_by_id.return_value = ClientStub(id=client_id)
+    repo.get_intake_for_deal.return_value = IntakeStub(id=uuid.uuid4(), client_id=client_id)
+
+    db = AsyncMock()
+    db.add = MagicMock()
+    sent_email = AsyncMock()
+    with pytest.MonkeyPatch().context() as mp:
+        mp.setattr("src.workers.ai_jobs.tasks.qualify_deal_async_by_id.delay", lambda *a: None)
+        mp.setattr("src.shared.email.smtp.send_email", sent_email)
+        mp.setattr(
+            "src.modules.deals.application.attachment_service.DealAttachmentService.list_for_deal",
+            AsyncMock(return_value=[]),
+        )
+        await DealsService(db=db, repo=repo, usage=AsyncMock()).create_public_intake(
+            f"tok-{uuid.uuid4().hex}", _intake_payload(attachment_count=2)
+        )
+
+    # Gửi ngay trong chính lệnh gọi này, không hẹn giờ, không qua worker.
+    sent_email.assert_awaited_once()
+    body = sent_email.await_args.kwargs["plain"]
+    assert "2 tệp" in body
+
+
+class TestPublicIntakeAttachment:
+    """Đường ĐÍNH KÈM công khai — không đăng nhập mà nhận file, nên phải khoá kỹ.
+
+    Vì sao có đường này: form công khai vốn đã có khu kéo-thả tệp và hứa với khách "PDF,
+    Word, Excel, hình ảnh", nhưng phía gửi chỉ POST JSON — tệp khách kéo vào bị vứt im
+    lặng, không ai nhận.  #Huynh
+    """
+
+    @staticmethod
+    def _service(repo: AsyncMock) -> DealsService:
+        return DealsService(db=AsyncMock(), repo=repo, usage=AsyncMock())
+
+    async def test_token_sai_thi_khong_nhan(self) -> None:
+        repo = AsyncMock()
+        repo.get_owner_by_intake_token.return_value = None
+
+        with pytest.raises(NotFoundError):
+            await self._service(repo).add_public_intake_attachment(
+                f"bad-{uuid.uuid4().hex}",
+                uuid.uuid4(),
+                filename="brief.pdf",
+                content_type="application/pdf",
+                data=b"%PDF-1.4",
+            )
+
+    async def test_phieu_khong_thuoc_chu_link_thi_khong_nhan(self) -> None:
+        # Chốt quan trọng nhất: có link hợp lệ KHÔNG có nghĩa được ghi vào phiếu bất kỳ.
+        repo = AsyncMock()
+        repo.get_owner_by_intake_token.return_value = OwnerStub(id=uuid.uuid4())
+        repo.get_intake_by_id.return_value = None
+
+        with pytest.raises(NotFoundError):
+            await self._service(repo).add_public_intake_attachment(
+                f"tok-{uuid.uuid4().hex}",
+                uuid.uuid4(),
+                filename="brief.pdf",
+                content_type="application/pdf",
+                data=b"%PDF-1.4",
+            )
+
+    async def test_qua_cua_so_thoi_gian_thi_chan(self) -> None:
+        from datetime import UTC, datetime, timedelta
+
+        repo = AsyncMock()
+        repo.get_owner_by_intake_token.return_value = OwnerStub(id=uuid.uuid4())
+        repo.get_intake_by_id.return_value = SimpleNamespace(
+            deal_id=uuid.uuid4(),
+            submitted_at=datetime.now(UTC) - timedelta(hours=2),
+            created_at=None,
+        )
+
+        # Quá cửa sổ thì link công khai không còn là "đang gửi form" nữa, mà thành một
+        # đường ghi tuỳ ý vào deal của người khác.
+        with pytest.raises(BusinessRuleError, match="quá thời gian"):
+            await self._service(repo).add_public_intake_attachment(
+                f"tok-{uuid.uuid4().hex}",
+                uuid.uuid4(),
+                filename="brief.pdf",
+                content_type="application/pdf",
+                data=b"%PDF-1.4",
+            )
+
+    async def test_qua_so_tep_toi_da_thi_chan(self) -> None:
+        from datetime import UTC, datetime
+
+        repo = AsyncMock()
+        repo.get_owner_by_intake_token.return_value = OwnerStub(id=uuid.uuid4())
+        repo.get_intake_by_id.return_value = SimpleNamespace(
+            deal_id=uuid.uuid4(), submitted_at=datetime.now(UTC), created_at=None
+        )
+
+        with (
+            patch(
+                "src.modules.deals.application.attachment_service."
+                "DealAttachmentService.list_for_deal",
+                AsyncMock(return_value=[object()] * 10),
+            ),
+            pytest.raises(BusinessRuleError, match="tối đa"),
+        ):
+            await self._service(repo).add_public_intake_attachment(
+                f"tok-{uuid.uuid4().hex}",
+                uuid.uuid4(),
+                filename="brief.pdf",
+                content_type="application/pdf",
+                data=b"%PDF-1.4",
+            )
+
+    async def test_hop_le_thi_giao_cho_dich_vu_dinh_kem_san_co(self) -> None:
+        owner = OwnerStub(id=uuid.uuid4())
+        deal_id = uuid.uuid4()
+        from datetime import UTC, datetime
+
+        repo = AsyncMock()
+        repo.get_owner_by_intake_token.return_value = owner
+        repo.get_intake_by_id.return_value = SimpleNamespace(
+            deal_id=deal_id, submitted_at=datetime.now(UTC), created_at=None
+        )
+        upload = AsyncMock(return_value="saved")
+
+        with patch(
+            "src.modules.deals.application.attachment_service.DealAttachmentService.list_for_deal",
+            AsyncMock(return_value=[]),
+        ), patch(
+            "src.modules.deals.application.attachment_service.DealAttachmentService.upload",
+            upload,
+        ):
+            result = await self._service(repo).add_public_intake_attachment(
+                f"tok-{uuid.uuid4().hex}",
+                uuid.uuid4(),
+                filename="brief.pdf",
+                content_type="application/pdf",
+                data=b"%PDF-1.4",
+            )
+
+        assert result == "saved"
+        # Kiểm loại tệp / dung lượng / bóc chữ PDF đã nằm sẵn trong DealAttachmentService —
+        # đường công khai dùng lại y nguyên, KHÔNG viết lại luật riêng.
+        assert upload.await_args.args[0] == owner.id
+        assert upload.await_args.args[1] == deal_id
 
 
 async def test_create_public_intake_rejects_unknown_token() -> None:
@@ -351,6 +528,16 @@ class IntakeStub:
     inquiry_text: str = "I need a website built."
     estimated_budget: str | None = None
     desired_timeline: str | None = None
+
+
+@dataclass
+class ClientStub:
+    """Khách hàng — thư báo deal mới lấy tên/email/SĐT từ đây."""
+
+    id: uuid.UUID
+    name: str = "Lead Person"
+    email: str | None = None
+    phone: str | None = None
 
 
 @dataclass

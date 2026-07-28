@@ -5,7 +5,7 @@ POST /api/v1/intake/{share_token} — no auth. Verifies the happy path, bad-toke
 Uses real PostgreSQL (rolled back per test).
 """
 
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from httpx import AsyncClient
 
@@ -154,3 +154,69 @@ async def test_no_phone_always_creates_new_client(client: AsyncClient) -> None:
     deals = await client.get("/api/v1/deals", headers=headers)
     client_ids = {d["client_id"] for d in deals.json()["data"]}
     assert len(client_ids) == 2, "Without phone, two separate clients should be created"
+
+
+# ---------------------------------------------------------------------------
+# POST /api/v1/intake/{share_token}/{intake_id}/attachments
+# ---------------------------------------------------------------------------
+
+
+async def test_khach_gui_kem_tep_thi_freelancer_thay_trong_deal(client: AsyncClient) -> None:
+    """Tệp khách kéo vào biểu mẫu phải tới được deal của freelancer.
+
+    Trước đây form có khu kéo-thả và hứa nhận "PDF, Word, Excel, hình ảnh", nhưng phía gửi
+    chỉ POST JSON — tệp bị vứt im lặng, khách tưởng đã gửi.  #Huynh
+    """
+    headers, token = await _owner_intake_token(client)
+
+    with patch("src.workers.ai_jobs.tasks.qualify_deal_async_by_id.delay"):
+        submit = await client.post(
+            f"/api/v1/intake/{token}",
+            json={"name": "Khách Có Tệp", "inquiry_text": "Brief đính kèm.", "attachment_count": 1},
+        )
+    assert submit.status_code == 201, submit.text
+    intake_id = submit.json()["data"]["id"]
+
+    # Kho file (MinIO) là dịch vụ NGOÀI — bài test này kiểm đường đi của tệp qua API và DB,
+    # không kiểm MinIO. Chặn đúng một lệnh đẩy file, phần còn lại chạy thật.
+    with (
+        patch(
+            "src.infrastructure.storage.object_storage.ObjectStorage.enabled",
+            new=property(lambda self: True),
+        ),
+        patch(
+            "src.infrastructure.storage.object_storage.ObjectStorage.upload",
+            new=AsyncMock(return_value="deals/test/brief.pdf"),
+        ),
+    ):
+        upload = await client.post(
+            f"/api/v1/intake/{token}/{intake_id}/attachments",
+            files={"file": ("brief.pdf", b"%PDF-1.4 noi dung brief", "application/pdf")},
+        )
+    assert upload.status_code == 201, upload.text
+    assert upload.json()["data"]["filename"] == "brief.pdf"
+
+    # Freelancer mở deal ra là thấy đúng tệp đó.
+    deals = await client.get("/api/v1/deals", headers=headers)
+    deal_id = next(d["id"] for d in deals.json()["data"] if "Khách Có Tệp" in d["title"])
+    listed = await client.get(f"/api/v1/deals/{deal_id}/attachments", headers=headers)
+    assert listed.status_code == 200, listed.text
+    assert [a["filename"] for a in listed.json()["data"]] == ["brief.pdf"]
+
+
+async def test_dinh_kem_bang_token_sai_thi_404(client: AsyncClient) -> None:
+    _, token = await _owner_intake_token(client)
+
+    with patch("src.workers.ai_jobs.tasks.qualify_deal_async_by_id.delay"):
+        submit = await client.post(
+            f"/api/v1/intake/{token}",
+            json={"name": "Khách", "inquiry_text": "x", "attachment_count": 1},
+        )
+    intake_id = submit.json()["data"]["id"]
+
+    # Có id phiếu thật nhưng link sai → không được ghi vào deal của người khác.
+    resp = await client.post(
+        f"/api/v1/intake/khong-ton-tai/{intake_id}/attachments",
+        files={"file": ("x.pdf", b"%PDF-1.4", "application/pdf")},
+    )
+    assert resp.status_code == 404
