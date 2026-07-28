@@ -23,6 +23,7 @@ import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config.settings import settings
+from src.infrastructure.storage.object_storage import object_storage
 from src.integrations.zalo.client import (
     ZaloOAClient,
     ZaloPermanentError,
@@ -30,6 +31,12 @@ from src.integrations.zalo.client import (
     get_zalo_client,
 )
 from src.modules.notifications.application.service import NotificationService
+from src.modules.reminders.application.attachments import (
+    images_html,
+    load_image_bytes,
+    parse_attachments,
+)
+from src.modules.reminders.application.payment_block import build_payment_section
 from src.modules.reminders.infrastructure.repository import RemindersRepository
 from src.shared.email.smtp import send_email as smtp_send_email
 from src.shared.exceptions.domain import NotFoundError
@@ -101,15 +108,26 @@ def build_body(
     sender_name: str | None,
     sender_email: str | None = None,
     project_label: str | None = None,
+    payment_html: str = "",
+    payment_plain: str = "",
 ) -> tuple[str, str]:
     """Trả về (html, plain) từ nội dung người dùng đã duyệt.
 
     Bắt buộc `escape()`: nội dung do AI soạn và người dùng sửa tay, chỉ cần một dấu `&`
     hay `<` là vỡ HTML của thư gửi khách.
+
+    `payment_*` là khối "Thanh toán cho tôi" (QR + số tài khoản), chèn SAU nội dung và
+    TRƯỚC chữ ký — đọc xong lời nhắn là thấy ngay cách trả tiền, không phải cuộn tìm.
     """
     message = message.strip()
     blocks = [block.strip() for block in re.split(r"\n\s*\n", message) if block.strip()]
     html_blocks = [f"<p>{escape(block).replace(chr(10), '<br>')}</p>" for block in blocks]
+
+    if payment_html:
+        # KHÔNG escape: khối này do chính hệ thống dựng (payment_block.py), và bên trong đó
+        # mọi giá trị người dùng nhập đều đã được escape rồi.
+        html_blocks.append(payment_html)
+        message = f"{message}\n\n{payment_plain}"
 
     signature = (sender_name or "").strip()
     if signature:
@@ -294,11 +312,29 @@ class ReminderDeliveryService:
 
         assert self.repo is not None
         owner = await self.repo.get_owner(reminder.owner_user_id)
+        payment_html, payment_plain, qr_png = await build_payment_section(
+            self.db, reminder, owner, label
+        )
+
+        # Ảnh freelancer chèn (mã QR chụp sẵn, ảnh sản phẩm…) — nhúng bằng `cid:` để hiện
+        # ngay trong thân thư, không rơi xuống cuối dạng cục tải về.  #Huynh
+        images = parse_attachments(getattr(reminder, "attachments", None))
+        image_bytes = await load_image_bytes(object_storage, images) if images else {}
+        payment_html = (
+            images_html(images, {cid: f"cid:{cid}" for cid in image_bytes}) + payment_html
+        )
+
+        inline: dict[str, bytes] = dict(image_bytes)
+        if qr_png:
+            inline["vietqr"] = qr_png
+
         html, plain = build_body(
             message,
             owner.full_name if owner else None,
             owner.email if owner else None,
             label,
+            payment_html=payment_html,
+            payment_plain=payment_plain,
         )
 
         assert self.send_email is not None
@@ -308,6 +344,7 @@ class ReminderDeliveryService:
                 subject=build_subject(reminder.reminder_type, label),
                 html=html,
                 plain=plain,
+                inline_images=inline or None,
                 # Thư này là FREELANCER nhắn cho khách của họ — SoloDesk chỉ soạn hộ và
                 # bấm gửi hộ. Khách phải thấy tên freelancer, và bấm "Trả lời" là thư về
                 # thẳng hộp thư freelancer chứ không rơi vào hòm thư của SoloDesk.  #Huynh
