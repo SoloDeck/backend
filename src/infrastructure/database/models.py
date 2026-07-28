@@ -236,9 +236,21 @@ class UserModel(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     # trong N nghề cố định. Nullable = freelancer chưa chọn.  #Huynh
     profession: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
-    # Payment info
+    # Payment info — thư nhắc thanh toán in ra để khách biết chuyển tiền vào đâu.
+    #
+    # `bank_account_info` (Text tự do) KHÔNG sinh được mã QR: VietQR cần mã ngân hàng và số
+    # tài khoản tách rời để dựng chuỗi EMVCo. Nên ba cột có cấu trúc bên dưới mới là nguồn
+    # của QR; `bank_account_info` từ nay là ô ghi chú thêm (chi nhánh, lời dặn).  #Huynh
     momo_phone_number: Mapped[str | None] = mapped_column(String(20), nullable=True)
     bank_account_info: Mapped[str | None] = mapped_column(Text, nullable=True)
+    bank_code: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    bank_account_number: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    bank_account_holder: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+    # Mặc định khi soạn lời nhắc — để mỗi lần soạn không phải gõ lại từ đầu.
+    reminder_signature: Mapped[str | None] = mapped_column(Text, nullable=True)
+    reminder_default_channel: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    reminder_default_hour: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
 
     # Preferences
     locale: Mapped[str] = mapped_column(String(5), nullable=False, server_default="vi")
@@ -1085,6 +1097,14 @@ class ReminderModel(UUIDMixin, TimestampMixin, Base):
     status: Mapped[str] = mapped_column(_reminder_status, nullable=False, server_default="pending")
     scheduled_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     message_preview: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Ảnh freelancer chèn vào thư: mã QR chuyển khoản chụp sẵn, ảnh sản phẩm, mockup.
+    #
+    # Lưu KHOÁ trong kho object storage chứ không lưu bytes: ảnh vài MB nhét vào cột là
+    # phình bảng và mọi truy vấn lời nhắc đều nặng theo.
+    # Dạng: [{"key": ..., "filename": ..., "content_type": ...}]  #Huynh
+    attachments: Mapped[list[dict[str, str]]] = mapped_column(
+        JSONB, nullable=False, server_default="[]"
+    )
     recurrence_rule: Mapped[str | None] = mapped_column(Text, nullable=True)
     parent_reminder_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("reminders.id"), nullable=True
