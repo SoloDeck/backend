@@ -49,6 +49,9 @@ dependencies = [
     "pypdf>=5.1",
     "weasyprint>=69.0",
     "jinja2>=3.1.6",
+    # Sinh mã QR VietQR nhúng vào thư nhắc thanh toán. Chọn `segno`: thuần Python, KHÔNG
+    # phụ thuộc gói nào khác, tự ghi PNG — image Docker không phình thêm đáng kể.
+    "segno>=1.6",
 ]
 
 [project.optional-dependencies]
