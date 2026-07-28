@@ -1,7 +1,6 @@
 """Deals API api."""
 
 import uuid
-from datetime import datetime
 from io import BytesIO
 from typing import Annotated
 
@@ -15,6 +14,7 @@ from src.modules.deals.application.attachment_service import DealAttachmentServi
 from src.modules.deals.application.service import DealsService
 from src.modules.deals.schemas.request import DealRequest, DealStageRequest
 from src.modules.deals.schemas.response import (
+    DealAttachmentResponse,
     DealResponse,
     IntakeResponse,
     LeadScoreHistoryResponse,
@@ -194,28 +194,8 @@ async def transition_stage(
 # ---------------------------------------------------------------------------
 
 
-class DealAttachmentResponse(BaseModel):
-    id: uuid.UUID
-    deal_id: uuid.UUID
-    filename: str
-    content_type: str
-    size_bytes: int
-    # AI có đọc được nội dung file này không. PDF scan từ máy in là ẢNH, không có lớp
-    # chữ nào để bóc — phải nói rõ, đừng để người dùng tưởng AI đã đọc.
-    ai_readable: bool
-    created_at: datetime
-
-    @classmethod
-    def from_model(cls, m) -> "DealAttachmentResponse":  # type: ignore[no-untyped-def]
-        return cls(
-            id=m.id,
-            deal_id=m.deal_id,
-            filename=m.filename,
-            content_type=m.content_type,
-            size_bytes=m.size_bytes,
-            ai_readable=bool(m.extracted_text),
-            created_at=m.created_at,
-        )
+# `DealAttachmentResponse` đã dời sang `schemas/response.py` (đúng chỗ theo AGENTS.md): giờ
+# đường CÔNG KHAI của biểu mẫu cũng trả cùng shape này, mà router import router thì rối.
 
 
 @router.post(

@@ -17,6 +17,28 @@ class ProfessionalProfileDTO(BaseModel):
     business_name: str | None = None
 
 
+class PaymentInfoDTO(BaseModel):
+    """Thông tin nhận tiền — in vào thư nhắc thanh toán (QR VietQR + chuyển khoản + MoMo)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    bank_code: str | None = None
+    bank_account_number: str | None = None
+    bank_account_holder: str | None = None
+    momo_phone_number: str | None = None
+    bank_account_info: str | None = None
+
+
+class ReminderDefaultsDTO(BaseModel):
+    """Mặc định khi soạn lời nhắc — để mỗi lần soạn không phải gõ lại từ đầu."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    reminder_signature: str | None = None
+    reminder_default_channel: str | None = None
+    reminder_default_hour: int | None = None
+
+
 class PreferencesDTO(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -41,6 +63,8 @@ def build_user_fields(obj: Any) -> dict[str, Any]:
         "intake_share_token": obj.intake_share_token,
         "professional_profile": obj,
         "preferences": obj,
+        "payment_info": obj,
+        "reminder_defaults": obj,
         "created_at": obj.created_at,
         "updated_at": obj.updated_at,
     }
@@ -61,6 +85,8 @@ class UserResponse(BaseModel):
     intake_share_token: str | None
     professional_profile: ProfessionalProfileDTO
     preferences: PreferencesDTO
+    payment_info: PaymentInfoDTO
+    reminder_defaults: ReminderDefaultsDTO
     created_at: datetime
     updated_at: datetime
 

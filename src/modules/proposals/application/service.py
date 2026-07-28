@@ -632,6 +632,28 @@ class ProposalsService:
                     "Chưa chốt giá. Hãy chọn mức giá bạn muốn chào trước khi gửi cho khách."
                 )
 
+            # KHÔNG cho gửi khi các đợt thanh toán không cộng thành 100%.
+            #
+            # Đã đo tận nơi: một báo giá có ba đợt 50% + 50% + 30% = 130% vẫn in ra bảng "8.
+            # Điều Khoản Thanh Toán" và vẫn gửi được cho khách. Khách cầm tờ giấy tự cộng ra
+            # 130% thì hoặc là mình mất uy tín, hoặc là cãi nhau lúc đòi tiền — cả hai đều tệ.
+            #
+            # CHỈ chặn khi MỌI đợt đều khai bằng %. Lịch hỗn hợp (có đợt ghi số tiền cụ thể)
+            # thì cộng % không có nghĩa gì, chặn là chặn oan. Báo giá cũ không có mốc cấu trúc
+            # cũng không đụng tới — chúng rơi về lịch chuẩn 50/50 lúc sinh task.
+            #
+            # Dùng ĐÚNG `extract_payment_milestones` mà bảng PDF và bộ sinh task dùng, để ba
+            # nơi không bao giờ hiểu khác nhau về "các đợt thanh toán là gì".  #Huynh
+            milestones = extract_payment_milestones(content)
+            percents = [m.percent for m in milestones]
+            if milestones and all(p is not None for p in percents):
+                total_percent = sum(percents)  # type: ignore[arg-type]
+                if total_percent != 100:
+                    raise BusinessRuleError(
+                        f"Tổng tỷ lệ các đợt thanh toán đang là {total_percent}%, phải bằng 100%. "
+                        "Hãy sửa mục 'Mốc thanh toán' trước khi gửi cho khách."
+                    )
+
             existing = await self.repo.get_sent_by_deal(proposal.deal_id, proposal_id)
             if existing is not None:
                 existing.status = "superseded"
@@ -644,11 +666,11 @@ class ProposalsService:
         await self.repo.save(proposal)
 
         if target_status == "accepted":
-            # KHÔNG sinh task thanh toán ở đây: lúc chốt báo giá deal chưa vào "active" nên
-            # CHƯA có Project — mà bảng "Công việc" của deal hiển thị task theo PROJECT. Việc
-            # sinh task "Thu tiền:" từ mốc thanh toán được làm khi deal vào active (project
-            # được tạo), xem `DealsService.transition_stage` + `payment_task_payloads_for_deal`
-            # bên dưới. Ở đây chỉ phát sự kiện.  #Huynh
+            # KHÔNG sinh task thanh toán ở đây: chốt báo giá mới chỉ là khách gật đầu, chưa ký
+            # gì cả — chưa có gì để đi đòi tiền. Task "Thu tiền:" sinh khi HỢP ĐỒNG được ghi
+            # nhận đã ký (`ContractsService.transition_status` -> active), và sinh lại lần nữa
+            # khi deal vào active để vá dữ liệu cũ — cả hai đều gọi
+            # `payment_task_payloads_for_deal` và đều idempotent. Ở đây chỉ phát sự kiện.  #Huynh
             await event_bus.publish(
                 "proposals.proposal_accepted",
                 {

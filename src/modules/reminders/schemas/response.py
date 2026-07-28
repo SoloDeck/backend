@@ -20,6 +20,9 @@ class ReminderResponse(BaseModel):
     # người dùng cần biết trước khi bấm gửi một tin nhắn tới khách hàng thật.
     requires_approval: bool = False
     created_by_rule: bool = False
+    # Ảnh đã chèn vào thư. Trả về để mở lại lời nhắc cũ còn thấy ảnh mình đã đính, chứ
+    # không phải một ô trống rồi lưu đè mất.
+    attachments: list[dict[str, str]] = []
     created_at: datetime
     updated_at: datetime
 

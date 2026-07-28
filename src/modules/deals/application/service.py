@@ -2,7 +2,7 @@
 
 import uuid
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -44,6 +44,19 @@ DOCUMENT_MAX_SIZE_BYTES = 20 * 1024 * 1024  # 20 MB
 # a generous window so legitimate submissions are unaffected while a flood of
 # automated posts to a single share link is throttled (returns HTTP 429).
 _public_intake_limiter = FixedWindowRateLimiter(max_requests=20, window_seconds=60)
+
+# --- Chốt chặn cho đường ĐÍNH KÈM công khai ------------------------------------------------
+#
+# Đây là endpoint KHÔNG cần đăng nhập mà lại NHẬN FILE — không khoá lại thì link biểu mẫu
+# công khai thành kho chứa file miễn phí cho bất kỳ ai có link. Ba chốt, mỗi chốt chặn một
+# kiểu lạm dụng khác nhau:
+#   - nhịp gửi: 30 lượt/phút cho mỗi link (một lần gửi form hợp lệ tối đa 10 tệp nên vẫn thoải mái),
+#   - cửa sổ thời gian: chỉ đính kèm được ngay sau khi gửi form, không quay lại nhét file sau,
+#   - trần số tệp: một deal không nhận quá 10 tệp từ đường công khai.
+# Giới hạn LOẠI file và DUNG LƯỢNG từng tệp đã có sẵn trong `DealAttachmentService`.  #Huynh
+_public_attach_limiter = FixedWindowRateLimiter(max_requests=30, window_seconds=60)
+PUBLIC_INTAKE_ATTACH_WINDOW_MINUTES = 15
+PUBLIC_INTAKE_MAX_ATTACHMENTS = 10
 
 # Fields the lead_qualifier prompt's schema requires (see src/ai/lead_qualifier/
 # prompts/prompts.txt) but that _parse_output never validates the LLM actually
@@ -190,7 +203,21 @@ class DealsService:
         # Ngoài chuông in-app, GỬI EMAIL cho freelancer: nhiều người không mở app cả ngày,
         # deal nóng để lâu là mất khách. Best-effort — mail hỏng (SMTP lỗi, chưa cấu hình)
         # KHÔNG được làm hỏng việc nhận form của khách, nên nuốt lỗi và chỉ ghi log.
-        await self._email_owner_new_deal(owner, deal.id, payload)
+        #
+        # GỬI NGAY, KHÔNG QUA HÀNG ĐỢI.
+        #
+        # Bản trước: có đính kèm thì hoãn 60 giây qua Celery cho tệp kịp lên rồi mới đếm.
+        # Đo trên bản chạy thật thì worker trả về `Received unregistered task ... KeyError`
+        # — worker đọc danh sách task LÚC KHỞI ĐỘNG, nên bất kỳ lần deploy nào mà worker
+        # còn chạy code cũ là email rơi vào hố, im lặng y như lỗi ban đầu đang phải sửa.
+        # Đổi một mắt xích gãy được lấy con số chính xác hơn một chút là lỗ vốn.
+        #
+        # Tệp đi SAU phiếu nên lúc này DB đếm ra 0; dùng số khách KHAI để nói "gửi kèm N
+        # tệp". Số này client gửi lên nên KHÔNG dùng vào việc gì khác ngoài một dòng chữ,
+        # và đã bị chặn ≤ 10 ở tầng schema.  #Huynh
+        await self.send_new_deal_email(
+            owner.id, deal.id, declared_attachments=payload.attachment_count
+        )
 
         from src.workers.ai_jobs.tasks import qualify_deal_async_by_id
 
@@ -198,18 +225,113 @@ class DealsService:
 
         return intake
 
-    async def _email_owner_new_deal(self, owner, deal_id, payload) -> None:  # type: ignore[no-untyped-def]
-        if not owner.email:
-            return
+    async def add_public_intake_attachment(  # type: ignore[no-untyped-def]
+        self,
+        share_token: str,
+        intake_id: uuid.UUID,
+        *,
+        filename: str,
+        content_type: str,
+        data: bytes,
+    ):
+        """Khách đính tệp vào phiếu vừa gửi — KHÔNG cần đăng nhập.
+
+        Vì sao phải có: form công khai vốn đã có khu kéo-thả tệp và hứa "PDF, Word, Excel,
+        hình ảnh" với khách, nhưng phía gửi chỉ POST JSON còn `PublicIntakeRequest` không có
+        chỗ chứa tệp — khách kéo tệp vào, bấm gửi, tưởng xong, thực tế tệp bị vứt im lặng.
+
+        Chủ sở hữu suy từ `share_token` y như lúc gửi form; phiếu phải thuộc đúng chủ đó.
+        Việc lưu trữ giao NGUYÊN cho `DealAttachmentService` (đã kiểm loại tệp, dung lượng,
+        bóc chữ PDF cho AI đọc) — không viết lại một dòng nào của phần đó.  #Huynh
+        """
+        _public_attach_limiter.check(share_token)
+
+        owner = await self.repo.get_owner_by_intake_token(share_token)
+        if owner is None:
+            raise NotFoundError("Intake form not found or link is invalid")
+
+        intake = await self.repo.get_intake_by_id(intake_id, owner.id)
+        if intake is None or intake.deal_id is None:
+            raise NotFoundError(f"Deal intake {intake_id} not found")
+
+        # Chỉ nhận tệp NGAY SAU khi gửi form. Quá cửa sổ này thì link công khai không còn là
+        # "đang gửi form" nữa, mà là một đường ghi tuỳ ý vào deal của người khác.
+        submitted = intake.submitted_at or intake.created_at
+        if submitted is not None:
+            age = datetime.now(UTC) - submitted
+            if age > timedelta(minutes=PUBLIC_INTAKE_ATTACH_WINDOW_MINUTES):
+                raise BusinessRuleError(
+                    "Đã quá thời gian đính kèm tệp cho yêu cầu này. "
+                    "Vui lòng gửi lại biểu mẫu kèm tệp."
+                )
+
+        from src.modules.deals.application.attachment_service import DealAttachmentService
+
+        service = DealAttachmentService(db=self.db)
+        existing = await service.list_for_deal(owner.id, intake.deal_id)
+        if len(existing) >= PUBLIC_INTAKE_MAX_ATTACHMENTS:
+            raise BusinessRuleError(
+                f"Mỗi yêu cầu chỉ nhận tối đa {PUBLIC_INTAKE_MAX_ATTACHMENTS} tệp."
+            )
+
+        return await service.upload(
+            owner.id,
+            intake.deal_id,
+            filename=filename,
+            content_type=content_type,
+            data=data,
+        )
+
+    async def send_new_deal_email(
+        self,
+        owner_user_id: uuid.UUID,
+        deal_id: uuid.UUID,
+        *,
+        declared_attachments: int = 0,
+    ) -> bool:
+        """Gửi thư báo có deal mới cho freelancer. Trả `True` nếu thư đã đi.
+
+        Thông tin khách đọc lại từ DB (không nhận qua tham số) để thư luôn khớp với thứ
+        freelancer sẽ thấy khi bấm vào link.
+
+        SỐ TỆP thì lấy số LỚN HƠN giữa "đã nằm trong DB" và "khách khai sắp gửi": thư gửi
+        ngay lúc nhận form, mà tệp thì tải lên sau đó vài giây — chỉ đọc DB là luôn ra 0.
+
+        Best-effort: SMTP hỏng KHÔNG được làm hỏng việc nhận form của khách.  #Huynh
+        """
+        owner = await self.repo.get_owner_by_id(owner_user_id)
+        if owner is None or not owner.email:
+            log.warning(
+                "intake.owner_email_skipped", owner_id=str(owner_user_id), reason="no_email"
+            )
+            return False
+
+        deal = await self.repo.get_by_id(deal_id, owner_user_id)
+        if deal is None:
+            return False
+
+        client = await self.repo.get_client_by_id(deal.client_id, owner_user_id)
+        intake = await self.repo.get_intake_for_deal(deal_id, deal.client_id, owner_user_id)
+
         from src.config.settings import settings
+        from src.modules.deals.application.attachment_service import DealAttachmentService
         from src.modules.deals.application.emails import build_new_deal_email
         from src.shared.email.smtp import send_email
 
+        attachments = await DealAttachmentService(db=self.db).list_for_deal(owner_user_id, deal_id)
+        attachment_count = max(len(attachments), declared_attachments)
+
         content = build_new_deal_email(
             owner_name=owner.full_name,
-            client_name=payload.name,
-            project_name=payload.project_name,
+            client_name=client.name if client else "Khách hàng",
+            project_name=deal.title,
             deal_url=f"{settings.frontend_url.rstrip('/')}/deals/{deal_id}",
+            client_email=getattr(client, "email", None),
+            client_phone=getattr(client, "phone", None),
+            budget=getattr(intake, "estimated_budget", None),
+            timeline=getattr(intake, "desired_timeline", None),
+            inquiry_text=getattr(intake, "inquiry_text", None),
+            attachment_count=attachment_count,
         )
         try:
             await send_email(
@@ -219,7 +341,24 @@ class DealsService:
                 plain=content.plain,
             )
         except Exception as exc:  # noqa: BLE001 — best-effort, không chặn luồng intake
-            log.warning("intake.owner_email_failed", owner_id=str(owner.id), error=str(exc))
+            log.warning(
+                "intake.owner_email_failed",
+                owner_id=str(owner_user_id),
+                deal_id=str(deal_id),
+                error=str(exc),
+            )
+            return False
+
+        # PHẢI có log lúc THÀNH CÔNG. Bản trước chỉ log khi lỗi, nên lúc freelancer báo
+        # "không nhận được mail" thì không phân biệt nổi *gửi rồi mà thất lạc* với *chưa
+        # từng chạy* — mất cả buổi đoán mò.  #Huynh
+        log.info(
+            "intake.owner_email_sent",
+            owner_id=str(owner_user_id),
+            deal_id=str(deal_id),
+            attachments=attachment_count,
+        )
+        return True
 
     async def list_all(
         self,

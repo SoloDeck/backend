@@ -133,3 +133,34 @@ class LeadScoreHistoryResponse(BaseModel):
     def level(self) -> str:
         """HOT/WARM/COLD suy từ điểm — dùng CHUNG ngưỡng với bộ chấm điểm."""
         return level_from_score(self.score).lower()
+
+
+class DealAttachmentResponse(BaseModel):
+    """Tệp đính kèm của deal.
+
+    Dùng chung cho đường đã đăng nhập (`POST /deals/{id}/attachments`) và đường CÔNG KHAI
+    của biểu mẫu tiếp nhận (`POST /intake/{token}/{intake_id}/attachments`) — hai router
+    không được import lẫn nhau nên shape phải nằm ở đây.  #Huynh
+    """
+
+    id: uuid.UUID
+    deal_id: uuid.UUID
+    filename: str
+    content_type: str
+    size_bytes: int
+    # AI có đọc được nội dung file này không. PDF scan từ máy in là ẢNH, không có lớp
+    # chữ nào để bóc — phải nói rõ, đừng để người dùng tưởng AI đã đọc.
+    ai_readable: bool
+    created_at: datetime
+
+    @classmethod
+    def from_model(cls, m) -> "DealAttachmentResponse":  # type: ignore[no-untyped-def]
+        return cls(
+            id=m.id,
+            deal_id=m.deal_id,
+            filename=m.filename,
+            content_type=m.content_type,
+            size_bytes=m.size_bytes,
+            ai_readable=bool(m.extracted_text),
+            created_at=m.created_at,
+        )

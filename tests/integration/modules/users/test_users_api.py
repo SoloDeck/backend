@@ -395,3 +395,47 @@ class TestFreelancerProfileProfession:
         headers, _ = await _register(client)
         resp = await client.get("/api/v1/users/me", headers=headers)
         assert resp.json()["data"]["profession"] is None
+
+
+class TestThongTinNhanTien:
+    """Thông tin nhận tiền: khai một lần, mọi thư nhắc thanh toán tự kèm theo.
+
+    Cột `momo_phone_number` / `bank_account_info` nằm trong DB từ lâu nhưng KHÔNG endpoint
+    nào đọc/ghi được — giao diện có ghi chú "chỉ thiếu endpoint". Bài này chốt lại là giờ
+    lưu và đọc lại được thật.  #Huynh
+    """
+
+    async def test_luu_roi_doc_lai_du_thong_tin(self, client: AsyncClient) -> None:
+        headers, _ = await _register(client, "Nguyễn Văn A")
+
+        resp = await client.patch(
+            "/api/v1/users/me/freelancer-profile",
+            json={
+                "bank_code": "970436",
+                "bank_account_number": "1027123456",
+                "bank_account_holder": "NGUYEN VAN A",
+                "momo_phone_number": "0901234567",
+                "bank_account_info": "Chi nhánh Quận 1",
+                "reminder_signature": "Nguyễn Văn A\n0901 234 567",
+                "reminder_default_channel": "email",
+                "reminder_default_hour": 9,
+            },
+            headers=headers,
+        )
+        assert resp.status_code == 200, resp.text
+
+        me = (await client.get("/api/v1/users/me", headers=headers)).json()["data"]
+        assert me["payment_info"]["bank_code"] == "970436"
+        assert me["payment_info"]["bank_account_number"] == "1027123456"
+        assert me["payment_info"]["bank_account_holder"] == "NGUYEN VAN A"
+        assert me["payment_info"]["momo_phone_number"] == "0901234567"
+        assert me["reminder_defaults"]["reminder_default_hour"] == 9
+
+    async def test_gio_gui_ngoai_khoang_0_23_bi_tu_choi(self, client: AsyncClient) -> None:
+        headers, _ = await _register(client)
+        resp = await client.patch(
+            "/api/v1/users/me/freelancer-profile",
+            json={"reminder_default_hour": 26},
+            headers=headers,
+        )
+        assert resp.status_code == 422

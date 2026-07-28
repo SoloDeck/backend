@@ -2,9 +2,9 @@
 
 from typing import Annotated
 
+from fastapi import APIRouter, Depends, File, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from fastapi import APIRouter, Depends, File, UploadFile
 from src.infrastructure.database.session import get_db_session
 from src.modules.users.application.service import UsersService
 from src.modules.users.schemas.request import (

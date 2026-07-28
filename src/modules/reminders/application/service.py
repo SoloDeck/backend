@@ -35,6 +35,7 @@ class RemindersService:
             status="pending",
             scheduled_at=payload.scheduled_at,
             message_preview=payload.message_preview,
+            attachments=payload.attachments,
         )
 
     async def list_all(
@@ -53,6 +54,8 @@ class RemindersService:
         reminder.scheduled_at = payload.scheduled_at
         reminder.message_preview = payload.message_preview
         reminder.channel = payload.channel
+        reminder.reminder_type = payload.reminder_type
+        reminder.attachments = payload.attachments
         return await self.repo.save(reminder)
 
     async def cancel(self, user_id: uuid.UUID, reminder_id: uuid.UUID) -> None:

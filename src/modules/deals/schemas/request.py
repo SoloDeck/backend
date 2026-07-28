@@ -71,6 +71,12 @@ class PublicIntakeRequest(BaseModel):
     inquiry_text: str | None = Field(default=None, max_length=5000)
     estimated_budget: str | None = Field(default=None, max_length=255)
     desired_timeline: str | None = Field(default=None, max_length=255)
+    # Số tệp khách SẮP tải lên qua `POST /intake/{token}/{intake_id}/attachments`.
+    #
+    # Chỉ dùng để quyết định THỜI ĐIỂM gửi thư báo deal mới: có tệp thì hoãn một nhịp cho
+    # tệp kịp lên rồi mới đếm, không thì gửi ngay. Giá trị do client gửi nên KHÔNG được
+    # dùng làm dữ liệu — số tệp in trong thư luôn đếm lại từ DB.  #Huynh
+    attachment_count: int = Field(default=0, ge=0, le=10)
     # Profession selected by the client
     profession: str | None = None
     # Profession-specific intake answers (5 questions for the selected profession)

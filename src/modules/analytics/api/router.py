@@ -84,7 +84,9 @@ async def get_top_clients(
     limit: int = Query(default=10, ge=1, le=50),
     from_date: date | None = Query(default=None),
     to_date: date | None = Query(default=None),
-    metric: str = Query(default="total_collected"),
+    # Mặc định đổi sang tiền theo MỐC THANH TOÁN: luồng chính không còn bắt lập hoá đơn nên
+    # bản cũ (join `invoices`) trả rỗng cho gần như mọi freelancer.  #Huynh
+    metric: str = Query(default="milestone_collected"),
 ) -> ApiResponse[list[TopClientResponse]]:
     return ApiResponse.ok(
         await AnalyticsService(db=db).get_top_clients(user_id, limit, from_date, to_date, metric)

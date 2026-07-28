@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class ReminderRequest(BaseModel):
@@ -11,6 +11,9 @@ class ReminderRequest(BaseModel):
     channel: str
     scheduled_at: datetime
     message_preview: str | None = None
+    # Ảnh chèn vào thư (mã QR chuyển khoản, ảnh sản phẩm…). Mỗi phần tử là
+    # `{"key", "filename", "content_type"}` do `POST /reminders/attachments` trả về.
+    attachments: list[dict[str, str]] = Field(default_factory=list)
 
 
 class ReminderRuleUpdate(BaseModel):

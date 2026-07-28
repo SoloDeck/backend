@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "solodesk-backend"
-version = "0.4.1"
+version = "0.5.0"
 description = "AI-powered CRM and deal management platform for Vietnamese freelancers"
 requires-python = ">=3.13"
 dependencies = [
@@ -49,6 +49,9 @@ dependencies = [
     "pypdf>=5.1",
     "weasyprint>=69.0",
     "jinja2>=3.1.6",
+    # Sinh mã QR VietQR nhúng vào thư nhắc thanh toán. Chọn `segno`: thuần Python, KHÔNG
+    # phụ thuộc gói nào khác, tự ghi PNG — image Docker không phình thêm đáng kể.
+    "segno>=1.6",
 ]
 
 [project.optional-dependencies]

@@ -20,6 +20,26 @@ log = structlog.get_logger()
 MODEL = "llama-3.3-70b-versatile"
 
 
+# Hai giọng theo Phiếu SU26SE083 (dòng 105: "chọn được giọng trang trọng hoặc thân mật").
+#
+# Tả bằng ĐẶC ĐIỂM CỤ THỂ (xưng hô, độ dài câu, có được dùng cảm thán không) chứ không chỉ
+# ghi "trang trọng"/"thân mật": model hiểu hai chữ đó rất khác nhau giữa các lần gọi, và
+# freelancer thì phải nhận ra được sự khác biệt ngay khi bấm đổi giọng.  #Huynh
+TONE_INSTRUCTIONS: dict[str, str] = {
+    "formal": (
+        "TRANG TRỌNG. Xưng 'chúng tôi' hoặc tên riêng, gọi khách là 'Quý khách' hoặc "
+        "'Anh/Chị'. Câu đầy đủ chủ vị, không viết tắt, không cảm thán, không emoji. "
+        "Mở đầu bằng một câu lịch sự nêu lý do liên hệ, kết bằng lời cảm ơn. "
+        "Dùng khi khách là công ty hoặc mới quen."
+    ),
+    "friendly": (
+        "THÂN MẬT. Xưng 'mình'/'em', gọi khách là 'anh'/'chị' theo cách trò chuyện thường "
+        "ngày. Câu ngắn, gần với lời nói, được dùng tối đa MỘT emoji ở cuối. Vẫn lịch sự và "
+        "KHÔNG suồng sã, không tiếng lóng. Dùng khi đã làm việc với khách nhiều lần."
+    ),
+}
+
+
 class FollowUpGenerator(BaseAIChain):
     """Soạn tin nhắn nhắc khách bằng Groq.
 
@@ -87,10 +107,14 @@ class FollowUpGenerator(BaseAIChain):
         deal_data: dict[str, Any] = kwargs.get("deal_data") or {}
         client_data: dict[str, Any] = kwargs.get("client_data") or {}
         history: list[dict[str, Any]] = kwargs.get("communication_history") or []
+        tone: str = kwargs.get("tone") or "formal"
 
         system_prompt = self._load_system_prompt()
 
         full_prompt = f"""{system_prompt}
+
+## GIỌNG VĂN BẮT BUỘC
+{TONE_INSTRUCTIONS.get(tone, TONE_INSTRUCTIONS["formal"])}
 
 ## LOẠI NHẮC
 {reminder_type}

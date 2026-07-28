@@ -1,9 +1,10 @@
 """Reminders API api."""
 
 import uuid
+from types import SimpleNamespace
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, File, Query, UploadFile
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -44,6 +45,143 @@ async def create_reminder(
 ) -> ApiResponse[ReminderResponse]:
     reminder = await RemindersService(db=db).create(user_id, payload)
     return ApiResponse.created(ReminderResponse.model_validate(reminder))
+
+
+class ReminderImageResponse(BaseModel):
+    """Ảnh vừa tải lên, chờ gắn vào lời nhắc."""
+
+    key: str
+    filename: str
+    content_type: str
+
+
+@router.post(
+    "/attachments",
+    response_model=ApiResponse[ReminderImageResponse],
+    status_code=201,
+    summary="Tải ảnh để chèn vào thư nhắc",
+)
+async def upload_reminder_image(
+    user_id: CurrentUserId,
+    db: DBSession,
+    file: UploadFile = File(...),
+) -> ApiResponse[ReminderImageResponse]:
+    """Nhận MỘT ảnh, cất vào kho, trả khoá để gắn vào lời nhắc khi lưu.
+
+    Chỉ nhận ẢNH: email không phát được video, còn tệp tài liệu thì trình đọc mail hiện
+    thành cục tải về chứ không hiện trong thân thư — mà mục đích ở đây là để khách NHÌN
+    THẤY ngay (nhất là mã QR chuyển khoản).  #Huynh
+    """
+    from src.infrastructure.storage.object_storage import object_storage, resolve_content_type
+    from src.modules.reminders.application.attachments import validate_image
+
+    data = await file.read()
+    filename = file.filename or "image.png"
+    content_type = resolve_content_type(file.content_type or "", filename)
+    validate_image(content_type=content_type, data=data)
+
+    key = await object_storage.upload(
+        data=data,
+        content_type=content_type,
+        prefix=f"reminders/{user_id}",
+        filename=filename,
+    )
+    return ApiResponse.created(
+        ReminderImageResponse(key=key, filename=filename, content_type=content_type)
+    )
+
+
+class ReminderPreviewRequest(BaseModel):
+    """Bản nháp lời nhắc để dựng thử thư — KHÔNG lưu gì."""
+
+    reminder_type: str
+    target_type: str
+    target_id: uuid.UUID
+    message: str
+    attachments: list[dict[str, str]] = []
+
+
+class ReminderPreviewResponse(BaseModel):
+    subject: str
+    html: str
+    recipient: str | None = None
+
+
+@router.post("/preview", response_model=ApiResponse[ReminderPreviewResponse])
+async def preview_reminder(
+    payload: ReminderPreviewRequest,
+    user_id: CurrentUserId,
+    db: DBSession,
+) -> ApiResponse[ReminderPreviewResponse]:
+    """Dựng ĐÚNG lá thư khách sẽ nhận, không gửi và không lưu gì.
+
+    Vì sao phải để server dựng thay vì frontend tự vẽ: thư nhắc thanh toán nay có mã QR và
+    số tài khoản. Frontend dựng lại một bản "gần giống" thì sớm muộn cũng lệch với thư thật
+    — mà lệch ở đây nghĩa là freelancer duyệt một đằng, khách nhận một nẻo, và tiền có thể
+    chuyển nhầm chỗ. Đúng bài học từ màn báo giá: một nguồn dựng duy nhất.
+
+    Khác đường gửi thật đúng MỘT chỗ: mã QR nhúng thẳng bằng `data:` để trình duyệt hiện
+    được, còn thư thật đính kèm ảnh dạng `cid:` (Gmail cắt bỏ `data:`).  #Huynh
+    """
+    import base64
+
+    from src.modules.reminders.application.delivery_service import build_body, build_subject
+    from src.modules.reminders.application.payment_block import build_payment_section
+    from src.modules.reminders.infrastructure.repository import RemindersRepository
+
+    repo = RemindersRepository(db)
+    client, label = await repo.resolve_target(
+        target_type=payload.target_type,
+        target_id=payload.target_id,
+        owner_user_id=user_id,
+    )
+    owner = await repo.get_owner(user_id)
+
+    draft = SimpleNamespace(
+        reminder_type=payload.reminder_type,
+        target_type=payload.target_type,
+        target_id=payload.target_id,
+        owner_user_id=user_id,
+    )
+    payment_html, payment_plain, qr_png = await build_payment_section(db, draft, owner, label)
+    if qr_png is not None:
+        payment_html = payment_html.replace(
+            "cid:vietqr",
+            "data:image/png;base64," + base64.b64encode(qr_png).decode(),
+        )
+
+    # Ảnh freelancer chèn: bản xem trước dùng `data:` để trình duyệt hiện được; thư thật thì
+    # đính kèm dạng `cid:` (Gmail cắt bỏ `data:`).
+    from src.infrastructure.storage.object_storage import object_storage
+    from src.modules.reminders.application.attachments import (
+        images_html,
+        load_image_bytes,
+        parse_attachments,
+    )
+
+    images = parse_attachments(payload.attachments)
+    loaded = await load_image_bytes(object_storage, images)
+    srcs = {
+        cid: f"data:image/png;base64,{base64.b64encode(raw).decode()}"
+        for cid, raw in loaded.items()
+    }
+    payment_html = images_html(images, srcs) + payment_html
+
+    html, _ = build_body(
+        payload.message,
+        owner.full_name if owner else None,
+        owner.email if owner else None,
+        label,
+        payment_html=payment_html,
+        payment_plain=payment_plain,
+    )
+    return ApiResponse.ok(
+        ReminderPreviewResponse(
+            subject=build_subject(payload.reminder_type, label),
+            html=html,
+            recipient=(client.email if client else None),
+        )
+    )
 
 
 @router.get("", response_model=ApiResponse[list[ReminderResponse]])

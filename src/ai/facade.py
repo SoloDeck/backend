@@ -98,6 +98,7 @@ class AIFacade:
         communication_history: list[dict[str, Any]],
         reminder_type: str,
         user_can_use_ai: bool,
+        tone: str = "formal",
     ) -> dict[str, Any]:
         self._check_entitlement(user_can_use_ai)
         return await self.followup_generator.run(
@@ -105,6 +106,7 @@ class AIFacade:
             client_data=client_data,
             communication_history=communication_history,
             reminder_type=reminder_type,
+            tone=tone,
         )
 
     def last_usage(self, module: str) -> dict[str, Any] | None:

@@ -1,7 +1,7 @@
 from decimal import Decimal
 from typing import Literal
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 from src.modules.intake_form.professions import is_valid_profession
 
@@ -23,6 +23,21 @@ class FreelancerProfileUpdateRequest(BaseModel):
     is_listed: bool | None = None
     # Slug nghề chuẩn hoá; validate qua seam của intake_form (None = bỏ chọn, vẫn hợp lệ).
     profession: str | None = None
+
+    # --- Nhận tiền: in vào thư nhắc thanh toán để khách biết chuyển vào đâu ---
+    #
+    # `bank_code` là mã BIN VietQR (ví dụ 970436 = Vietcombank), chọn từ danh sách chứ không
+    # gõ tay — sai mã thì mã QR trỏ nhầm ngân hàng.  #Huynh
+    bank_code: str | None = None
+    bank_account_number: str | None = None
+    bank_account_holder: str | None = None
+    momo_phone_number: str | None = None
+    bank_account_info: str | None = None
+
+    # --- Mặc định khi soạn lời nhắc ---
+    reminder_signature: str | None = None
+    reminder_default_channel: Literal["email", "zalo", "in_app"] | None = None
+    reminder_default_hour: int | None = Field(default=None, ge=0, le=23)
 
     @field_validator("profession")
     @classmethod

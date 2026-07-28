@@ -49,6 +49,9 @@ def make_reminder(**overrides):  # type: ignore[no-untyped-def]
     reminder.status = overrides.get("status", "pending")
     reminder.message_preview = overrides.get("message_preview", "Chào anh, em xin hỏi thăm ạ.")
     reminder.retry_count = overrides.get("retry_count", 0)
+    # Khai TƯỜNG MINH: `MagicMock` tự sinh thuộc tính, để trống thì `attachments` thành một
+    # mock chứ không phải danh sách rỗng — test sẽ chạy khác hẳn lúc chạy thật.
+    reminder.attachments = overrides.get("attachments", [])
     return reminder
 
 
@@ -59,6 +62,21 @@ def make_client(name: str = "Quán cà phê Nắng", email: str | None = "khach@
     return client
 
 
+def make_owner(**overrides):  # type: ignore[no-untyped-def]
+    """Chủ deal. Các trường nhận tiền phải khai TƯỜNG MINH: `MagicMock` tự sinh thuộc tính
+    cho mọi tên, nên bỏ trống là khối thanh toán tưởng đã có số tài khoản và đi dựng mã QR
+    từ một object mock.  #Huynh"""
+    owner = MagicMock()
+    owner.full_name = overrides.get("full_name", "Huỳnh Hoa")
+    owner.email = overrides.get("email", "huynhhoa@example.com")
+    owner.bank_code = overrides.get("bank_code")
+    owner.bank_account_number = overrides.get("bank_account_number")
+    owner.bank_account_holder = overrides.get("bank_account_holder")
+    owner.momo_phone_number = overrides.get("momo_phone_number")
+    owner.bank_account_info = overrides.get("bank_account_info")
+    return owner
+
+
 def make_db():  # type: ignore[no-untyped-def]
     """Session giả. `add()` phải là MagicMock — AsyncMock biến nó thành coroutine không
     ai await, pytest báo `PytestUnraisableExceptionWarning` mà không nói rõ vì sao."""
@@ -67,13 +85,11 @@ def make_db():  # type: ignore[no-untyped-def]
     return db
 
 
-def make_service(reminder, client=None, label="Thiết kế logo", send_email=None):  # type: ignore[no-untyped-def]
+def make_service(reminder, client=None, label="Thiết kế logo", send_email=None, owner=None):  # type: ignore[no-untyped-def]
     repo = AsyncMock()
     repo.get_for_delivery.return_value = reminder
     repo.resolve_target.return_value = (client if client is not None else make_client(), label)
-    owner = MagicMock()
-    owner.full_name = "Huỳnh Hoa"
-    owner.email = "huynhhoa@example.com"
+    owner = owner if owner is not None else make_owner()
     repo.get_owner.return_value = owner
     return (
         ReminderDeliveryService(
@@ -269,6 +285,126 @@ class TestKenhEmail:
 
         assert result.status == "failed"
         assert "Không tìm thấy khách hàng" in result.detail
+
+
+class TestKhoiThanhToanTrongThu:
+    """Thư nhắc TIỀN phải nói được khách chuyển vào đâu (Phiếu SU26SE083, dòng 140).
+
+    Trước đây thư chỉ có nội dung + chữ ký, khách đọc xong phải nhắn hỏi lại số tài khoản —
+    đúng cái ma sát phiếu muốn xoá.  #Huynh
+    """
+
+    _OWNER = dict(
+        bank_code="970436",
+        bank_account_number="1027123456",
+        bank_account_holder="NGUYEN VAN A",
+    )
+
+    @staticmethod
+    def _fixed_amount():  # type: ignore[no-untyped-def]
+        """Chốt số tiền lại để bài này chỉ kiểm CHUYỆN CHÈN KHỐI.
+
+        Việc suy ra số tiền (hoá đơn còn nợ / mốc chưa thu) đụng DB thật, đã có bài riêng ở
+        tầng tích hợp; nhét nó vào đây thì test hỏng vì lý do chẳng liên quan.  #Huynh
+        """
+        from decimal import Decimal
+
+        return patch(
+            "src.modules.reminders.application.payment_block.resolve_amount_and_memo",
+            AsyncMock(return_value=(Decimal(9_420_000), "INV-2026-0042")),
+        )
+
+    async def test_nhac_thanh_toan_thi_co_so_tai_khoan_va_ma_QR(self) -> None:
+        reminder = make_reminder(channel="email", reminder_type="payment_overdue")
+        send_email = AsyncMock()
+        service, _ = make_service(
+            reminder, send_email=send_email, owner=make_owner(**self._OWNER)
+        )
+
+        with self._fixed_amount():
+            await service.deliver(reminder.id)
+
+        kwargs = send_email.await_args.kwargs
+        assert "1027123456" in kwargs["html"]
+        # Phần chữ cũng phải có: nhiều trình đọc mail chặn ảnh theo mặc định.
+        assert "1027123456" in kwargs["plain"]
+        # Mã QR đi kèm dạng ảnh đính kèm (`cid:`) — Gmail cắt bỏ ảnh `data:base64`.
+        assert kwargs["inline_images"] and "vietqr" in kwargs["inline_images"]
+        assert 'src="cid:vietqr"' in kwargs["html"]
+        # Số tiền và nội dung chuyển khoản in ra để khách đối chiếu.
+        assert "9.420.000 ₫" in kwargs["html"]
+        assert "INV-2026-0042" in kwargs["plain"]
+
+    async def test_thu_hoi_tham_thi_KHONG_dinh_so_tai_khoan(self) -> None:
+        # Gắn số tài khoản vào thư "hỏi thăm dự án" đọc lên như đi đòi nợ.
+        reminder = make_reminder(channel="email", reminder_type="follow_up")
+        send_email = AsyncMock()
+        service, _ = make_service(
+            reminder, send_email=send_email, owner=make_owner(**self._OWNER)
+        )
+
+        await service.deliver(reminder.id)
+
+        kwargs = send_email.await_args.kwargs
+        assert "1027123456" not in kwargs["html"]
+        assert not kwargs.get("inline_images")
+
+    async def test_chua_khai_thong_tin_nhan_tien_thi_thu_van_gui_binh_thuong(self) -> None:
+        reminder = make_reminder(channel="email", reminder_type="payment_due")
+        send_email = AsyncMock()
+        service, _ = make_service(reminder, send_email=send_email, owner=make_owner())
+
+        with self._fixed_amount():
+            result = await service.deliver(reminder.id)
+
+        assert result.status == "sent"
+        assert not send_email.await_args.kwargs.get("inline_images")
+
+
+class TestAnhFreelancerChenVaoThu:
+    """Ảnh tự chèn (mã QR chụp sẵn, ảnh sản phẩm) phải nằm TRONG thân thư, không phải tệp đính kèm."""
+
+    @staticmethod
+    def _storage(data: bytes = b"\x89PNG\r\n\x1a\nfake"):  # type: ignore[no-untyped-def]
+        # `download` trả (bytes, content_type) — trả sai hình dạng thì test xanh giả:
+        # `load_image_bytes` nuốt mọi lỗi nên ảnh biến mất trong im lặng.
+        return patch(
+            "src.modules.reminders.application.delivery_service.object_storage",
+            MagicMock(download=AsyncMock(return_value=(data, "image/png"))),
+        )
+
+    async def test_anh_di_kem_dang_cid_de_khach_mo_ra_la_thay(self) -> None:
+        reminder = make_reminder(
+            channel="email",
+            attachments=[{"key": "reminders/u1/qr.png", "filename": "qr.png"}],
+        )
+        send_email = AsyncMock()
+        service, _ = make_service(reminder, send_email=send_email)
+
+        with self._storage():
+            await service.deliver(reminder.id)
+
+        kwargs = send_email.await_args.kwargs
+        # `cid:` chứ không phải `data:base64` — Gmail cắt bỏ `data:`, khách sẽ thấy ô trống.
+        assert 'src="cid:img0"' in kwargs["html"]
+        assert kwargs["inline_images"]["img0"].startswith(b"\x89PNG")
+
+    async def test_tai_anh_khong_ve_thi_van_gui_thu_chu_khong_nuot_luon(self) -> None:
+        # Kho ảnh chập chờn không được phép nuốt cả lời nhắc: chữ mới là phần chính.
+        reminder = make_reminder(
+            channel="email", attachments=[{"key": "reminders/u1/qr.png"}]
+        )
+        send_email = AsyncMock()
+        service, _ = make_service(reminder, send_email=send_email)
+
+        with patch(
+            "src.modules.reminders.application.delivery_service.object_storage",
+            MagicMock(download=AsyncMock(side_effect=RuntimeError("kho ảnh sập"))),
+        ):
+            result = await service.deliver(reminder.id)
+
+        assert result.status == "sent"
+        assert "cid:img0" not in send_email.await_args.kwargs["html"]
 
 
 class TestBaoChoFreelancerBietDaGui:

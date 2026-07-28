@@ -504,3 +504,80 @@ class TestReminderRules:
 
     async def test_unauthenticated_returns_401(self, client: AsyncClient) -> None:
         assert (await client.get("/api/v1/reminders/rules")).status_code == 401
+
+
+class TestXemTruocThu:
+    """`POST /reminders/preview` — dựng thử lá thư, không lưu và không gửi.
+
+    Vì sao phải để server dựng: thư nhắc thanh toán nay có mã QR và số tài khoản. Frontend
+    vẽ lại một bản "gần giống" thì sớm muộn cũng lệch với thư thật — mà lệch ở đây nghĩa là
+    freelancer duyệt một đằng, khách nhận một nẻo, và tiền có thể chuyển nhầm chỗ.  #Huynh
+    """
+
+    async def test_nhac_thanh_toan_thi_thu_co_so_tai_khoan_va_ma_QR(
+        self, client: AsyncClient
+    ) -> None:
+        headers = await _auth(client)
+        await client.patch(
+            "/api/v1/users/me/freelancer-profile",
+            json={
+                "bank_code": "970436",
+                "bank_account_number": "1027123456",
+                "bank_account_holder": "NGUYEN VAN A",
+            },
+            headers=headers,
+        )
+        deal_id = await _make_deal_id(client, headers)
+
+        resp = await client.post(
+            "/api/v1/reminders/preview",
+            json={
+                "reminder_type": "payment_overdue",
+                "target_type": "deal",
+                "target_id": deal_id,
+                "message": "Chào anh, mình nhắc khoản thanh toán ạ.",
+            },
+            headers=headers,
+        )
+        assert resp.status_code == 200, resp.text
+        data = resp.json()["data"]
+
+        assert "1027123456" in data["html"]
+        assert "NGUYEN VAN A" in data["html"]
+        # QR nhúng dạng data-URI cho trình duyệt (thư thật thì đính kèm `cid:`).
+        assert "data:image/png;base64," in data["html"]
+        assert "Nhắc thanh toán" in data["subject"] or "quá hạn" in data["subject"].lower()
+
+    async def test_thu_hoi_tham_KHONG_dinh_so_tai_khoan(self, client: AsyncClient) -> None:
+        headers = await _auth(client)
+        await client.patch(
+            "/api/v1/users/me/freelancer-profile",
+            json={"bank_code": "970436", "bank_account_number": "1027123456"},
+            headers=headers,
+        )
+        deal_id = await _make_deal_id(client, headers)
+
+        resp = await client.post(
+            "/api/v1/reminders/preview",
+            json={
+                "reminder_type": "follow_up",
+                "target_type": "deal",
+                "target_id": deal_id,
+                "message": "Chào anh, dự án tới đâu rồi ạ?",
+            },
+            headers=headers,
+        )
+        assert resp.status_code == 200, resp.text
+        assert "1027123456" not in resp.json()["data"]["html"]
+
+    async def test_khong_dang_nhap_thi_401(self, client: AsyncClient) -> None:
+        resp = await client.post(
+            "/api/v1/reminders/preview",
+            json={
+                "reminder_type": "follow_up",
+                "target_type": "deal",
+                "target_id": str(uuid.uuid4()),
+                "message": "x",
+            },
+        )
+        assert resp.status_code == 401
