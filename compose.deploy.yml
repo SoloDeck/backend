@@ -2,8 +2,14 @@
 # SoloDesk — Deploy stack (staging & production)
 # ===========================================================================
 # Production-shaped: image-only, NO bind mounts, NO --reload, NO dev tooling
-# (pgadmin/mailpit/minio/test). The running code comes from the pushed image,
-# not the runner's checkout.
+# (pgadmin/mailpit/test). The running code comes from the pushed image, not the
+# runner's checkout.
+#
+# `minio` used to be on that exclusion list, and that was the bug: it is not dev
+# tooling, it is where every file a client attaches to a deal LIVES. Without it
+# STORAGE_ENDPOINT stayed empty, ObjectStorage.enabled was false, and every
+# upload returned 409 while the deploy still reported healthy — attachments were
+# silently broken on staging while working locally.
 #
 # Staging and production differ only by the generated .env (secrets, APP_ENV,
 # ports) and the compose project name, so a single file serves both:
@@ -17,10 +23,13 @@
 # on this shared host. No `networks:` block — naming a shared network is what
 # previously put api and postgres on different bridges.
 #
-# DATABASE_URL / REDIS_URL in .env MUST point at these service names:
+# DATABASE_URL / REDIS_URL / STORAGE_ENDPOINT in .env MUST point at these
+# service names:
 #   DATABASE_URL=postgresql+asyncpg://<user>:<pass>@postgres:5432/<db>
 #   REDIS_URL=redis://redis:6379/0
-# and <user>/<pass>/<db> must match POSTGRES_* below (same .env drives both).
+#   STORAGE_ENDPOINT=http://minio:9000
+# and <user>/<pass>/<db> must match POSTGRES_* below, as STORAGE_ACCESS_KEY /
+# STORAGE_SECRET_KEY must match MINIO_ROOT_* (same .env drives both sides).
 # ===========================================================================
 
 # Cap container logs so the shared host can't be filled by one noisy stack.
@@ -78,6 +87,38 @@ services:
           - redis-host
 
   # -------------------------------------------------------------------------
+  # MinIO — S3-compatible object storage for deal attachments (client briefs,
+  # signed contracts, transfer receipts). A real datastore, same tier as
+  # postgres/redis, NOT dev tooling.
+  #
+  # Unlike compose.yml, ports are NOT published. This host runs staging and
+  # production side by side: publishing 9000/9001 would make the second project
+  # fail to bind, and would expose every client's uploaded file to the internet.
+  # api reaches it as `minio:9000` on the project network, same as postgres.
+  #
+  # Credentials come from the same .env keys the app reads, so there is one
+  # source of truth — a mismatch between MinIO's root user and the app's access
+  # key would surface only as SignatureDoesNotMatch on the first upload.
+  # -------------------------------------------------------------------------
+  minio:
+    image: minio/minio:latest
+    restart: always
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${STORAGE_ACCESS_KEY:?STORAGE_ACCESS_KEY is required}
+      MINIO_ROOT_PASSWORD: ${STORAGE_SECRET_KEY:?STORAGE_SECRET_KEY is required}
+    volumes:
+      # Losing this volume means losing every file a client ever sent.
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    logging: *default-logging
+
+  # -------------------------------------------------------------------------
   # Migrations (one-shot). Runs `alembic upgrade head` from the same image the
   # api serves, so schema and code always ship together. api/worker/beat refuse
   # to start until this exits 0 — a failed migration fails the deploy loudly
@@ -113,6 +154,12 @@ services:
       postgres:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      # api calls object_storage.ensure_bucket() in its lifespan, and serves
+      # every upload/download. Starting before MinIO is ready means the bucket
+      # is never created and the first upload dies on NoSuchBucket.
+      # worker/beat are NOT listed: neither touches object_storage.
+      minio:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
@@ -168,3 +215,4 @@ services:
 
 volumes:
   postgres_data:
+  minio_data:

@@ -63,6 +63,25 @@ _READINESS_TIMEOUT_SECONDS = 3.0
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     log.info("solodesk.startup", environment=settings.app_env)
 
+    # Thiếu kho file thì HỎNG THẬT, nhưng hỏng lặng lẽ — phải kêu to.
+    #
+    # Staging từng chạy nhiều tuần với STORAGE_ENDPOINT rỗng: `ensure_bucket()` chỉ log
+    # `warning` "storage.disabled", `/health/ready` không hề chạm tới kho file nên deploy
+    # vẫn báo healthy, còn người dùng thì upload cái nào 409 cái đó. Hệ quả kéo theo:
+    # deal không có file → AI chấm điểm không có gì để đọc → deal nào cũng 0/100 COLD.
+    #
+    # Ở môi trường deploy, thiếu cấu hình này là LỖI CẤU HÌNH, không phải chuyện bình
+    # thường — log mức `error` để nó nổi lên trong log container ngay dòng đầu.  #Huynh
+    if not object_storage.enabled and settings.app_env not in ("development", "test"):
+        log.error(
+            "storage.disabled_in_deployed_env",
+            app_env=settings.app_env,
+            hint=(
+                "Thiếu STORAGE_ENDPOINT/STORAGE_ACCESS_KEY. Mọi lần đính kèm file vào "
+                "deal sẽ trả 409, và AI chấm điểm deal sẽ không đọc được file khách gửi."
+            ),
+        )
+
     # Tạo bucket object storage nếu chưa có. Thiếu bước này thì upload file đầu tiên
     # nổ NoSuchBucket — MinIO không tự tạo bucket.  #Huynh
     try:
@@ -149,9 +168,7 @@ app.include_router(proposals_router, prefix=f"{API_V1}/proposals", tags=["Propos
 app.include_router(contracts_router, prefix=f"{API_V1}/contracts", tags=["Contracts"])
 app.include_router(public_invoices_router, prefix=f"{API_V1}/invoices/public", tags=["Public"])
 app.include_router(invoices_router, prefix=f"{API_V1}/invoices", tags=["Invoices"])
-app.include_router(
-    public_payments_router, prefix=f"{API_V1}/payments/webhooks", tags=["Public"]
-)
+app.include_router(public_payments_router, prefix=f"{API_V1}/payments/webhooks", tags=["Public"])
 app.include_router(payments_router, prefix=f"{API_V1}/payments", tags=["Payments"])
 app.include_router(reminders_router, prefix=f"{API_V1}/reminders", tags=["Reminders"])
 app.include_router(notifications_router, prefix=f"{API_V1}/notifications", tags=["Notifications"])
@@ -244,17 +261,13 @@ async def readiness_check() -> JSONResponse:
     # keep the worst case at _READINESS_TIMEOUT_SECONDS regardless of how many
     # dependencies are added here later.
     names = ("database", "redis")
-    results = await asyncio.gather(
-        _probe_database(), _probe_redis(), return_exceptions=True
-    )
+    results = await asyncio.gather(_probe_database(), _probe_redis(), return_exceptions=True)
 
     checks: dict[str, str] = {}
     for name, result in zip(names, results, strict=True):
         if isinstance(result, BaseException):
             checks[name] = f"fail: {type(result).__name__}"
-            log.warning(
-                "health.dependency_unavailable", dependency=name, error=str(result)[:200]
-            )
+            log.warning("health.dependency_unavailable", dependency=name, error=str(result)[:200])
         else:
             checks[name] = "ok"
 
