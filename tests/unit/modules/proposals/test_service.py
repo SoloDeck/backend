@@ -10,7 +10,11 @@ from src.modules.proposals.application.service import (
     DEFAULT_VALID_DAYS,
     ProposalsService,
 )
-from src.shared.exceptions.domain import InvalidStateTransitionError, NotFoundError
+from src.shared.exceptions.domain import (
+    BusinessRuleError,
+    InvalidStateTransitionError,
+    NotFoundError,
+)
 
 
 def _make_proposal(**kwargs) -> MagicMock:
@@ -111,6 +115,97 @@ class TestTransitionStatus:
         svc = ProposalsService(db=db)
         with pytest.raises(NotFoundError):
             await svc.transition_status(uuid.uuid4(), uuid.uuid4(), "sent")
+
+
+class TestTongMocThanhToanPhaiBang100:
+    """Không gửi được báo giá mà các đợt thanh toán không cộng thành 100%.
+
+    Đo thật: một báo giá có ba đợt 50% + 50% + 30% = 130% vẫn in ra bảng "8. Điều Khoản
+    Thanh Toán" và vẫn gửi được cho khách. Khách tự cộng ra 130% thì hoặc mình mất uy tín,
+    hoặc cãi nhau lúc đòi tiền.  #Huynh
+    """
+
+    @staticmethod
+    def _content(milestones: list[dict]) -> dict:
+        return {
+            "pricing": {"total": 5_000_000, "currency": "VND"},
+            "payment_milestones": milestones,
+        }
+
+    async def test_tong_khac_100_thi_chan_gui(self) -> None:
+        proposal = _make_proposal(
+            status="draft",
+            content=self._content(
+                [
+                    {"label": "Đặt cọc khi ký hợp đồng", "percent": 50},
+                    {"label": "Thanh toán khi bàn giao", "percent": 50},
+                    {"label": "avc", "percent": 30},
+                ]
+            ),
+        )
+        db = AsyncMock()
+        db.scalar.side_effect = [proposal, None]
+
+        svc = ProposalsService(db=db)
+        with pytest.raises(BusinessRuleError, match="130%"):
+            await svc.transition_status(proposal.owner_user_id, proposal.id, "sent")
+        # Chặn là chặn HẲN: trạng thái không được nhúc nhích.
+        assert proposal.status == "draft"
+
+    async def test_tong_dung_100_thi_gui_duoc(self) -> None:
+        proposal = _make_proposal(
+            status="draft",
+            content=self._content(
+                [
+                    {"label": "Đặt cọc khi ký hợp đồng", "percent": 50},
+                    {"label": "Thanh toán khi bàn giao", "percent": 50},
+                ]
+            ),
+        )
+        db = AsyncMock()
+        db.scalar.side_effect = [proposal, None]
+
+        with patch("src.modules.proposals.application.service.event_bus") as mock_bus:
+            mock_bus.publish = AsyncMock()
+            result = await ProposalsService(db=db).transition_status(
+                proposal.owner_user_id, proposal.id, "sent"
+            )
+        assert result.status == "sent"
+
+    async def test_lich_co_dot_ghi_so_tien_thi_khong_chan(self) -> None:
+        # Lịch hỗn hợp: cộng % không có nghĩa gì, chặn là chặn oan.
+        proposal = _make_proposal(
+            status="draft",
+            content=self._content(
+                [
+                    {"label": "Đặt cọc", "percent": 50},
+                    {"label": "Phần còn lại", "amount": "2.500.000 ₫"},
+                ]
+            ),
+        )
+        db = AsyncMock()
+        db.scalar.side_effect = [proposal, None]
+
+        with patch("src.modules.proposals.application.service.event_bus") as mock_bus:
+            mock_bus.publish = AsyncMock()
+            result = await ProposalsService(db=db).transition_status(
+                proposal.owner_user_id, proposal.id, "sent"
+            )
+        assert result.status == "sent"
+
+    async def test_bao_gia_khong_co_moc_thi_khong_chan(self) -> None:
+        # Báo giá cũ không có mốc cấu trúc — chúng rơi về lịch chuẩn 50/50 lúc sinh task,
+        # khoá chúng lại là khoá luôn dữ liệu cũ.
+        proposal = _make_proposal(status="draft")
+        db = AsyncMock()
+        db.scalar.side_effect = [proposal, None]
+
+        with patch("src.modules.proposals.application.service.event_bus") as mock_bus:
+            mock_bus.publish = AsyncMock()
+            result = await ProposalsService(db=db).transition_status(
+                proposal.owner_user_id, proposal.id, "sent"
+            )
+        assert result.status == "sent"
 
 
 class TestNgayTrenBaoGia:
