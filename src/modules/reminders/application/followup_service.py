@@ -41,6 +41,7 @@ class FollowUpService:
         target_type: str,
         target_id: uuid.UUID,
         ai_facade: Any,
+        tone: str = "formal",
     ) -> dict[str, Any]:
         if target_type not in _TARGET_TYPES:
             raise ValidationError(
@@ -66,6 +67,7 @@ class FollowUpService:
             client_data=client_data,
             communication_history=[],
             reminder_type=reminder_type,
+            tone=tone,
             user_can_use_ai=await self._can_use_ai(user_id),
         )
 

@@ -1,7 +1,7 @@
 """POST /ai/followups/generate — soạn tin nhắn nhắc khách bằng AI."""
 
 import uuid
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
@@ -30,6 +30,10 @@ class FollowUpGenerationRequest(BaseModel):
     target_type: str = Field(description="deal | client | invoice | contract")
     target_id: uuid.UUID
     language: str = "vi"
+    # Giọng văn — Phiếu SU26SE083 dòng 105 đòi "chọn được giọng trang trọng hoặc thân mật".
+    # Mặc định trang trọng: gửi nhầm giọng suồng sã cho khách công ty thì mất mặt, còn gửi
+    # nhầm giọng lịch sự cho khách quen thì cùng lắm hơi khách sáo.  #Huynh
+    tone: Literal["formal", "friendly"] = "formal"
 
 
 class FollowUpGenerationResponse(BaseModel):
@@ -65,6 +69,7 @@ async def generate_followup(
         reminder_type=payload.reminder_type,
         target_type=payload.target_type,
         target_id=payload.target_id,
+        tone=payload.tone,
         ai_facade=ai,
     )
     return ApiResponse.ok(FollowUpGenerationResponse(**result))
