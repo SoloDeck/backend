@@ -10,6 +10,13 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",
+        # A deploy pipeline that writes `VAR=${{ vars.VAR }}` unconditionally
+        # produces a literal empty value whenever that CI variable isn't set
+        # (e.g. `ZALO_MODE=`, `MOMO_REDIRECT_URL=`) — without this, pydantic
+        # treats that as an explicit override and crashes Settings() at import
+        # time (Literal fields) or silently reintroduces the momo redirect/ipn
+        # collision (str fields), instead of falling back to the field default.
+        env_ignore_empty=True,
     )
 
     # -----------------------------------------------------------------------
