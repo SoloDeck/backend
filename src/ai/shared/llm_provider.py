@@ -6,22 +6,13 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any
-
-from ai.shared.token_usage import extract_usage
-from src.config.settings import settings
 import asyncio
-import json
-from typing import Any
-
-import structlog
 from groq import Groq
-
-from src.ai.shared.base import BaseAIChain
-from src.ai.shared.json_output import extract_json_object
-from src.ai.shared.prompt import load_prompt, prompt_version
+from google import genai
+from google.genai.types import GenerateContentConfig
 from src.ai.shared.token_usage import extract_usage
 from src.config.settings import settings
-from src.shared.exceptions.domain import AIOutputParseError
+
 
 @dataclass
 class LLMUsage:
@@ -98,8 +89,46 @@ class GroqProvider(BaseLLMProvider):
 
 
 class GeminiProvider(BaseLLMProvider):
-    ...
-    # implement later
+    MODEL = "gemini-2.5-flash"
+
+    def __init__(self):
+        api_key = settings.gemini_api_key
+        if not api_key:
+            raise RuntimeError("GEMINI_API_KEY is not set")
+
+        self.client = genai.Client(api_key=api_key)
+
+    async def generate(
+        self,
+        *,
+        prompt: str,
+        temperature: float = 0,
+        seed: int | None = None,
+        json_mode: bool = False,
+    ) -> LLMResponse:
+
+        config = GenerateContentConfig(
+            temperature=temperature,
+            seed=seed,
+            response_mime_type=(
+                "application/json"
+                if json_mode
+                else "text/plain"
+            ),
+        )
+
+        response = await asyncio.to_thread(
+            self.client.models.generate_content,
+            model=self.MODEL,
+            contents=prompt,
+            config=config,
+        )
+
+        return LLMResponse(
+            text=response.text,
+            usage=None,
+        )
+    # contains all current Gemini logic
 
 
 class OpenAIProvider(BaseLLMProvider):
