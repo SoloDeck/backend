@@ -173,6 +173,11 @@ jobs:
           ZALO_OA_ACCESS_TOKEN=${{ secrets.ZALO_OA_ACCESS_TOKEN }}
           STRIPE_SECRET_KEY=${{ secrets.STRIPE_SECRET_KEY }}
           STRIPE_WEBHOOK_SECRET=${{ secrets.STRIPE_WEBHOOK_SECRET }}
+          STORAGE_ENDPOINT=http://minio:9000
+          STORAGE_BUCKET=${{ vars.STORAGE_BUCKET }}
+          STORAGE_ACCESS_KEY=${{ secrets.STORAGE_ACCESS_KEY }}
+          STORAGE_SECRET_KEY=${{ secrets.STORAGE_SECRET_KEY }}
+          STORAGE_REGION=ap-southeast-1
           CORS_ORIGINS=${{ vars.CORS_ORIGINS }}
           API_PORT=${{ vars.API_PORT }}
           "@ | Out-File -FilePath .env -Encoding utf8
@@ -181,6 +186,12 @@ jobs:
         shell: powershell
         run: |
           $env:API_PORT = "${{ vars.API_PORT }}"
+          # compose.deploy.yml interpolates these into the minio service. They
+          # are also in .env (which compose auto-loads), but exporting them here
+          # matches how API_PORT is handled and keeps `up` from dying on a
+          # required-variable error if .env is ever not picked up.
+          $env:STORAGE_ACCESS_KEY = "${{ secrets.STORAGE_ACCESS_KEY }}"
+          $env:STORAGE_SECRET_KEY = "${{ secrets.STORAGE_SECRET_KEY }}"
           $project = "solodesk-backend-staging"
 
           # PowerShell does not abort on a failed native command, and only the
@@ -283,6 +294,11 @@ jobs:
           ZALO_OA_ACCESS_TOKEN=${{ secrets.ZALO_OA_ACCESS_TOKEN }}
           STRIPE_SECRET_KEY=${{ secrets.STRIPE_SECRET_KEY }}
           STRIPE_WEBHOOK_SECRET=${{ secrets.STRIPE_WEBHOOK_SECRET }}
+          STORAGE_ENDPOINT=http://minio:9000
+          STORAGE_BUCKET=${{ vars.STORAGE_BUCKET }}
+          STORAGE_ACCESS_KEY=${{ secrets.STORAGE_ACCESS_KEY }}
+          STORAGE_SECRET_KEY=${{ secrets.STORAGE_SECRET_KEY }}
+          STORAGE_REGION=ap-southeast-1
           CORS_ORIGINS=${{ vars.CORS_ORIGINS }}
           API_PORT=${{ vars.API_PORT }}
           "@ | Out-File -FilePath .env -Encoding utf8
@@ -291,6 +307,9 @@ jobs:
         shell: powershell
         run: |
           $env:API_PORT = "${{ vars.API_PORT }}"
+          # See the staging job — same reason.
+          $env:STORAGE_ACCESS_KEY = "${{ secrets.STORAGE_ACCESS_KEY }}"
+          $env:STORAGE_SECRET_KEY = "${{ secrets.STORAGE_SECRET_KEY }}"
           $project = "solodesk-backend-production"
 
           # See deploy-staging: a failed pull must abort the deploy, otherwise
