@@ -8,6 +8,7 @@ from typing import Any
 import structlog
 from tenacity import retry, stop_after_attempt, wait_exponential
 
+from src.ai.shared.llm_provider import get_llm_provider
 from src.config.settings import settings
 from src.shared.exceptions.domain import AIGenerationError, AIOutputParseError
 
@@ -20,6 +21,15 @@ class BaseAIChain(ABC):
     Subclasses implement `_build_chain()` and `_parse_output()`.
     `run()` handles retries, logging, and error wrapping.
     """
+
+    def __init__(self):
+        self._provider = None
+
+    @property
+    def provider(self):
+        if self._provider is None:
+            self._provider = get_llm_provider()
+        return self._provider
 
     module_name: str  # must be set on each subclass
 
