@@ -59,6 +59,20 @@ class _MomoSignedClient:
             raise PaymentGatewayError(f"MoMo requires a whole-number amount, got {amount}")
         return int(amount)
 
+    def _resolve_redirect_url(
+        self, redirect_url: str | None, default: str | None, notify_url: str
+    ) -> str:
+        """Never let the browser redirect target collapse to the POST-only IPN
+        notify_url — that's exactly the bug where a user cancelling on MoMo's
+        checkout page gets redirected into a 405 instead of back to the app."""
+        resolved = redirect_url or default
+        if not resolved or resolved == notify_url:
+            raise PaymentGatewayError(
+                "MoMo redirect_url must be configured and must differ from "
+                "notify_url (the POST-only IPN webhook)"
+            )
+        return resolved
+
     def _ipn_raw_signature(self, payload: dict[str, Any]) -> str:
         """MoMo's documented IPN raw-signature field order (alphabetical)."""
         return (
@@ -174,7 +188,7 @@ class MomoClient(_MomoSignedClient):
     ) -> CreatePaymentResult:
         request_id = str(uuid.uuid4())
         amount_int = self._to_whole_vnd(amount, currency)
-        redirect_url = redirect_url or self.redirect_url or notify_url
+        redirect_url = self._resolve_redirect_url(redirect_url, self.redirect_url, notify_url)
         raw_signature = (
             f"accessKey={self.access_key}&amount={amount_int}&extraData="
             f"&ipnUrl={notify_url}&orderId={order_id}&orderInfo={order_info}"
@@ -238,6 +252,7 @@ class MockMomoClient(_MomoSignedClient):
     partner_code = _MOCK_PARTNER_CODE
     access_key = _MOCK_ACCESS_KEY
     secret_key = _MOCK_SECRET_KEY
+    redirect_url = f"{_MOCK_BASE_URL}/result"
 
     async def create_payment(
         self,
@@ -251,7 +266,7 @@ class MockMomoClient(_MomoSignedClient):
     ) -> CreatePaymentResult:
         request_id = str(uuid.uuid4())
         amount_int = self._to_whole_vnd(amount, currency)
-        redirect_url = redirect_url or notify_url
+        redirect_url = self._resolve_redirect_url(redirect_url, self.redirect_url, notify_url)
         raw_signature = (
             f"accessKey={self.access_key}&amount={amount_int}&extraData="
             f"&ipnUrl={notify_url}&orderId={order_id}&orderInfo={order_info}"

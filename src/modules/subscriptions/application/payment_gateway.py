@@ -35,7 +35,9 @@ class PaymentGateway(Protocol):
     ) -> CreatePaymentResult:
         """`redirect_url`, if given, is where the provider sends the browser
         after payment — per-checkout. Falls back to the gateway's own
-        configured default when omitted."""
+        configured default when omitted. The resolved redirect target must
+        never equal `notify_url` (the server-to-server callback, which is not
+        browser-reachable) — implementations should raise if it would."""
         ...
 
     def verify_callback_signature(self, payload: dict[str, Any]) -> bool: ...

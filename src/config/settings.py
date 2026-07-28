@@ -108,10 +108,16 @@ class Settings(BaseSettings):
     momo_request_type: str = "captureWallet"
     momo_lang: str = "vi"
     momo_ipn_url: str = "https://api.solodesk.space/api/v1/payments/webhooks/momo"
-    # Browser redirect target after the user finishes on MoMo's checkout page.
-    # Falls back to momo_ipn_url when unset — this backend has no dedicated
-    # "payment result" frontend page yet.
-    momo_redirect_url: str = ""
+    # Browser landing target after MoMo's checkout page (success AND
+    # cancel/resultCode!=0) — GET-reachable, unlike momo_ipn_url which is the
+    # POST-only server-to-server IPN webhook (see public_router.py). Must always
+    # be configured and must never equal momo_ipn_url — MomoClient enforces this
+    # at request time (see integrations/momo/client.py _resolve_redirect_url).
+    # NOTE for deploy: if a real .env sets MOMO_REDIRECT_URL="" explicitly it
+    # will override this default and checkout will start raising a loud
+    # PaymentGatewayError instead of silently producing the old 405 bug — that
+    # env var needs a real value (or to be unset) in every deployed environment.
+    momo_redirect_url: str = "https://api.solodesk.space/api/v1/payments/webhooks/momo/result"
     momo_timeout_seconds: float = 15.0
 
     # -----------------------------------------------------------------------

@@ -7,6 +7,7 @@ from decimal import Decimal
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.config.settings import settings
 from src.modules.subscriptions.application.payment_gateway import PaymentGateway
 from src.modules.subscriptions.domain.entities.subscription_payment import (
     PaymentProvider,
@@ -26,9 +27,6 @@ _CHECKOUT_TTL_MINUTES = 15
 _BILLING_PERIOD_DAYS = 30
 # Matches the "perpetual" free-plan period used at registration (AuthService).
 _FREE_PLAN_PERIOD_DAYS = 36500
-# The provider's real server would call this notify_url — meaningless for the
-# mock (nothing calls it), kept realistic for parity with a real integration.
-_NOTIFY_URL = "https://api.solodesk.space/api/v1/payments/webhooks/momo"
 
 
 def _payment_to_entity(row) -> SubscriptionPayment:
@@ -105,7 +103,7 @@ class SubscriptionsService:
             amount=plan.price_monthly,
             currency=plan.currency,
             order_info=f"SoloDesk {plan.name} plan upgrade",
-            notify_url=_NOTIFY_URL,
+            notify_url=settings.momo_ipn_url,
             redirect_url=return_url,
         )
         payment.pay_url = result.pay_url

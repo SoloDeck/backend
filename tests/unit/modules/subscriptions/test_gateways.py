@@ -5,7 +5,12 @@ from decimal import Decimal
 import httpx
 import pytest
 
-from src.integrations.momo.client import MockMomoClient, MomoClient, PaymentGatewayError
+from src.integrations.momo.client import (
+    _MOCK_BASE_URL,
+    MockMomoClient,
+    MomoClient,
+    PaymentGatewayError,
+)
 
 
 def _momo_client(transport: httpx.MockTransport) -> MomoClient:
@@ -18,7 +23,7 @@ def _momo_client(transport: httpx.MockTransport) -> MomoClient:
         endpoint="https://test-payment.momo.vn/v2/gateway/api/create",
         request_type="captureWallet",
         lang="vi",
-        redirect_url="",
+        redirect_url="https://app.solodesk.test/billing/result",
         timeout_seconds=5.0,
         transport=transport,
     )
@@ -114,7 +119,7 @@ async def test_create_payment_uses_given_redirect_url_over_notify_url() -> None:
     assert result.raw["redirectUrl"] == "https://app.solodesk.space/billing/result"
 
 
-async def test_create_payment_falls_back_to_notify_url_when_no_redirect_given() -> None:
+async def test_create_payment_falls_back_to_configured_default_when_no_redirect_given() -> None:
     client = MockMomoClient()
     notify_url = "https://api.solodesk.space/api/v1/payments/webhooks/momo"
 
@@ -126,7 +131,47 @@ async def test_create_payment_falls_back_to_notify_url_when_no_redirect_given() 
         notify_url=notify_url,
     )
 
-    assert result.raw["redirectUrl"] == notify_url
+    assert result.raw["redirectUrl"] == f"{_MOCK_BASE_URL}/result"
+    assert result.raw["redirectUrl"] != notify_url
+
+
+async def test_create_payment_raises_when_redirect_would_equal_notify_url() -> None:
+    client = MockMomoClient()
+    notify_url = "https://api.solodesk.space/api/v1/payments/webhooks/momo"
+
+    with pytest.raises(PaymentGatewayError):
+        await client.create_payment(
+            order_id=str(uuid.uuid4()),
+            amount=Decimal("199000"),
+            currency="VND",
+            order_info="SoloDesk Pro plan upgrade",
+            notify_url=notify_url,
+            redirect_url=notify_url,
+        )
+
+
+async def test_create_payment_raises_when_no_redirect_configured() -> None:
+    client = MomoClient(
+        partner_code="MOMO",
+        access_key="access-key",
+        secret_key="secret-key",
+        partner_name="SoloDesk",
+        store_id="SoloDeskStore",
+        endpoint="https://test-payment.momo.vn/v2/gateway/api/create",
+        request_type="captureWallet",
+        lang="vi",
+        redirect_url="",
+        timeout_seconds=5.0,
+    )
+
+    with pytest.raises(PaymentGatewayError):
+        await client.create_payment(
+            order_id=str(uuid.uuid4()),
+            amount=Decimal("199000"),
+            currency="VND",
+            order_info="SoloDesk Pro plan upgrade",
+            notify_url="https://api.solodesk.space/api/v1/payments/webhooks/momo",
+        )
 
 
 async def test_real_client_prefers_per_call_redirect_url_over_configured_default() -> None:
