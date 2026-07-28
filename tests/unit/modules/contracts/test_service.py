@@ -1,18 +1,48 @@
 """Unit tests for ContractsService."""
 
 import uuid
+from contextlib import contextmanager
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from src.modules.contracts.application.service import ContractsService
 from src.modules.contracts.schemas.request import ContractRequest
+from src.modules.tasks.schemas.request import CreateTaskRequest
 from src.shared.exceptions.domain import (
     BusinessRuleError,
     EntitlementError,
     InvalidStateTransitionError,
     NotFoundError,
 )
+
+
+@contextmanager
+def _payment_task_wiring(payloads: list[CreateTaskRequest] | None = None):
+    """Giả lập ba collaborator mà việc GHI NHẬN ĐÃ KÝ kéo theo: tạo project cho deal, lấy mốc
+    thanh toán của báo giá đã chốt, và sinh task "Thu tiền:".
+
+    Ba thứ đó được import CỤC BỘ bên trong `transition_status` (tránh vòng import), nên phải
+    patch tại chính module gốc chứ không phải chỗ dùng.  #Huynh
+    """
+    project = MagicMock()
+    project.id = uuid.uuid4()
+    create_many = AsyncMock(return_value=[])
+    get_or_create = AsyncMock(return_value=project)
+    with (
+        patch("src.modules.projects.application.service.ProjectService") as project_service,
+        patch(
+            "src.modules.proposals.application.service.payment_task_payloads_for_deal",
+            AsyncMock(return_value=payloads if payloads is not None else []),
+        ),
+        patch("src.modules.tasks.application.service.TaskService") as task_service,
+    ):
+        project_service.return_value.get_or_create_for_deal = get_or_create
+        task_service.return_value.create_many_for_entity = create_many
+        yield SimpleNamespace(
+            project=project, get_or_create=get_or_create, create_many=create_many
+        )
 
 
 def _make_contract(**kwargs) -> MagicMock:
@@ -100,11 +130,51 @@ class TestTransitionStatus:
         db = AsyncMock()
         db.scalar.return_value = contract
 
-        result = await ContractsService(db=db).transition_status(
-            contract.owner_user_id, contract.id, "active"
-        )
+        with _payment_task_wiring():
+            result = await ContractsService(db=db).transition_status(
+                contract.owner_user_id, contract.id, "active"
+            )
         assert result.status == "active"
         assert result.signed_by_freelancer_at is not None
+
+    async def test_ghi_nhan_da_ky_thi_sinh_task_thu_tien_ngay(self) -> None:
+        """Ký xong là phải thấy ngay mốc thu tiền.
+
+        Mốc đợt 1 của mọi báo giá ghi "Khi ký hợp đồng / trước khi bắt đầu". Trước đây task
+        "Thu tiền:" chỉ sinh khi deal chuyển "active" (bấm "Bắt đầu triển khai") — tức MỘT
+        NHỊP SAU thời điểm phải thu: đã bắt tay làm rồi hệ thống mới nhắc đi đòi cọc.  #Huynh
+        """
+        contract = _make_contract(status="pending_signatures")
+        db = AsyncMock()
+        db.scalar.return_value = contract
+        payloads = [
+            CreateTaskRequest(title="Thu tiền: Đặt cọc khi ký hợp đồng"),
+            CreateTaskRequest(title="Thu tiền: Thanh toán khi nghiệm thu & bàn giao"),
+        ]
+
+        with _payment_task_wiring(payloads) as wiring:
+            await ContractsService(db=db).transition_status(
+                contract.owner_user_id, contract.id, "active"
+            )
+
+        wiring.get_or_create.assert_awaited_once()
+        # Task gắn vào PROJECT, không phải contract — bảng "Công việc" hiển thị theo project.
+        wiring.create_many.assert_awaited_once_with(
+            "project", wiring.project.id, contract.owner_user_id, payloads
+        )
+
+    async def test_khong_co_moc_thi_khong_tao_task(self) -> None:
+        # Báo giá chưa chốt / không có mốc nào -> không đẻ ra task rỗng.
+        contract = _make_contract(status="pending_signatures")
+        db = AsyncMock()
+        db.scalar.return_value = contract
+
+        with _payment_task_wiring([]) as wiring:
+            await ContractsService(db=db).transition_status(
+                contract.owner_user_id, contract.id, "active"
+            )
+
+        wiring.create_many.assert_not_awaited()
 
     async def test_invalid_transition_raises(self) -> None:
         contract = _make_contract(status="draft")
