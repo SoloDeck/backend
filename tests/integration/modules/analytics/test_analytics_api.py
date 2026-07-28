@@ -25,7 +25,12 @@ async def test_revenue_pipeline_win_rate_top_clients_and_ai_usage_return_contrac
         headers=headers,
     )
     assert revenue.status_code == 200
-    assert set(revenue.json()["data"]) == {"total_invoiced", "total_collected", "total_outstanding"}
+    # Ba trường hoá đơn là hợp đồng BẮT BUỘC — phải còn nguyên. Các trường tiền-theo-mốc là
+    # phần THÊM (openapi không khoá `additionalProperties`), nên kiểm bao hàm chứ không kiểm
+    # bằng nhau: khoá chặt bằng `==` thì mỗi lần bổ sung số liệu là test đỏ vô cớ.  #Huynh
+    assert {"total_invoiced", "total_collected", "total_outstanding"} <= set(
+        revenue.json()["data"]
+    )
 
     pipeline = await client.get(
         "/api/v1/analytics/pipeline?snapshot_date=2026-01-01", headers=headers
@@ -165,3 +170,119 @@ async def test_revenue_monthly_rejects_out_of_range_months(client: AsyncClient) 
 
 async def test_revenue_monthly_unauthenticated_returns_401(client: AsyncClient) -> None:
     assert (await client.get("/api/v1/analytics/revenue/monthly")).status_code == 401
+
+
+async def test_revenue_tinh_theo_moc_thanh_toan_cua_hop_dong_da_ky(client: AsyncClient) -> None:
+    """Tiền trên bảng doanh thu đi theo MỐC THANH TOÁN, không theo hoá đơn.
+
+    Vì sao: từ Phase B, hoàn thành dự án đo bằng task "Thu tiền:" chứ không đòi hoá đơn.
+    Đo trên bản chạy thật: phễu hiện 7 deal đang triển khai trị giá 1,24 tỷ mà bảng doanh
+    thu ghi "Còn phải thu: 0 đ" — màn hình bảo freelancer không còn gì để thu.
+
+    Bài này dựng nguyên chuỗi thật: khách → deal → báo giá 50/50 chốt giá 100tr → ký hợp
+    đồng (sinh task thu tiền) → tick MỘT mốc, rồi đòi bảng doanh thu ra đúng 50/50.  #Huynh
+    """
+    headers = await _auth_headers(client)
+
+    client_obj = (
+        await client.post(
+            "/api/v1/clients",
+            json={"name": "Khách Mốc", "email": "moc@example.com", "type": "company"},
+            headers=headers,
+        )
+    ).json()["data"]
+    deal = (
+        await client.post(
+            "/api/v1/deals",
+            json={"client_id": client_obj["id"], "title": "Deal theo mốc"},
+            headers=headers,
+        )
+    ).json()["data"]
+
+    proposal = (
+        await client.post(
+            "/api/v1/proposals",
+            json={
+                "deal_id": deal["id"],
+                "content": {
+                    "title": "Báo giá theo mốc",
+                    "payment_milestones": [
+                        {"label": "Đặt cọc khi ký hợp đồng", "percent": 50},
+                        {"label": "Thanh toán khi bàn giao", "percent": 50},
+                    ],
+                },
+            },
+            headers=headers,
+        )
+    ).json()["data"]
+
+    priced = await client.patch(
+        f"/api/v1/proposals/{proposal['id']}/price",
+        json={"price": "100000000"},
+        headers=headers,
+    )
+    assert priced.status_code == 200, priced.text
+
+    for status in ("sent", "accepted"):
+        resp = await client.patch(
+            f"/api/v1/proposals/{proposal['id']}/status",
+            json={"status": status},
+            headers=headers,
+        )
+        assert resp.status_code == 200, resp.text
+
+    contract = (
+        await client.post(
+            "/api/v1/contracts",
+            json={
+                "deal_id": deal["id"],
+                "proposal_id": proposal["id"],
+                "client_id": client_obj["id"],
+                "content": {},
+            },
+            headers=headers,
+        )
+    ).json()["data"]
+    for status in ("pending_signatures", "active"):
+        resp = await client.patch(
+            f"/api/v1/contracts/{contract['id']}/status",
+            json={"status": status},
+            headers=headers,
+        )
+        assert resp.status_code == 200, resp.text
+
+    # Ký hợp đồng xong là đã có project + 2 task "Thu tiền:".
+    projects = (await client.get("/api/v1/projects", headers=headers)).json()["data"]
+    project_id = next(p["id"] for p in projects if p["deal_id"] == deal["id"])
+    tasks = (
+        await client.get(f"/api/v1/projects/{project_id}/tasks", headers=headers)
+    ).json()["data"]
+    payment_tasks = [t for t in tasks if t["title"].startswith("Thu tiền:")]
+    assert len(payment_tasks) == 2, [t["title"] for t in tasks]
+
+    # Chưa thu đồng nào: tất cả nằm ở "còn phải thu".
+    before = (await client.get("/api/v1/analytics/revenue", headers=headers)).json()["data"]
+    assert float(before["total_contracted"]) == 100_000_000
+    assert float(before["milestone_collected"]) == 0
+    assert float(before["milestone_outstanding"]) == 100_000_000
+    assert before["milestones_pending"] == 2
+
+    # Tick mốc đặt cọc → thu đúng một nửa.
+    ticked = await client.patch(
+        f"/api/v1/tasks/{payment_tasks[0]['id']}",
+        json={"status": "done"},
+        headers=headers,
+    )
+    assert ticked.status_code == 200, ticked.text
+
+    after = (await client.get("/api/v1/analytics/revenue", headers=headers)).json()["data"]
+    assert float(after["milestone_collected"]) == 50_000_000
+    assert float(after["milestone_outstanding"]) == 50_000_000
+    assert after["milestones_pending"] == 1
+
+    # Và khách đó phải nổi lên bảng xếp hạng kèm số còn nợ.
+    top = (await client.get("/api/v1/analytics/clients/top", headers=headers)).json()["data"]
+    row = next(c for c in top if c["client_id"] == client_obj["id"])
+    assert float(row["revenue"]) == 50_000_000
+    assert float(row["outstanding"]) == 50_000_000
+    assert row["deal_count"] == 1
