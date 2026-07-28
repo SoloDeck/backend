@@ -164,13 +164,11 @@ jobs:
           SECRET_KEY=${{ secrets.SECRET_KEY }}
           JWT_SECRET_KEY=${{ secrets.JWT_SECRET_KEY }}
           OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}
-          SENDGRID_API_KEY=${{ secrets.SENDGRID_API_KEY }}
           GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}
           GROQ_API_KEY=${{ secrets.GROQ_API_KEY }}
           GOOGLE_WEB_CLIENT_ID=${{ vars.GOOGLE_WEB_CLIENT_ID }}
           GOOGLE_ANDROID_CLIENT_ID=${{ vars.GOOGLE_ANDROID_CLIENT_ID }}
           GOOGLE_IOS_CLIENT_ID=${{ vars.GOOGLE_IOS_CLIENT_ID }}
-          ZALO_OA_ACCESS_TOKEN=${{ secrets.ZALO_OA_ACCESS_TOKEN }}
           STRIPE_SECRET_KEY=${{ secrets.STRIPE_SECRET_KEY }}
           STRIPE_WEBHOOK_SECRET=${{ secrets.STRIPE_WEBHOOK_SECRET }}
           STORAGE_ENDPOINT=http://minio:9000
@@ -180,6 +178,33 @@ jobs:
           STORAGE_REGION=ap-southeast-1
           CORS_ORIGINS=${{ vars.CORS_ORIGINS }}
           API_PORT=${{ vars.API_PORT }}
+          FRONTEND_URL=${{ vars.FRONTEND_URL }}
+          SMTP_HOST=${{ vars.SMTP_HOST }}
+          SMTP_PORT=${{ vars.SMTP_PORT }}
+          SMTP_USER=${{ vars.SMTP_USER }}
+          SMTP_PASSWORD=${{ secrets.SMTP_PASSWORD }}
+          SMTP_FROM_EMAIL=${{ vars.SMTP_FROM_EMAIL }}
+          SMTP_FROM_NAME=${{ vars.SMTP_FROM_NAME }}
+          SMTP_TLS=${{ vars.SMTP_TLS }}
+          SMTP_STARTTLS=${{ vars.SMTP_STARTTLS }}
+          STORAGE_ENDPOINT=${{ vars.STORAGE_ENDPOINT }}
+          STORAGE_BUCKET=${{ vars.STORAGE_BUCKET }}
+          STORAGE_ACCESS_KEY=${{ secrets.STORAGE_ACCESS_KEY }}
+          STORAGE_SECRET_KEY=${{ secrets.STORAGE_SECRET_KEY }}
+          STORAGE_REGION=${{ vars.STORAGE_REGION }}
+          ZALO_MODE=${{ vars.ZALO_MODE }}
+          ZALO_APP_ID=${{ vars.ZALO_APP_ID }}
+          ZALO_APP_SECRET=${{ secrets.ZALO_APP_SECRET }}
+          ZALO_OAUTH_REDIRECT_URI=${{ vars.ZALO_OAUTH_REDIRECT_URI }}
+          ZALO_WEBHOOK_SECRET=${{ secrets.ZALO_WEBHOOK_SECRET }}
+          MOMO_PARTNER_CODE=${{ vars.MOMO_PARTNER_CODE }}
+          MOMO_ACCESS_KEY=${{ secrets.MOMO_ACCESS_KEY }}
+          MOMO_SECRET_KEY=${{ secrets.MOMO_SECRET_KEY }}
+          MOMO_PARTNER_NAME=${{ vars.MOMO_PARTNER_NAME }}
+          MOMO_STORE_ID=${{ vars.MOMO_STORE_ID }}
+          MOMO_ENDPOINT=${{ vars.MOMO_ENDPOINT }}
+          MOMO_IPN_URL=${{ vars.MOMO_IPN_URL }}
+          MOMO_REDIRECT_URL=${{ vars.MOMO_REDIRECT_URL }}
           "@ | Out-File -FilePath .env -Encoding utf8
 
       - name: Pull & deploy
@@ -285,13 +310,11 @@ jobs:
           SECRET_KEY=${{ secrets.SECRET_KEY }}
           JWT_SECRET_KEY=${{ secrets.JWT_SECRET_KEY }}
           OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}
-          SENDGRID_API_KEY=${{ secrets.SENDGRID_API_KEY }}
           GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}
           GROQ_API_KEY=${{ secrets.GROQ_API_KEY }}
           GOOGLE_WEB_CLIENT_ID=${{ vars.GOOGLE_WEB_CLIENT_ID }}
           GOOGLE_ANDROID_CLIENT_ID=${{ vars.GOOGLE_ANDROID_CLIENT_ID }}
           GOOGLE_IOS_CLIENT_ID=${{ vars.GOOGLE_IOS_CLIENT_ID }}
-          ZALO_OA_ACCESS_TOKEN=${{ secrets.ZALO_OA_ACCESS_TOKEN }}
           STRIPE_SECRET_KEY=${{ secrets.STRIPE_SECRET_KEY }}
           STRIPE_WEBHOOK_SECRET=${{ secrets.STRIPE_WEBHOOK_SECRET }}
           STORAGE_ENDPOINT=http://minio:9000
@@ -301,6 +324,33 @@ jobs:
           STORAGE_REGION=ap-southeast-1
           CORS_ORIGINS=${{ vars.CORS_ORIGINS }}
           API_PORT=${{ vars.API_PORT }}
+          FRONTEND_URL=${{ vars.FRONTEND_URL }}
+          SMTP_HOST=${{ vars.SMTP_HOST }}
+          SMTP_PORT=${{ vars.SMTP_PORT }}
+          SMTP_USER=${{ vars.SMTP_USER }}
+          SMTP_PASSWORD=${{ secrets.SMTP_PASSWORD }}
+          SMTP_FROM_EMAIL=${{ vars.SMTP_FROM_EMAIL }}
+          SMTP_FROM_NAME=${{ vars.SMTP_FROM_NAME }}
+          SMTP_TLS=${{ vars.SMTP_TLS }}
+          SMTP_STARTTLS=${{ vars.SMTP_STARTTLS }}
+          STORAGE_ENDPOINT=${{ vars.STORAGE_ENDPOINT }}
+          STORAGE_BUCKET=${{ vars.STORAGE_BUCKET }}
+          STORAGE_ACCESS_KEY=${{ secrets.STORAGE_ACCESS_KEY }}
+          STORAGE_SECRET_KEY=${{ secrets.STORAGE_SECRET_KEY }}
+          STORAGE_REGION=${{ vars.STORAGE_REGION }}
+          ZALO_MODE=${{ vars.ZALO_MODE }}
+          ZALO_APP_ID=${{ vars.ZALO_APP_ID }}
+          ZALO_APP_SECRET=${{ secrets.ZALO_APP_SECRET }}
+          ZALO_OAUTH_REDIRECT_URI=${{ vars.ZALO_OAUTH_REDIRECT_URI }}
+          ZALO_WEBHOOK_SECRET=${{ secrets.ZALO_WEBHOOK_SECRET }}
+          MOMO_PARTNER_CODE=${{ vars.MOMO_PARTNER_CODE }}
+          MOMO_ACCESS_KEY=${{ secrets.MOMO_ACCESS_KEY }}
+          MOMO_SECRET_KEY=${{ secrets.MOMO_SECRET_KEY }}
+          MOMO_PARTNER_NAME=${{ vars.MOMO_PARTNER_NAME }}
+          MOMO_STORE_ID=${{ vars.MOMO_STORE_ID }}
+          MOMO_ENDPOINT=${{ vars.MOMO_ENDPOINT }}
+          MOMO_IPN_URL=${{ vars.MOMO_IPN_URL }}
+          MOMO_REDIRECT_URL=${{ vars.MOMO_REDIRECT_URL }}
           "@ | Out-File -FilePath .env -Encoding utf8
 
       - name: Pull & deploy

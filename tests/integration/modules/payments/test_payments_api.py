@@ -203,6 +203,37 @@ async def test_checkout_rejects_non_http_return_url(
     assert resp.status_code == 422
 
 
+async def test_checkout_accepts_registered_deep_link_return_url(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    await PlansSeeder(db_session).run()
+    headers = await _auth_headers(client)
+    plan = await _pro_plan(client, headers)
+
+    resp = await client.post(
+        "/api/v1/subscriptions/checkout",
+        json={
+            "plan_id": plan["id"],
+            "provider": "momo",
+            "return_url": "solodesk://payment-result",
+        },
+        headers=headers,
+    )
+    assert resp.status_code == 201, resp.text
+
+    payment_id = resp.json()["data"]["id"]
+    row = await db_session.get(SubscriptionPaymentModel, payment_id)
+    assert row.raw_create_response["redirectUrl"] == "solodesk://payment-result"
+
+
+async def test_momo_result_landing_page_is_get_reachable(client: AsyncClient) -> None:
+    resp = await client.get(
+        "/api/v1/payments/webhooks/momo/result",
+        params={"resultCode": "1006"},
+    )
+    assert resp.status_code == 200
+
+
 async def test_cancel_subscription_after_upgrade(
     client: AsyncClient, db_session: AsyncSession
 ) -> None:

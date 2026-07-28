@@ -153,8 +153,13 @@ async def test_initiate_checkout_falls_back_when_no_return_url_given() -> None:
 
     result = await service.initiate_checkout(user_id, plan_id, PaymentProvider.MOMO)
 
-    # MockMomoClient has no configured default redirect_url — falls back to notify_url.
+    # MockMomoClient now has its own safe default redirect_url — it must
+    # never fall back to equal the IPN notify_url (that was the original bug).
     assert result.raw_create_response["redirectUrl"]
+    assert (
+        result.raw_create_response["redirectUrl"]
+        != "https://api.solodesk.space/api/v1/payments/webhooks/momo"
+    )
 
 
 # ---------------------------------------------------------------------------
