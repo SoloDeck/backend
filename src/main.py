@@ -19,6 +19,7 @@ from src.config.settings import settings
 from src.infrastructure.database.session import engine
 from src.infrastructure.redis.client import close_redis_pool, get_redis
 from src.infrastructure.storage.object_storage import object_storage
+from src.integrations.zalo.client import unusable_redirect_reason
 from src.modules.admin.api.router import router as admin_router
 from src.modules.ai_jobs.api.router import router as ai_jobs_router
 from src.modules.analytics.api.router import router as analytics_router
@@ -72,13 +73,62 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     #
     # Ở môi trường deploy, thiếu cấu hình này là LỖI CẤU HÌNH, không phải chuyện bình
     # thường — log mức `error` để nó nổi lên trong log container ngay dòng đầu.  #Huynh
-    if not object_storage.enabled and settings.app_env not in ("development", "test"):
+    deployed = settings.app_env not in ("development", "test")
+
+    if not object_storage.enabled and deployed:
         log.error(
             "storage.disabled_in_deployed_env",
             app_env=settings.app_env,
             hint=(
                 "Thiếu STORAGE_ENDPOINT/STORAGE_ACCESS_KEY. Mọi lần đính kèm file vào "
                 "deal sẽ trả 409, và AI chấm điểm deal sẽ không đọc được file khách gửi."
+            ),
+        )
+
+    # Zalo bật `real` mà thiếu config thì hỏng theo kiểu KHÓ LẦN NHẤT.
+    #
+    # `env_ignore_empty` (thêm ở PR #89) khiến biến rỗng rơi về mặc định, nên
+    # `ZALO_OAUTH_REDIRECT_URI=` không đặt sẽ lặng lẽ thành `""`. Lúc đó
+    # `get_zalo_client` vẫn dựng `RealZaloOAClient` bình thường, URL cấp quyền sinh ra
+    # thiếu hẳn `redirect_uri`, và Zalo trả `-14003 Invalid redirect uri`. Triệu chứng
+    # nằm ở PHÍA ZALO nên rất dễ đi lần nhầm sang phần khai báo domain — hôm 24/07 đã
+    # mất cả buổi vì đúng kiểu này. Nêu thẳng biến nào thiếu ngay lúc khởi động.  #Huynh
+    if deployed and settings.zalo_mode == "real":
+        missing = [
+            name
+            for name, value in (
+                ("ZALO_APP_ID", settings.zalo_app_id),
+                ("ZALO_APP_SECRET", settings.zalo_app_secret),
+            )
+            if not value
+        ]
+        # Redirect URI kiểm bằng chính hàm mà `build_connect_url` dùng — một nguồn sự thật,
+        # để log lúc khởi động và câu báo cho người dùng không bao giờ nói khác nhau.
+        redirect_problem = unusable_redirect_reason(settings.zalo_oauth_redirect_uri)
+
+        if missing or redirect_problem:
+            log.error(
+                "zalo.real_mode_misconfigured",
+                app_env=settings.app_env,
+                missing=missing,
+                redirect_uri_problem=redirect_problem,
+                hint=(
+                    "ZALO_MODE=real nhưng cấu hình chưa dùng được. Kết nối Zalo OA sẽ hỏng "
+                    "với lỗi -14003 Invalid redirect uri từ phía Zalo."
+                ),
+            )
+
+    # `frontend_url` không chỉ dùng cho Zalo: nó dựng link trong THƯ GỬI KHÁCH (email báo
+    # deal mới từ intake form, thư nhắc gói dịch vụ). Để nguyên mặc định `localhost` khi
+    # deploy là gửi cho khách một đường dẫn chết mà không ai trong team thấy.  #Huynh
+    if deployed and "localhost" in settings.frontend_url:
+        log.error(
+            "frontend_url_still_localhost",
+            app_env=settings.app_env,
+            frontend_url=settings.frontend_url,
+            hint=(
+                "Thiếu FRONTEND_URL. Link trong email gửi khách sẽ trỏ về localhost, "
+                "và callback Zalo cũng đá người dùng về đó."
             ),
         )
 
