@@ -21,6 +21,7 @@ from src.integrations.zalo.client import (
     code_challenge_for,
     generate_code_verifier,
     get_zalo_client,
+    unusable_redirect_reason,
 )
 from src.modules.zalo.infrastructure.repository import ZaloRepository
 from src.modules.zalo.schemas.response import ZaloStatusResponse
@@ -77,14 +78,21 @@ class ZaloService:
         # CHỈ chặn ở đây, KHÔNG chặn trong `__post_init__` hay `get_zalo_client`: hai chỗ
         # đó chạy cho cả `/status` và `/connection`, chặn ở đó là làm hỏng luôn màn Cài
         # đặt của mọi người chỉ vì phần OAuth chưa khai xong.  #Huynh
-        if settings.zalo_mode == "real" and not (
-            settings.zalo_app_id and settings.zalo_oauth_redirect_uri
-        ):
-            raise BusinessRuleError(
-                "Kết nối Zalo OA chưa được cấu hình trên máy chủ "
-                "(thiếu ZALO_APP_ID hoặc ZALO_OAUTH_REDIRECT_URI). "
-                "Báo quản trị viên giúp nhé."
-            )
+        if settings.zalo_mode == "real":
+            if not settings.zalo_app_id:
+                raise BusinessRuleError(
+                    "Kết nối Zalo OA chưa được cấu hình trên máy chủ (thiếu ZALO_APP_ID). "
+                    "Báo quản trị viên giúp nhé."
+                )
+            # Không chỉ kiểm RỖNG mà kiểm DÙNG ĐƯỢC KHÔNG. Một URL ngrok còn sót trong
+            # `.env` là "có giá trị" nhưng Zalo vẫn từ chối — lần trước rơi đúng vào đó và
+            # chỉ nhận được trang `error_code=-14003` không nói gì thêm.  #Huynh
+            reason = unusable_redirect_reason(settings.zalo_oauth_redirect_uri)
+            if reason:
+                raise BusinessRuleError(
+                    f"Kết nối Zalo OA chưa dùng được: ZALO_OAUTH_REDIRECT_URI {reason}. "
+                    "Báo quản trị viên giúp nhé."
+                )
 
         verifier = generate_code_verifier()
         challenge = code_challenge_for(verifier)

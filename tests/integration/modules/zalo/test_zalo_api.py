@@ -107,6 +107,28 @@ class TestRealThieuCauHinh:
         assert resp.status_code == 409
         assert "ZALO_OAUTH_REDIRECT_URI" in resp.json()["error"]["message"]
 
+    async def test_redirect_uri_ngrok_thi_chan_truoc_khi_sang_zalo(
+        self, client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Cấu hình CÓ giá trị nhưng KHÔNG dùng được — ca đã thật sự xảy ra khi thử local.
+
+        Trước đây chỗ này trả 200 kèm URL hợp lệ về mặt hình thức, đẩy người dùng sang Zalo
+        rồi để họ nhận `error_code=-14003` mà không biết vì sao.
+        """
+        headers = await _auth(client)
+        monkeypatch.setattr(settings, "zalo_mode", "real")
+        monkeypatch.setattr(settings, "zalo_app_id", "123")
+        monkeypatch.setattr(
+            settings,
+            "zalo_oauth_redirect_uri",
+            "https://unaccusable-whitley-intertribal.ngrok-free.dev/api/v1/zalo/callback",
+        )
+
+        resp = await client.get("/api/v1/zalo/connect-url", headers=headers)
+
+        assert resp.status_code == 409
+        assert "hầm tạm" in resp.json()["error"]["message"]
+
     async def test_thieu_app_id_thi_bao_loi_ngay(
         self, client: AsyncClient, monkeypatch: pytest.MonkeyPatch
     ) -> None:

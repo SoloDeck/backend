@@ -19,6 +19,7 @@ from src.config.settings import settings
 from src.infrastructure.database.session import engine
 from src.infrastructure.redis.client import close_redis_pool, get_redis
 from src.infrastructure.storage.object_storage import object_storage
+from src.integrations.zalo.client import unusable_redirect_reason
 from src.modules.admin.api.router import router as admin_router
 from src.modules.ai_jobs.api.router import router as ai_jobs_router
 from src.modules.analytics.api.router import router as analytics_router
@@ -98,17 +99,21 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             for name, value in (
                 ("ZALO_APP_ID", settings.zalo_app_id),
                 ("ZALO_APP_SECRET", settings.zalo_app_secret),
-                ("ZALO_OAUTH_REDIRECT_URI", settings.zalo_oauth_redirect_uri),
             )
             if not value
         ]
-        if missing:
+        # Redirect URI kiểm bằng chính hàm mà `build_connect_url` dùng — một nguồn sự thật,
+        # để log lúc khởi động và câu báo cho người dùng không bao giờ nói khác nhau.
+        redirect_problem = unusable_redirect_reason(settings.zalo_oauth_redirect_uri)
+
+        if missing or redirect_problem:
             log.error(
                 "zalo.real_mode_misconfigured",
                 app_env=settings.app_env,
                 missing=missing,
+                redirect_uri_problem=redirect_problem,
                 hint=(
-                    "ZALO_MODE=real nhưng thiếu cấu hình trên. Kết nối Zalo OA sẽ hỏng "
+                    "ZALO_MODE=real nhưng cấu hình chưa dùng được. Kết nối Zalo OA sẽ hỏng "
                     "với lỗi -14003 Invalid redirect uri từ phía Zalo."
                 ),
             )

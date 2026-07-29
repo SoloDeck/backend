@@ -11,6 +11,7 @@ from src.integrations.zalo.client import (
     code_challenge_for,
     generate_code_verifier,
     get_zalo_client,
+    unusable_redirect_reason,
     verify_zalo_signature,
 )
 
@@ -25,5 +26,6 @@ __all__ = [
     "code_challenge_for",
     "generate_code_verifier",
     "get_zalo_client",
+    "unusable_redirect_reason",
     "verify_zalo_signature",
 ]

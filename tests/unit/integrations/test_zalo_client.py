@@ -14,6 +14,7 @@ from src.integrations.zalo.client import (
     code_challenge_for,
     generate_code_verifier,
     get_zalo_client,
+    unusable_redirect_reason,
     verify_zalo_signature,
 )
 
@@ -81,3 +82,41 @@ class TestMockClient:
         assert token.access_token and token.refresh_token
         await c.send_cs_message(access_token="t", user_id="u1", text="chào")
         assert c.sent == [{"user_id": "u1", "text": "chào"}]
+
+
+class TestRedirectUriDungDuocKhong:
+    """Bắt trước những redirect URI mà Zalo CHẮC CHẮN từ chối.
+
+    Zalo chỉ trả `error_code=-14003` trên một trang trắng, không nói domain nào sai. Ba ca
+    dưới đây biết sai mà không cần hỏi Zalo, nên chặn tại máy chủ kèm lý do đọc được.
+    """
+
+    def test_domain_that_https_thi_dung_duoc(self) -> None:
+        assert (
+            unusable_redirect_reason("https://api-staging.solodesk.space/api/v1/zalo/callback")
+            is None
+        )
+
+    def test_rong_thi_bao_chua_dat(self) -> None:
+        assert unusable_redirect_reason("") == "chưa được đặt"
+        assert unusable_redirect_reason("   ") == "chưa được đặt"
+
+    def test_http_thuong_thi_bi_chan(self) -> None:
+        reason = unusable_redirect_reason("http://api.solodesk.space/api/v1/zalo/callback")
+        assert reason is not None and "https" in reason
+
+    def test_localhost_thi_bi_chan(self) -> None:
+        reason = unusable_redirect_reason("https://localhost:8000/api/v1/zalo/callback")
+        assert reason is not None and "cục bộ" in reason
+
+    def test_ngrok_thi_bi_chan(self) -> None:
+        """Đúng URL đã chặn cả buổi thử hôm 24/07."""
+        reason = unusable_redirect_reason(
+            "https://unaccusable-whitley-intertribal.ngrok-free.dev/api/v1/zalo/callback"
+        )
+        assert reason is not None and "hầm tạm" in reason
+
+    def test_domain_that_co_chuoi_ngrok_o_giua_thi_van_dung_duoc(self) -> None:
+        """Chặn theo ĐUÔI domain, không phải chuỗi con — `ngrok.solodesk.space` là domain
+        thật của mình, chặn nhầm là chặn oan."""
+        assert unusable_redirect_reason("https://ngrok.solodesk.space/api/v1/zalo/callback") is None

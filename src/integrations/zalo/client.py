@@ -19,7 +19,7 @@ import hashlib
 import secrets
 from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlparse
 
 import httpx
 import structlog
@@ -38,6 +38,53 @@ _OA_GET_PROFILE_URL = "https://openapi.zalo.me/v2.0/oa/getoa"
 _PERMANENT_ZALO_ERRORS = frozenset({-201, -204, -211, -213, -216, -32, -240, -108, -109})
 
 _TIMEOUT = httpx.Timeout(10.0)
+
+# Domain hầm tạm (ngrok, cloudflare tunnel…). Zalo TỪ CHỐI chúng vì không xác thực được
+# chủ sở hữu — đây chính là bức tường `-14003` đã chặn cả buổi thử hôm 24/07: URL backend
+# sinh ra đúng 100%, app khai đúng, nhưng Zalo vẫn không nhận vì domain là hầm tạm.  #Huynh
+_TUNNEL_DOMAIN_SUFFIXES = (
+    ".ngrok-free.dev",
+    ".ngrok-free.app",
+    ".ngrok.io",
+    ".ngrok.app",
+    ".trycloudflare.com",
+    ".loca.lt",
+    ".serveo.net",
+)
+
+_LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1", "0.0.0.0", "::1", "[::1]"})
+
+
+def unusable_redirect_reason(redirect_uri: str) -> str | None:
+    """Vì sao ``redirect_uri`` này KHÔNG THỂ dùng ở chế độ ``real``? ``None`` = dùng được.
+
+    Zalo đòi redirect URI là **domain công khai HTTPS** đã khai trong "Miền ứng dụng" và
+    đã xác thực. Ba trường hợp dưới đây hỏng CHẮC CHẮN, biết trước mà không cần hỏi Zalo —
+    nên chặn tại máy chủ, kèm câu giải thích đọc được.
+
+    Vì sao đáng làm: khi cấu hình sai, Zalo chỉ trả một trang trắng ghi
+    ``error_code=-14003``. Không nói domain nào sai, không nói sai ở đâu. Người gặp nó
+    gần như luôn đi lần nhầm sang phần khai báo app, trong khi lỗi nằm ngay trong `.env`.
+
+    KHÔNG cố đoán "domain này đã khai trong Miền ứng dụng chưa" — chỉ Zalo biết. Ở đây chỉ
+    bắt những ca CHẮC CHẮN sai, không suy diễn thêm.  #Huynh
+    """
+    uri = (redirect_uri or "").strip()
+    if not uri:
+        return "chưa được đặt"
+
+    parsed = urlparse(uri)
+    if parsed.scheme != "https":
+        return f"phải dùng https:// (đang là '{parsed.scheme or 'không có scheme'}')"
+
+    host = (parsed.hostname or "").lower()
+    if host in _LOCAL_HOSTS:
+        return f"trỏ vào máy cục bộ ('{host}') — Zalo phải gọi được từ ngoài Internet"
+
+    if any(host.endswith(suffix) for suffix in _TUNNEL_DOMAIN_SUFFIXES):
+        return f"là domain hầm tạm ('{host}') — Zalo không chấp nhận, phải dùng domain thật"
+
+    return None
 
 
 class ZaloError(Exception):
