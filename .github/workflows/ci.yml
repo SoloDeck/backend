@@ -171,11 +171,6 @@ jobs:
           GOOGLE_IOS_CLIENT_ID=${{ vars.GOOGLE_IOS_CLIENT_ID }}
           STRIPE_SECRET_KEY=${{ secrets.STRIPE_SECRET_KEY }}
           STRIPE_WEBHOOK_SECRET=${{ secrets.STRIPE_WEBHOOK_SECRET }}
-          STORAGE_ENDPOINT=http://minio:9000
-          STORAGE_BUCKET=${{ vars.STORAGE_BUCKET }}
-          STORAGE_ACCESS_KEY=${{ secrets.STORAGE_ACCESS_KEY }}
-          STORAGE_SECRET_KEY=${{ secrets.STORAGE_SECRET_KEY }}
-          STORAGE_REGION=ap-southeast-1
           CORS_ORIGINS=${{ vars.CORS_ORIGINS }}
           API_PORT=${{ vars.API_PORT }}
           FRONTEND_URL=${{ vars.FRONTEND_URL }}
@@ -187,6 +182,8 @@ jobs:
           SMTP_FROM_NAME=${{ vars.SMTP_FROM_NAME }}
           SMTP_TLS=${{ vars.SMTP_TLS }}
           SMTP_STARTTLS=${{ vars.SMTP_STARTTLS }}
+          # STORAGE_ENDPOINT phải luôn là http://minio:9000 — tên service trong
+          # compose.deploy.yml. Bỏ var này là app mất kho file mà deploy vẫn báo xanh.
           STORAGE_ENDPOINT=${{ vars.STORAGE_ENDPOINT }}
           STORAGE_BUCKET=${{ vars.STORAGE_BUCKET }}
           STORAGE_ACCESS_KEY=${{ secrets.STORAGE_ACCESS_KEY }}
@@ -317,11 +314,6 @@ jobs:
           GOOGLE_IOS_CLIENT_ID=${{ vars.GOOGLE_IOS_CLIENT_ID }}
           STRIPE_SECRET_KEY=${{ secrets.STRIPE_SECRET_KEY }}
           STRIPE_WEBHOOK_SECRET=${{ secrets.STRIPE_WEBHOOK_SECRET }}
-          STORAGE_ENDPOINT=http://minio:9000
-          STORAGE_BUCKET=${{ vars.STORAGE_BUCKET }}
-          STORAGE_ACCESS_KEY=${{ secrets.STORAGE_ACCESS_KEY }}
-          STORAGE_SECRET_KEY=${{ secrets.STORAGE_SECRET_KEY }}
-          STORAGE_REGION=ap-southeast-1
           CORS_ORIGINS=${{ vars.CORS_ORIGINS }}
           API_PORT=${{ vars.API_PORT }}
           FRONTEND_URL=${{ vars.FRONTEND_URL }}
@@ -333,6 +325,8 @@ jobs:
           SMTP_FROM_NAME=${{ vars.SMTP_FROM_NAME }}
           SMTP_TLS=${{ vars.SMTP_TLS }}
           SMTP_STARTTLS=${{ vars.SMTP_STARTTLS }}
+          # STORAGE_ENDPOINT phải luôn là http://minio:9000 — tên service trong
+          # compose.deploy.yml. Bỏ var này là app mất kho file mà deploy vẫn báo xanh.
           STORAGE_ENDPOINT=${{ vars.STORAGE_ENDPOINT }}
           STORAGE_BUCKET=${{ vars.STORAGE_BUCKET }}
           STORAGE_ACCESS_KEY=${{ secrets.STORAGE_ACCESS_KEY }}

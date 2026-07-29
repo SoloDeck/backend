@@ -24,7 +24,7 @@ from src.integrations.zalo.client import (
 )
 from src.modules.zalo.infrastructure.repository import ZaloRepository
 from src.modules.zalo.schemas.response import ZaloStatusResponse
-from src.shared.exceptions.domain import NotFoundError, ValidationError
+from src.shared.exceptions.domain import BusinessRuleError, NotFoundError, ValidationError
 
 log = structlog.get_logger(__name__)
 
@@ -67,6 +67,25 @@ class ZaloService:
 
     async def build_connect_url(self, user_id: uuid.UUID) -> str:
         """URL để freelancer cấp quyền OA. Sinh verifier PKCE, ký vào state."""
+        # Chặn TRƯỚC khi đẩy người dùng sang Zalo.
+        #
+        # Thiếu config ở chế độ `real` thì `RealZaloOAClient` vẫn dựng URL bình thường,
+        # chỉ là thiếu `redirect_uri`/`app_id` — người dùng bấm "Kết nối", nhảy sang Zalo,
+        # rồi ăn một trang lỗi `-14003` bằng tiếng Anh không nói gì về nguyên nhân. Báo
+        # ngay tại đây thì họ biết là cấu hình phía mình, không phải Zalo dở.
+        #
+        # CHỈ chặn ở đây, KHÔNG chặn trong `__post_init__` hay `get_zalo_client`: hai chỗ
+        # đó chạy cho cả `/status` và `/connection`, chặn ở đó là làm hỏng luôn màn Cài
+        # đặt của mọi người chỉ vì phần OAuth chưa khai xong.  #Huynh
+        if settings.zalo_mode == "real" and not (
+            settings.zalo_app_id and settings.zalo_oauth_redirect_uri
+        ):
+            raise BusinessRuleError(
+                "Kết nối Zalo OA chưa được cấu hình trên máy chủ "
+                "(thiếu ZALO_APP_ID hoặc ZALO_OAUTH_REDIRECT_URI). "
+                "Báo quản trị viên giúp nhé."
+            )
+
         verifier = generate_code_verifier()
         challenge = code_challenge_for(verifier)
         state = _sign_state(user_id, verifier)

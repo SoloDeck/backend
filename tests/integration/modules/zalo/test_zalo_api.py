@@ -86,6 +86,64 @@ class TestKetNoi:
         assert resp.json()["data"]["connected"] is False
 
 
+class TestRealThieuCauHinh:
+    """Mode `real` mà thiếu config thì phải nói ngay, đừng đẩy người dùng sang Zalo ăn -14003.
+
+    `env_ignore_empty` khiến biến rỗng rơi về mặc định `""`, nên thiếu cấu hình KHÔNG hề
+    làm app nổ lúc khởi động — nó im lặng dựng URL cấp quyền cụt rồi để Zalo từ chối. Đó
+    đúng là kiểu hỏng đã tốn cả buổi 24/07 để lần ra.  #Huynh
+    """
+
+    async def test_thieu_redirect_uri_thi_bao_loi_ngay(
+        self, client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        headers = await _auth(client)
+        monkeypatch.setattr(settings, "zalo_mode", "real")
+        monkeypatch.setattr(settings, "zalo_app_id", "123")
+        monkeypatch.setattr(settings, "zalo_oauth_redirect_uri", "")
+
+        resp = await client.get("/api/v1/zalo/connect-url", headers=headers)
+
+        assert resp.status_code == 409
+        assert "ZALO_OAUTH_REDIRECT_URI" in resp.json()["error"]["message"]
+
+    async def test_thieu_app_id_thi_bao_loi_ngay(
+        self, client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        headers = await _auth(client)
+        monkeypatch.setattr(settings, "zalo_mode", "real")
+        monkeypatch.setattr(settings, "zalo_app_id", "")
+        monkeypatch.setattr(settings, "zalo_oauth_redirect_uri", "https://api/cb")
+
+        resp = await client.get("/api/v1/zalo/connect-url", headers=headers)
+
+        assert resp.status_code == 409
+
+    async def test_du_cau_hinh_thi_tro_sang_zalo_that(
+        self, client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Đủ config thì URL phải trỏ sang Zalo, KHÔNG phải callback giả của mock."""
+        headers = await _auth(client)
+        monkeypatch.setattr(settings, "zalo_mode", "real")
+        monkeypatch.setattr(settings, "zalo_app_id", "123")
+        monkeypatch.setattr(settings, "zalo_app_secret", "shh")
+        monkeypatch.setattr(
+            settings,
+            "zalo_oauth_redirect_uri",
+            "https://api-staging.solodesk.space/api/v1/zalo/callback",
+        )
+
+        resp = await client.get("/api/v1/zalo/connect-url", headers=headers)
+
+        assert resp.status_code == 200
+        url = resp.json()["data"]["url"]
+        assert url.startswith("https://oauth.zaloapp.com/v4/oa/permission?")
+        query = parse_qs(urlparse(url).query)
+        # redirect_uri phải có mặt — thiếu nó chính là nguyên nhân sinh ra -14003.
+        assert query["redirect_uri"] == ["https://api-staging.solodesk.space/api/v1/zalo/callback"]
+        assert query["app_id"] == ["123"]
+
+
 class TestWebhook:
     async def test_webhook_gan_zalo_user_id_cho_khach(
         self, client: AsyncClient, db_session
