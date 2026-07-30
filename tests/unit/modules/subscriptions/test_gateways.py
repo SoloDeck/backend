@@ -93,6 +93,34 @@ def test_parse_callback_failure() -> None:
     assert result.message == "Payment failed"
 
 
+def test_parse_callback_accepts_result_code_as_string() -> None:
+    """`resultCode` về dạng chuỗi `"0"` vẫn phải hiểu là THÀNH CÔNG.
+
+    Bản trước so thẳng `== 0` nên `"0"` ra False — thanh toán thành công bị ghi nhận là
+    thất bại. Chữ ký vẫn khớp (chuỗi ký nội suy resultCode thành text ở cả hai phía), nên
+    không lớp kiểm nào bắt được.  #Huynh
+    """
+    client = MockMomoClient()
+    payload = client.sign_ipn(order_id="order-1", amount=100000, trans_id=999)
+    payload["resultCode"] = str(payload["resultCode"])
+
+    result = client.parse_callback(payload)
+
+    assert result.success is True
+
+
+def test_parse_callback_treats_unparsable_result_code_as_failure() -> None:
+    """Không đọc nổi thì coi là thất bại — thà không kích hoạt còn hơn kích hoạt nhầm."""
+    client = MockMomoClient()
+    payload = client.sign_ipn(order_id="order-1", amount=100000)
+    payload["resultCode"] = "khong-phai-so"
+
+    assert client.parse_callback(payload).success is False
+
+    del payload["resultCode"]
+    assert client.parse_callback(payload).success is False
+
+
 def test_build_ack_response_shape() -> None:
     client = MockMomoClient()
     payload = client.sign_ipn(order_id="order-1", amount=100000)

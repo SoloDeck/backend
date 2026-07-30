@@ -76,15 +76,21 @@ async def test_webhook_rejects_tampered_signature(
     assert resp.status_code == 400
 
 
-async def test_webhook_on_expired_checkout_does_not_upgrade_subscription(
+async def test_webhook_success_after_expiry_still_upgrades_subscription(
     client: AsyncClient, db_session: AsyncSession
 ) -> None:
+    """Trả tiền thành công mà IPN tới muộn thì vẫn phải lên gói.
+
+    Trước đây luồng này trả `expired` và giữ nguyên gói free — tức người dùng đã trả tiền
+    mà không nhận được gì, trong khi hệ thống vẫn ack "Confirm Success" cho MoMo. Không có
+    đường hoàn tiền tự động, nên phải tôn trọng khoản đã thu.  #Huynh
+    """
     await PlansSeeder(db_session).run()
     headers = await _auth_headers(client)
     plan = await _pro_plan(client, headers)
     payment = await _create_checkout(client, headers, plan["id"])
 
-    # Backdate the checkout past its TTL, as if it had been sitting unpaid.
+    # Backdate the checkout past its TTL, as if the IPN had been delayed.
     await db_session.execute(
         update(SubscriptionPaymentModel)
         .where(SubscriptionPaymentModel.id == payment["id"])
@@ -94,6 +100,38 @@ async def test_webhook_on_expired_checkout_does_not_upgrade_subscription(
 
     ipn_payload = MockMomoClient().sign_ipn(
         order_id=payment["id"], amount=int(float(plan["price_monthly"]))
+    )
+    webhook_resp = await client.post("/api/v1/payments/webhooks/momo", json=ipn_payload)
+    assert webhook_resp.status_code == 202
+
+    status_resp = await client.get(f"/api/v1/payments/intents/{payment['id']}", headers=headers)
+    assert status_resp.json()["data"]["status"] == "succeeded"
+
+    me_resp = await client.get("/api/v1/subscriptions/me", headers=headers)
+    assert me_resp.json()["data"]["plan_slug"] == plan["slug"]
+
+
+async def test_webhook_failure_after_expiry_leaves_subscription_on_free(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Callback THẤT BẠI đến muộn thì đóng intent lại — không có khoản thu nào để tôn trọng."""
+    await PlansSeeder(db_session).run()
+    headers = await _auth_headers(client)
+    plan = await _pro_plan(client, headers)
+    payment = await _create_checkout(client, headers, plan["id"])
+
+    await db_session.execute(
+        update(SubscriptionPaymentModel)
+        .where(SubscriptionPaymentModel.id == payment["id"])
+        .values(expires_at=datetime.now(UTC) - timedelta(minutes=1))
+    )
+    await db_session.flush()
+
+    ipn_payload = MockMomoClient().sign_ipn(
+        order_id=payment["id"],
+        amount=int(float(plan["price_monthly"])),
+        result_code=1,
+        message="Payment failed",
     )
     webhook_resp = await client.post("/api/v1/payments/webhooks/momo", json=ipn_payload)
     assert webhook_resp.status_code == 202
