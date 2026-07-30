@@ -14,6 +14,7 @@ from src.ai.shared.token_usage import extract_usage
 from src.config.settings import settings
 
 
+
 @dataclass
 class LLMUsage:
     model_used: str
@@ -136,10 +137,10 @@ class OpenAIProvider(BaseLLMProvider):
     # implement later
 
 
-def get_llm_provider() -> BaseLLMProvider:
+def get_llm_provider(provider: str) -> BaseLLMProvider:
     """Return the configured provider."""
 
-    provider = settings.llm_provider.lower()
+    provider = provider.lower()
 
     if provider == "groq":
         return GroqProvider()
