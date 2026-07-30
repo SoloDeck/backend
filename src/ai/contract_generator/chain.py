@@ -71,10 +71,13 @@ class ContractGenerator(BaseAIChain):
 """
 
         try:
-            response = await self.provider.generate(
+            provider = await self.get_provider()
+
+            response = await provider.generate(
                 prompt=full_prompt,
                 temperature=0.1,
                 json_mode=True,
+            
             )
 
             self.last_usage = response.usage
