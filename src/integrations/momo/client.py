@@ -13,7 +13,7 @@ import hashlib
 import hmac
 import time
 import uuid
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
 import httpx
@@ -48,6 +48,20 @@ def _is_success_code(result_code: Any) -> bool:
         return int(str(result_code).strip()) == 0
     except (TypeError, ValueError):
         return False
+
+
+def _parse_amount(amount: Any) -> Decimal | None:
+    """Số tiền MoMo báo đã thu. ``None`` khi thiếu hoặc không đọc được.
+
+    Qua ``str()`` chứ không ``Decimal(float)``: dựng Decimal từ float kéo theo sai số nhị
+    phân (``Decimal(199000.0)`` không phải lúc nào cũng đúng y con số), mà đây là TIỀN.
+    """
+    if amount is None:
+        return None
+    try:
+        return Decimal(str(amount).strip())
+    except (TypeError, ValueError, InvalidOperation):
+        return None
 
 
 class _MomoSignedClient:
@@ -117,6 +131,7 @@ class _MomoSignedClient:
             provider_reference=str(trans_id) if trans_id is not None else None,
             success=_is_success_code(payload.get("resultCode")),
             message=str(payload.get("message", "")),
+            amount=_parse_amount(payload.get("amount")),
         )
 
     def build_ack_response(self, result: CallbackResult) -> dict[str, Any]:

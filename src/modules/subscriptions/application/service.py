@@ -203,11 +203,62 @@ class SubscriptionsService:
             )
             return gateway.build_ack_response(parsed)
 
+        # Số tiền provider BÁO ĐÃ THU phải khớp số ta yêu cầu.
+        #
+        # Chữ ký HMAC đã phủ `amount` nên không ai giả mạo được — đây KHÔNG phải lỗ hổng
+        # bảo mật, mà là chốt chặn cho trường hợp lệch thật: cấu hình sai, thu thiếu, hay
+        # một thay đổi phía MoMo. Lệch mà vẫn kích hoạt là biếu không cả gói dịch vụ.
+        #
+        # KHÁC với ca đến muộn ở trên (vẫn kích hoạt vì tiền khớp, chỉ chậm): ở đây ta
+        # KHÔNG biết người dùng đã mua cái gì, nên không đoán bừa. Đánh dấu thất bại kèm lý
+        # do, log mức `error` để có người xử tay (hoàn tiền hoặc kích hoạt thủ công) — thà
+        # lộ ra và bị phàn nàn còn hơn âm thầm thất thoát doanh thu.
+        #
+        # `amount is None` thì bỏ qua kiểm: provider không gửi thì không có gì để đối chiếu,
+        # và chặn ở đây là chặn oan mọi giao dịch.  #Huynh
+        if parsed.success and parsed.amount is not None and parsed.amount != payment.amount:
+            log.error(
+                "payments.amount_mismatch",
+                order_id=parsed.order_id,
+                expected=str(payment.amount),
+                received=str(parsed.amount),
+                hint="KHÔNG kích hoạt gói. Cần người kiểm tra và xử lý tay.",
+            )
+            parsed = parsed._replace(
+                success=False,
+                message=(
+                    f"Số tiền không khớp: yêu cầu {payment.amount} {payment.currency}, "
+                    f"nhận {parsed.amount}."
+                ),
+            )
+
         entity = _payment_to_entity(payment)
         now = datetime.now(UTC)
         if parsed.success:
             plan = await self.repo.get_plan(payment.plan_id)
             subscription = await self.repo.get_subscription(payment.user_id)
+
+            # Gói hoặc thuê bao biến mất giữa lúc người dùng đang trả tiền (admin xoá gói,
+            # dữ liệu lệch). Không chặn ở đây thì `plan.id` ném `AttributeError` — một 500
+            # trần không nói được gì. `initiate_checkout` vốn đã kiểm None; nhánh callback
+            # thì bỏ sót.
+            #
+            # Ở đây NÉM lỗi (→ 404, MoMo sẽ retry) chứ không đánh dấu thất bại như ca lệch
+            # tiền bên trên. Khác nhau ở chỗ CÓ SỬA ĐƯỢC KHÔNG: lệch tiền thì retry bao
+            # nhiêu lần cũng vẫn lệch, nên đóng lại luôn; còn gói bị xoá thì admin khôi
+            # phục xong, lần retry kế tiếp tự kích hoạt được — giữ đường cho nó tự lành.
+            # #Huynh
+            if plan is None or subscription is None:
+                log.error(
+                    "payments.activation_target_missing",
+                    order_id=parsed.order_id,
+                    plan_found=plan is not None,
+                    subscription_found=subscription is not None,
+                    hint="Đã thu tiền nhưng không kích hoạt được. Cần xử lý tay.",
+                )
+                raise NotFoundError(
+                    "Không tìm thấy gói hoặc thuê bao để kích hoạt cho khoản thanh toán này."
+                )
 
             subscription.plan_id = plan.id
             subscription.status = "active"
