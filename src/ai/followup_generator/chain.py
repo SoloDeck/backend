@@ -88,7 +88,9 @@ class FollowUpGenerator(BaseAIChain):
 """
 
         try:
-            response = await self.provider.generate(
+            provider = await self.get_provider()
+
+            response = await provider.generate(
                 prompt=full_prompt,
                 temperature=0.3,
                 json_mode=True,
