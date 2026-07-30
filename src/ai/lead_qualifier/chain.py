@@ -84,7 +84,9 @@ class LeadQualifier(BaseAIChain):
         )
 
         try:
-            response = await self.provider.generate(
+            provider = await self.get_provider()
+
+            response = await provider.generate(
                 prompt=full_prompt,
                 temperature=0,
                 seed=42,
