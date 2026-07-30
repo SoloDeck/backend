@@ -132,3 +132,71 @@ class TestPricingItemsOverride:
         doc = build_proposal_document(content, **META)
         # Override rỗng → dùng bảng cũ (pricing_detail/DTO), giữ nguyên hành vi.
         assert any(item.description == "Thiet ke UI" for item in doc.pricing_line_items)
+
+
+class TestPricingItemsWithAmounts:
+    """Dạng MỚI ``[{"label", "amount"}]`` — freelancer tự gõ tiền từng dòng.
+
+    Vì sao có dạng này: panel bên trái màn review hiện số tiền chia đều, nhưng đó chỉ là con
+    số FE tự tính để hiển thị, không được gửi đi. Chốt giá mà chưa sửa nhãn thì panel hiện
+    "125tr × 4" trong khi tờ báo giá vẫn giữ tỷ lệ bộ định giá (200/150/75/75) — hai bên nói
+    hai kiểu. Cho gõ tiền thẳng thì cái freelancer thấy chính là cái khách nhận.  #Huynh
+    """
+
+    def test_uses_typed_amounts_verbatim(self):
+        content = {
+            "pricing_detail": {"final_price": 500_000_000, "suggested": 500_000_000},
+            "pricing_items": [
+                {"label": "Phat trien backend", "amount": 200_000_000},
+                {"label": "Phat trien frontend", "amount": 150_000_000},
+                {"label": "Kiem thu", "amount": 150_000_000},
+            ],
+        }
+        doc = build_proposal_document(content, **META)
+
+        amounts = [
+            int(i.amount.replace(".", "").replace(" VND", "")) for i in doc.pricing_line_items
+        ]
+        # DÙNG THẲNG số freelancer gõ, KHÔNG chia đều lại.
+        assert amounts == [200_000_000, 150_000_000, 150_000_000]
+        assert doc.pricing_total == "500.000.000 VND"
+
+    def test_total_follows_items_not_agreed_price(self):
+        """Tổng in ra = tổng các dòng, kể cả khi lệch giá chào.
+
+        Tầng render vẽ TRUNG THỰC thứ đang có để freelancer nhìn thấy chỗ lệch mà sửa; chặn
+        gửi là việc của `ProposalsService.transition_status`.  #Huynh
+        """
+        content = {
+            "pricing_detail": {"final_price": 500_000_000, "suggested": 500_000_000},
+            "pricing_items": [{"label": "A", "amount": 100_000_000}],
+        }
+        doc = build_proposal_document(content, **META)
+        assert doc.pricing_total == "100.000.000 VND"
+
+    def test_missing_amount_becomes_zero_row_not_dropped(self):
+        """Thiếu tiền → dòng 0đ, KHÔNG biến mất.
+
+        Mất hẳn một hạng mục khỏi báo giá gửi khách nguy hiểm hơn nhiều so với một dòng 0đ
+        mà freelancer nhìn thấy ngay.  #Huynh
+        """
+        content = {
+            "pricing_detail": {"final_price": 100_000_000},
+            "pricing_items": [
+                {"label": "Co tien", "amount": 100_000_000},
+                {"label": "Thieu tien"},
+            ],
+        }
+        doc = build_proposal_document(content, **META)
+        assert [i.description for i in doc.pricing_line_items] == ["Co tien", "Thieu tien"]
+        assert doc.pricing_line_items[1].amount.startswith("0")
+
+    def test_mixed_shapes_fall_back_to_label_only(self):
+        """Nửa dict nửa chuỗi → về dạng cũ, không lắp ghép bảng từ hai nguồn."""
+        content = {
+            "pricing_detail": {"final_price": 200_000_000},
+            "pricing_items": [{"label": "A", "amount": 150_000_000}, "B"],
+        }
+        doc = build_proposal_document(content, **META)
+        nums = [int(i.amount.replace(".", "").replace(" VND", "")) for i in doc.pricing_line_items]
+        assert sum(nums) == 200_000_000  # chia đều theo giá chốt, không dùng 150tr đã gõ
