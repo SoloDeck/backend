@@ -10,6 +10,7 @@ from sqlalchemy.orm import selectinload
 
 from src.infrastructure.database.models import (
     AiCostRecordModel,
+    AIProviderConfigurationModel,
     AuditLogEntryModel,
     ClientModel,
     DealModel,
@@ -358,6 +359,25 @@ class AdminRepository:
             "estimated_cost_usd": Decimal(str(row.estimated_cost_usd)),
         }
 
+    # -------------------------------------------------------------------------
+    # AI Provider Configuration
+    # -------------------------------------------------------------------------
+
+    async def get_ai_provider_configuration(
+            self,
+    ) -> AIProviderConfigurationModel | None:
+        return await self.db.scalar(
+            select(AIProviderConfigurationModel)
+        )
+
+    async def update_ai_provider_configuration(
+            self,
+            configuration: AIProviderConfigurationModel,
+    ) -> AIProviderConfigurationModel:
+        await self.db.flush()
+        await self.db.refresh(configuration)
+        return configuration
+    
     # -------------------------------------------------------------------------
     # System Templates
     # -------------------------------------------------------------------------
