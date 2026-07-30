@@ -69,10 +69,6 @@ class Settings(BaseSettings):
     google_android_client_id: str = ""
     google_ios_client_id: str = ""
 
-    # -----------------------------------------------------------------------
-    # LLM Provider
-    # -----------------------------------------------------------------------
-    llm_provider: Literal["groq", "gemini", "openai"]
 
     # -----------------------------------------------------------------------
     # Groq
