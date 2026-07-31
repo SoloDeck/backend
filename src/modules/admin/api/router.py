@@ -323,23 +323,23 @@ async def list_ai_costs(
 
 @router.get(
     "/ai-provider",
-    response_model=ApiResponse[LLMProviderResponse],
+    response_model=ApiResponse[AdminLLMProviderResponse],
 )
 async def get_ai_provider(
     _: AdminUser,
     db: DBSession,
-) -> ApiResponse[LLMProviderResponse]:
+) -> ApiResponse[AdminLLMProviderResponse]:
     configuration = await AdminService(db=db).get_ai_provider_configuration()
 
     return ApiResponse.ok(
-        LLMProviderResponse(
-            provider=configuration.llm_provider,
+        AdminLLMProviderResponse(
+            llm_provider=configuration.llm_provider,
         )
     )
 
 @router.patch(
     "/ai-provider",
-    response_model=ApiResponse[LLMProviderResponse],
+    response_model=ApiResponse[AdminLLMProviderResponse],
 )
 async def update_ai_provider(
     payload: AdminUpdateLLMProviderRequest,
@@ -347,13 +347,13 @@ async def update_ai_provider(
     db: DBSession,
 ) -> ApiResponse[AdminLLMProviderResponse]:
     configuration = await AdminService(db=db).update_ai_provider_configuration(
-        llm_provider=payload.provider,
+        llm_provider=payload.llm_provider,
         admin_id=uuid.UUID(admin.sub),
     )
 
     return ApiResponse.ok(
-        LLMProviderResponse(
-            provider=configuration.llm_provider,
+        AdminLLMProviderResponse(
+            llm_provider=configuration.llm_provider,
         )
     )
 
