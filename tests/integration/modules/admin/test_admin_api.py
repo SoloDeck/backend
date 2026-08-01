@@ -663,6 +663,41 @@ class TestAdminRevokeUserSessions:
         resp = await client.delete(f"/api/v1/admin/users/{uuid.uuid4()}/sessions", headers=headers)
         assert resp.status_code == 403
 
+    async def test_revoke_blacklists_the_users_refresh_token(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        from jose import jwt
+
+        from src.config.settings import settings
+
+        admin_headers = await _admin_headers(client, db_session)
+
+        reg = await client.post(
+            "/api/v1/auth/register",
+            json={
+                "email": f"u_{uuid.uuid4().hex[:8]}@example.com",
+                "password": "Test@1234!",
+                "full_name": "Test User",
+            },
+        )
+        assert reg.status_code == 201, reg.text
+        refresh_token = reg.json()["data"]["refresh_token"]
+        claims = jwt.decode(
+            refresh_token, settings.jwt_secret_key, algorithms=[settings.jwt_algorithm]
+        )
+        user_id = claims["sub"]
+
+        revoke_resp = await client.delete(
+            f"/api/v1/admin/users/{user_id}/sessions", headers=admin_headers
+        )
+        assert revoke_resp.status_code == 204
+
+        post_resp = await client.post(
+            "/api/v1/auth/refresh", json={"refresh_token": refresh_token}
+        )
+        assert post_resp.status_code == 401
+        assert post_resp.json()["error"]["code"] == "UNAUTHORIZED"
+
 
 # ---------------------------------------------------------------------------
 # GET /admin/plans

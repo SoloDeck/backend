@@ -17,6 +17,7 @@ from src.config.settings import settings
 from src.infrastructure.database.models import (
     OAuthIdentityModel,
     PasswordResetTokenModel,
+    RefreshTokenModel,
     SubscriptionModel,
     TokenBlacklistModel,
     UserModel,
@@ -78,16 +79,28 @@ class AuthService:
             settings.jwt_secret_key,
             algorithm=settings.jwt_algorithm,
         )
+        refresh_jti = str(uuid.uuid4())
         refresh_token = jwt.encode(
             {
                 "sub": str(user_id),
                 "exp": refresh_expires,
                 "iat": now,
                 "type": "refresh",
-                "jti": str(uuid.uuid4()),
+                "jti": refresh_jti,
             },
             settings.jwt_secret_key,
             algorithm=settings.jwt_algorithm,
+        )
+
+        # Tracked so admin revoke_user_sessions can find and blacklist this
+        # session's refresh token by jti — access tokens are short-lived enough
+        # that only the refresh token needs a durable record.
+        await self.repo.add_refresh_token(
+            RefreshTokenModel(
+                user_id=user_id,
+                token_hash=refresh_jti,
+                expires_at=refresh_expires,
+            )
         )
 
         return AuthTokenResponse(

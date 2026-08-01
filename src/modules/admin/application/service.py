@@ -2,7 +2,7 @@
 
 import uuid
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -151,6 +151,7 @@ class AdminService:
         return user
 
     async def revoke_user_sessions(self, user_id: uuid.UUID) -> None:
+        now = datetime.now(UTC)
         tokens = await self.repo.get_user_refresh_tokens(user_id)
         for token in tokens:
             await self.repo.blacklist_refresh_token(
@@ -158,6 +159,7 @@ class AdminService:
                 user_id=user_id,
                 expires_at=token.expires_at,
             )
+            token.revoked_at = now
 
     # -------------------------------------------------------------------------
     # Plans
