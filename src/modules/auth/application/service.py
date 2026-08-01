@@ -165,6 +165,9 @@ class AuthService:
         if claims.get("type") != "refresh":
             raise AuthenticationError("Invalid token type")
 
+        if await self.repo.is_token_blacklisted(claims["jti"]):
+            raise AuthenticationError("Refresh token has been revoked")
+
         user_id = uuid.UUID(claims["sub"])
         user = await self.repo.get_user_by_id(user_id)
         if user is None or user.status != "active":
