@@ -2341,7 +2341,9 @@ paths:
       summary: Create an invoice
       description: |
         An invoice **must** have `contract_id` or `deal_id` (or both) — standalone
-        invoices are rejected. Requires at least one line item. `total` is calculated
+        invoices are rejected. Also requires either `subtotal` or at least one
+        `line_items` entry — when `subtotal` is omitted, it's computed by summing
+        `quantity * unit_price` across `line_items`. `total` is calculated
         server-side as `subtotal + tax_amount`; the invoice starts in `draft` status.
       requestBody:
         required: true
@@ -6425,9 +6427,11 @@ components:
         contract_id:
           type: string
           format: uuid
+          description: At least one of contract_id/deal_id is required; both may be set.
         deal_id:
           type: string
           format: uuid
+          description: At least one of contract_id/deal_id is required; both may be set.
         issue_date:
           type: string
           format: date
