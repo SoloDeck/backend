@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.infrastructure.database.session import get_db_session
 from src.modules.invoices.application.service import InvoicesService
+from src.modules.invoices.domain.value_objects.invoice_status import InvoiceStatus
 from src.modules.invoices.schemas.request import (
     InvoiceRequest,
     InvoiceUpdateRequest,
@@ -41,8 +42,9 @@ async def create_invoice(
 async def list_invoices(
     user_id: CurrentUserId,
     db: DBSession,
-    status: str | None = Query(
-        default=None, description="Filter by status: draft, sent, paid, overdue, cancelled"
+    status: InvoiceStatus | None = Query(
+        default=None,
+        description="Filter by status: draft, sent, partially_paid, paid, overdue, void",
     ),
     invoice_number: str | None = Query(
         default=None, description="Search by invoice number (partial match)"

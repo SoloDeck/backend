@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.infrastructure.database.session import get_db_session
 from src.modules.clients.application.service import ClientsService
+from src.modules.clients.domain.value_objects.client_status import ClientStatus
 from src.modules.clients.schemas.request import ClientRequest, CommLogRequest
 from src.modules.clients.schemas.response import (
     ClientResponse,
@@ -36,7 +37,7 @@ async def create_client(
 async def list_clients(
     user_id: CurrentUserId,
     db: DBSession,
-    status: str | None = Query(
+    status: ClientStatus | None = Query(
         default=None, description="Filter by status: prospect, active, inactive, archived"
     ),
     name: str | None = Query(

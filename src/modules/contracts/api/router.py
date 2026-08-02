@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.infrastructure.database.session import get_db_session
 from src.modules.contracts.application.service import ContractsService
+from src.modules.contracts.domain.value_objects.contract_status import ContractStatus
 from src.modules.contracts.schemas.request import (
     ContractRequest,
     ContractStatusRequest,
@@ -42,9 +43,9 @@ class ContractPreviewResponse(BaseModel):
 async def list_contracts(
     user_id: CurrentUserId,
     db: DBSession,
-    status: str | None = Query(
+    status: ContractStatus | None = Query(
         default=None,
-        description="Filter by status: draft, pending_signatures, active, completed, terminated, expired",
+        description="Filter by status: draft, pending_signatures, active, completed, terminated, expired, archived",
     ),
     deal_id: uuid.UUID | None = Query(default=None, description="Filter by deal"),
     page: int = Query(default=1, ge=1),

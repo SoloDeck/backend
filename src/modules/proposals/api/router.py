@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.infrastructure.database.session import get_db_session
 from src.modules.proposals.application.service import ProposalsService
+from src.modules.proposals.domain.value_objects.proposal_status import ProposalStatus
 from src.modules.proposals.schemas.request import (
     AiProposalRequest,
     ProposalPriceRequest,
@@ -153,8 +154,9 @@ async def create_proposal(
 async def list_proposals(
     user_id: CurrentUserId,
     db: DBSession,
-    status: str | None = Query(
-        default=None, description="Filter by status: draft, sent, accepted, rejected, expired"
+    status: ProposalStatus | None = Query(
+        default=None,
+        description="Filter by status: draft, sent, accepted, rejected, expired, superseded",
     ),
     deal_id: uuid.UUID | None = Query(default=None, description="Filter by deal"),
     page: int = Query(default=1, ge=1),

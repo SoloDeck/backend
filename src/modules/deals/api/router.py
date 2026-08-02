@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.infrastructure.database.session import get_db_session
 from src.modules.deals.application.attachment_service import DealAttachmentService
 from src.modules.deals.application.service import DealsService
+from src.modules.deals.domain.value_objects.deal_stage import DealStage
 from src.modules.deals.schemas.request import DealRequest, DealStageRequest
 from src.modules.deals.schemas.response import (
     DealAttachmentResponse,
@@ -50,7 +51,7 @@ async def list_deals(
     title: str | None = Query(
         default=None, description="Search by title (case-insensitive, partial match)"
     ),
-    stage: str | None = Query(
+    stage: DealStage | None = Query(
         default=None,
         description="Filter by stage: new_lead, qualified, proposal_sent, in_negotiation, active, completed_and_billed, lost",
     ),
