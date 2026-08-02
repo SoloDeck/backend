@@ -25,7 +25,7 @@ from src.modules.proposals.application.pdf_content import (
     extract_payment_milestones,
 )
 from src.modules.proposals.infrastructure.repository import ProposalsRepository
-from src.modules.proposals.schemas.request import ProposalRequest
+from src.modules.proposals.schemas.request import CreateProposalRequest, UpdateProposalRequest
 from src.modules.subscriptions.application.ai_usage import AiUsageService
 from src.modules.tasks.application.service import PAYMENT_TASK_PREFIX
 from src.modules.tasks.schemas.request import CreateTaskRequest
@@ -147,7 +147,7 @@ class ProposalsService:
     async def create(  # type: ignore[return]
         self,
         user_id: uuid.UUID,
-        payload: ProposalRequest,
+        payload: CreateProposalRequest,
         *,
         ai_generated: bool = False,
     ):
@@ -159,7 +159,7 @@ class ProposalsService:
             deal_id=payload.deal_id,
             owner_user_id=user_id,
             version_number=version_number,
-            status=payload.status,
+            status="draft",
             content=payload.content,
             ai_generated=ai_generated,
         )
@@ -179,14 +179,14 @@ class ProposalsService:
     async def get_one(self, user_id: uuid.UUID, proposal_id: uuid.UUID):  # type: ignore[return]
         return await self._get_proposal(user_id, proposal_id)
 
-    async def update(self, user_id: uuid.UUID, proposal_id: uuid.UUID, payload: ProposalRequest):  # type: ignore[return]
+    async def update(self, user_id: uuid.UUID, proposal_id: uuid.UUID, payload: UpdateProposalRequest):  # type: ignore[return]
         proposal = await self._get_proposal(user_id, proposal_id)
         if proposal.status != "draft":
             raise BusinessRuleError(
                 f"Proposal content can only be edited in draft status "
                 f"(current status: '{proposal.status}')"
             )
-        if payload.content:
+        if payload.content is not None:
             proposal.content = payload.content
         return await self.repo.save(proposal)
 

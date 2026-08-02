@@ -13,10 +13,11 @@ from src.infrastructure.database.session import get_db_session
 from src.modules.contracts.application.service import ContractsService
 from src.modules.contracts.domain.value_objects.contract_status import ContractStatus
 from src.modules.contracts.schemas.request import (
-    ContractRequest,
     ContractStatusRequest,
     ContractTerminateRequest,
+    CreateContractRequest,
     CreatePaymentMilestoneRequest,
+    UpdateContractRequest,
     UpdatePaymentMilestoneRequest,
 )
 from src.modules.contracts.schemas.response import (
@@ -67,7 +68,7 @@ async def list_contracts(
 
 @router.post("", response_model=ApiResponse[ContractResponse], status_code=201)
 async def create_contract(
-    payload: ContractRequest,
+    payload: CreateContractRequest,
     user_id: CurrentUserId,
     db: DBSession,
 ) -> ApiResponse[ContractResponse]:
@@ -139,7 +140,7 @@ async def download_contract_pdf(
 @router.patch("/{contract_id}", response_model=ApiResponse[ContractResponse])
 async def update_contract(
     contract_id: uuid.UUID,
-    payload: ContractRequest,
+    payload: UpdateContractRequest,
     user_id: CurrentUserId,
     db: DBSession,
 ) -> ApiResponse[ContractResponse]:
@@ -164,7 +165,7 @@ async def ai_generate_contract_content(
 @router.post("/{contract_id}/amend", response_model=ApiResponse[ContractResponse], status_code=201)
 async def amend_contract(
     contract_id: uuid.UUID,
-    payload: ContractRequest,
+    payload: UpdateContractRequest,
     user_id: CurrentUserId,
     db: DBSession,
 ) -> ApiResponse[ContractResponse]:

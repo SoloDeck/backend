@@ -14,8 +14,9 @@ from src.modules.contracts.domain.value_objects.contract_status import (
 )
 from src.modules.contracts.infrastructure.repository import ContractsRepository
 from src.modules.contracts.schemas.request import (
-    ContractRequest,
+    CreateContractRequest,
     CreatePaymentMilestoneRequest,
+    UpdateContractRequest,
     UpdatePaymentMilestoneRequest,
 )
 from src.modules.subscriptions.application.ai_usage import AiUsageService
@@ -48,9 +49,9 @@ class ContractsService:
             raise NotFoundError(f"Contract {contract_id} not found")
         return contract
 
-    async def create(self, user_id: uuid.UUID, payload: ContractRequest):  # type: ignore[return]
+    async def create(self, user_id: uuid.UUID, payload: CreateContractRequest):  # type: ignore[return]
         proposal = await self.repo.get_proposal(payload.proposal_id)
-        if proposal is None:
+        if proposal is None or proposal.owner_user_id != user_id:
             raise NotFoundError(f"Proposal {payload.proposal_id} not found")
         if proposal.status != "accepted":
             raise BusinessRuleError(
@@ -58,9 +59,13 @@ class ContractsService:
                 f"(current status: '{proposal.status}')"
             )
 
-        version_number = await self.repo.count_by_deal(payload.deal_id) + 1
+        deal = await self.repo.get_deal(proposal.deal_id)
+        if deal is None:
+            raise NotFoundError(f"Deal {proposal.deal_id} not found")
 
-        client = await self.repo.get_client(payload.client_id)
+        version_number = await self.repo.count_by_deal(deal.id) + 1
+
+        client = await self.repo.get_client(deal.client_id)
         client_snapshot: dict = {}
         if client is not None:
             client_snapshot = {
@@ -71,14 +76,16 @@ class ContractsService:
             }
 
         return await self.repo.create(
-            deal_id=payload.deal_id,
+            deal_id=deal.id,
             proposal_id=payload.proposal_id,
-            client_id=payload.client_id,
+            client_id=deal.client_id,
             owner_user_id=user_id,
             version_number=version_number,
             status="draft",
             content=payload.content,
             client_snapshot=client_snapshot,
+            effective_date=payload.effective_date,
+            end_date=payload.end_date,
         )
 
     async def list_all(
@@ -96,15 +103,19 @@ class ContractsService:
     async def get_one(self, user_id: uuid.UUID, contract_id: uuid.UUID):  # type: ignore[return]
         return await self._get_contract(user_id, contract_id)
 
-    async def update(self, user_id: uuid.UUID, contract_id: uuid.UUID, payload: ContractRequest):  # type: ignore[return]
+    async def update(self, user_id: uuid.UUID, contract_id: uuid.UUID, payload: UpdateContractRequest):  # type: ignore[return]
         contract = await self._get_contract(user_id, contract_id)
         if contract.status != "draft":
             raise BusinessRuleError(
                 f"Contract content can only be edited in draft status "
                 f"(current status: '{contract.status}')"
             )
-        if payload.content:
+        if payload.content is not None:
             contract.content = payload.content
+        if payload.effective_date is not None:
+            contract.effective_date = payload.effective_date
+        if payload.end_date is not None:
+            contract.end_date = payload.end_date
         return await self.repo.save(contract)
 
     async def list_milestones(self, user_id: uuid.UUID, contract_id: uuid.UUID) -> list:
@@ -249,7 +260,7 @@ class ContractsService:
                 "project", project.id, user_id, payloads
             )
 
-    async def amend(self, user_id: uuid.UUID, contract_id: uuid.UUID, payload: ContractRequest):  # type: ignore[return]
+    async def amend(self, user_id: uuid.UUID, contract_id: uuid.UUID, payload: UpdateContractRequest):  # type: ignore[return]
         contract = await self._get_contract(user_id, contract_id)
         if contract.status != ContractStatus.ACTIVE:
             raise BusinessRuleError(
@@ -265,9 +276,13 @@ class ContractsService:
             owner_user_id=user_id,
             version_number=new_version,
             status=ContractStatus.DRAFT,
-            content=payload.content if payload.content else contract.content,
+            content=payload.content if payload.content is not None else contract.content,
             client_snapshot=contract.client_snapshot,
             parent_contract_id=contract.id,
+            effective_date=(
+                payload.effective_date if payload.effective_date is not None else contract.effective_date
+            ),
+            end_date=payload.end_date if payload.end_date is not None else contract.end_date,
         )
         contract.status = ContractStatus.ARCHIVED
         await self.repo.save(contract)

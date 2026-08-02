@@ -5,11 +5,24 @@ from decimal import Decimal
 from pydantic import BaseModel, Field
 
 
-class ContractRequest(BaseModel):
-    deal_id: uuid.UUID
+class CreateContractRequest(BaseModel):
+    """deal_id and client_id are deliberately NOT accepted here — they're derived
+    from proposal_id (deal_id from the proposal, client_id from that deal), never
+    trusted from the caller. Previously this schema required all three separately
+    with no cross-check, so a caller could pass a proposal_id from one deal
+    alongside a deal_id/client_id from an entirely different one and the contract
+    would silently persist the mismatched combination."""
+
     proposal_id: uuid.UUID
-    client_id: uuid.UUID
-    content: dict
+    content: dict = Field(default_factory=dict)
+    effective_date: date | None = None
+    end_date: date | None = None
+
+
+class UpdateContractRequest(BaseModel):
+    content: dict | None = None
+    effective_date: date | None = None
+    end_date: date | None = None
 
 
 class ContractStatusRequest(BaseModel):

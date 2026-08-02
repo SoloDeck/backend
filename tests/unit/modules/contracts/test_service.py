@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from src.modules.contracts.application.service import ContractsService
-from src.modules.contracts.schemas.request import ContractRequest
+from src.modules.contracts.schemas.request import CreateContractRequest, UpdateContractRequest
 from src.modules.tasks.schemas.request import CreateTaskRequest
 from src.shared.exceptions.domain import (
     BusinessRuleError,
@@ -61,6 +61,15 @@ def _make_proposal(**kwargs) -> MagicMock:
     m = MagicMock()
     m.id = kwargs.get("id", uuid.uuid4())
     m.status = kwargs.get("status", "accepted")
+    m.owner_user_id = kwargs.get("owner_user_id", uuid.uuid4())
+    m.deal_id = kwargs.get("deal_id", uuid.uuid4())
+    return m
+
+
+def _make_deal(**kwargs) -> MagicMock:
+    m = MagicMock()
+    m.id = kwargs.get("id", uuid.uuid4())
+    m.client_id = kwargs.get("client_id", uuid.uuid4())
     return m
 
 
@@ -76,12 +85,18 @@ def _make_sub(**kwargs) -> MagicMock:
     return m
 
 
-def _make_payload(**kwargs) -> ContractRequest:
-    return ContractRequest(
-        deal_id=kwargs.get("deal_id", uuid.uuid4()),
+def _make_create_payload(**kwargs) -> CreateContractRequest:
+    return CreateContractRequest(
         proposal_id=kwargs.get("proposal_id", uuid.uuid4()),
-        client_id=kwargs.get("client_id", uuid.uuid4()),
         content=kwargs.get("content", {}),
+    )
+
+
+def _make_update_payload(**kwargs) -> UpdateContractRequest:
+    return UpdateContractRequest(
+        content=kwargs.get("content"),
+        effective_date=kwargs.get("effective_date"),
+        end_date=kwargs.get("end_date"),
     )
 
 
@@ -91,24 +106,35 @@ class TestCreate:
         db.scalar.return_value = None
 
         with pytest.raises(NotFoundError, match="Proposal"):
-            await ContractsService(db=db).create(uuid.uuid4(), _make_payload())
+            await ContractsService(db=db).create(uuid.uuid4(), _make_create_payload())
+
+    async def test_raises_if_proposal_belongs_to_another_user(self) -> None:
+        proposal = _make_proposal(status="accepted", owner_user_id=uuid.uuid4())
+        db = AsyncMock()
+        db.scalar.return_value = proposal
+
+        with pytest.raises(NotFoundError, match="Proposal"):
+            await ContractsService(db=db).create(uuid.uuid4(), _make_create_payload())
 
     async def test_raises_if_proposal_not_accepted(self) -> None:
-        proposal = _make_proposal(status="draft")
+        user_id = uuid.uuid4()
+        proposal = _make_proposal(status="draft", owner_user_id=user_id)
         db = AsyncMock()
         db.scalar.return_value = proposal
 
         with pytest.raises(BusinessRuleError, match="accepted proposal"):
-            await ContractsService(db=db).create(uuid.uuid4(), _make_payload())
+            await ContractsService(db=db).create(user_id, _make_create_payload())
 
     async def test_creates_from_accepted_proposal(self) -> None:
-        proposal = _make_proposal(status="accepted")
+        user_id = uuid.uuid4()
+        proposal = _make_proposal(status="accepted", owner_user_id=user_id)
+        deal = _make_deal()
         client = MagicMock(id=uuid.uuid4(), name="Acme", email="a@b.com", phone=None)
         db = AsyncMock()
         db.add = MagicMock()  # session.add() is synchronous
-        db.scalar.side_effect = [proposal, 0, client]
+        db.scalar.side_effect = [proposal, deal, 0, client]
 
-        await ContractsService(db=db).create(uuid.uuid4(), _make_payload())
+        await ContractsService(db=db).create(user_id, _make_create_payload())
 
         db.add.assert_called_once()
         db.flush.assert_called_once()
@@ -298,7 +324,7 @@ class TestUpdate:
 
         with pytest.raises(BusinessRuleError, match="draft status"):
             await ContractsService(db=db).update(
-                contract.owner_user_id, contract.id, _make_payload()
+                contract.owner_user_id, contract.id, _make_update_payload()
             )
 
 

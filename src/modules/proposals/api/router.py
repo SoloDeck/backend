@@ -14,9 +14,10 @@ from src.modules.proposals.application.service import ProposalsService
 from src.modules.proposals.domain.value_objects.proposal_status import ProposalStatus
 from src.modules.proposals.schemas.request import (
     AiProposalRequest,
+    CreateProposalRequest,
     ProposalPriceRequest,
-    ProposalRequest,
     ProposalStatusRequest,
+    UpdateProposalRequest,
 )
 from src.modules.proposals.schemas.response import ProposalResponse, TermTemplateOption
 from src.shared.dependencies.ai import AIFacadeDep
@@ -142,7 +143,7 @@ async def generate_proposal_pdf(
 
 @router.post("", response_model=ApiResponse[ProposalResponse], status_code=201)
 async def create_proposal(
-    payload: ProposalRequest,
+    payload: CreateProposalRequest,
     user_id: CurrentUserId,
     db: DBSession,
 ) -> ApiResponse[ProposalResponse]:
@@ -186,7 +187,7 @@ async def get_proposal(
 @router.patch("/{proposal_id}", response_model=ApiResponse[ProposalResponse])
 async def update_proposal(
     proposal_id: uuid.UUID,
-    payload: ProposalRequest,
+    payload: UpdateProposalRequest,
     user_id: CurrentUserId,
     db: DBSession,
 ) -> ApiResponse[ProposalResponse]:
