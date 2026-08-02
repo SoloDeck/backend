@@ -1,8 +1,8 @@
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from src.modules.reminders.domain.entities.reminder import ReminderType
 from src.modules.reminders.domain.value_objects.reminder_target import ReminderTargetType
@@ -13,6 +13,16 @@ from src.modules.reminders.domain.value_objects.reminder_target import ReminderT
 # InvalidTextRepresentationError at the DB layer instead of a clean 422, the same
 # class of bug fixed for query-filter params on fix/critical-api-bugs.
 NotificationChannel = Literal["email", "in_app", "both", "zalo"]
+
+
+def _must_be_future(v: datetime) -> datetime:
+    # Treat a timezone-naive value as UTC (matches datetime.now(UTC) used everywhere
+    # else in this codebase) rather than comparing against the server's local clock,
+    # which would make this check's outcome depend on the deploy environment's TZ.
+    compare = v if v.tzinfo is not None else v.replace(tzinfo=UTC)
+    if compare <= datetime.now(UTC):
+        raise ValueError("scheduled_at must be in the future")
+    return v
 
 
 class CreateReminderRequest(BaseModel):
@@ -26,6 +36,11 @@ class CreateReminderRequest(BaseModel):
     # `{"key", "filename", "content_type"}` do `POST /reminders/attachments` trả về.
     attachments: list[dict[str, str]] = Field(default_factory=list)
 
+    @field_validator("scheduled_at")
+    @classmethod
+    def scheduled_at_must_be_future(cls, v: datetime) -> datetime:
+        return _must_be_future(v)
+
 
 class UpdateReminderRequest(BaseModel):
     """target_type/target_id/reminder_type/attachments deliberately NOT accepted here
@@ -38,6 +53,11 @@ class UpdateReminderRequest(BaseModel):
     scheduled_at: datetime | None = None
     message_preview: str | None = None
     channel: NotificationChannel | None = None
+
+    @field_validator("scheduled_at")
+    @classmethod
+    def scheduled_at_must_be_future(cls, v: datetime | None) -> datetime | None:
+        return _must_be_future(v) if v is not None else v
 
 
 class ReminderRuleUpdate(BaseModel):
