@@ -1,6 +1,7 @@
 """Proposals application service."""
 
 import re
+import secrets
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
@@ -31,10 +32,16 @@ from src.modules.tasks.schemas.request import CreateTaskRequest
 from src.shared.events.bus import event_bus
 from src.shared.exceptions.domain import (
     BusinessRuleError,
+    ExpiredError,
     InvalidStateTransitionError,
     NotFoundError,
     ValidationError,
 )
+
+# Client-facing share link validity window — long enough to survive a slow
+# decision cycle, short enough that a leaked/forwarded link doesn't stay live
+# indefinitely. Matches the window documented in contracts/openapi.yaml.
+SHARE_LINK_VALID_DAYS = 30
 
 # Hạn hiệu lực mặc định. Chỉ là ĐIỂM XUẤT PHÁT — freelancer sửa được ngay trên tờ báo giá,
 # và lựa chọn của họ nằm ở `content["valid_until"]`.
@@ -658,6 +665,8 @@ class ProposalsService:
             if existing is not None:
                 existing.status = "superseded"
             proposal.sent_at = now
+            proposal.share_token = secrets.token_urlsafe(32)
+            proposal.share_expires_at = now + timedelta(days=SHARE_LINK_VALID_DAYS)
 
         if target_status in ("accepted", "rejected", "expired"):
             proposal.responded_at = now
@@ -689,6 +698,57 @@ class ProposalsService:
                 },
             )
 
+        return proposal
+
+    async def _get_by_share_token(self, share_token: str):  # type: ignore[return]
+        proposal = await self.repo.get_public_by_token(share_token)
+        if proposal is None:
+            raise NotFoundError("Proposal not found or link is invalid")
+        return proposal
+
+    async def get_public_view(self, share_token: str):  # type: ignore[return]
+        """Client-facing read view. 410s once the share link has expired."""
+        proposal = await self._get_by_share_token(share_token)
+        if proposal.share_expires_at is not None and datetime.now(UTC) > proposal.share_expires_at:
+            raise ExpiredError("This share link has expired")
+        return proposal
+
+    async def respond_via_share_token(
+        self, share_token: str, decision: str, note: str | None = None
+    ):  # type: ignore[return]
+        """Client accepts/rejects via the public link — no authenticated user_id.
+
+        Decision is final: once responded, calling this again 409s, same as an
+        expired link — from the client's perspective both mean "you can't act
+        on this anymore", which is why this differs from get_public_view's 410.
+        """
+        proposal = await self._get_by_share_token(share_token)
+        expired = (
+            proposal.share_expires_at is not None and datetime.now(UTC) > proposal.share_expires_at
+        )
+        if expired or proposal.status != "sent":
+            raise BusinessRuleError(
+                "This proposal has already been responded to or its share link has expired"
+            )
+
+        now = datetime.now(UTC)
+        proposal.responded_at = now
+        proposal.status = decision
+        if note:
+            content = dict(proposal.content or {})
+            content["client_response_note"] = note
+            proposal.content = content
+        await self.repo.save(proposal)
+
+        if decision == "accepted":
+            await event_bus.publish(
+                "proposals.proposal_accepted",
+                {
+                    "proposal_id": str(proposal.id),
+                    "deal_id": str(proposal.deal_id),
+                    "owner_user_id": str(proposal.owner_user_id),
+                },
+            )
         return proposal
 
 

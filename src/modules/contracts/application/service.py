@@ -1,8 +1,9 @@
 """Contracts application service."""
 
+import secrets
 import uuid
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -17,10 +18,15 @@ from src.modules.subscriptions.application.ai_usage import AiUsageService
 from src.shared.exceptions.domain import (
     BusinessRuleError,
     EntitlementError,
+    ExpiredError,
     InvalidStateTransitionError,
     NotFoundError,
     ValidationError,
 )
+
+# Client-facing share link validity window — see proposals/application/service.py's
+# matching constant for the reasoning; kept in sync at the same value.
+SHARE_LINK_VALID_DAYS = 30
 
 
 @dataclass
@@ -133,38 +139,47 @@ class ContractsService:
                 contract.signed_by_freelancer_at = now
             if contract.signed_by_client_at is None:
                 contract.signed_by_client_at = now
-
-            # SINH TASK "Thu tiền:" NGAY TẠI ĐÂY — lúc ký, không đợi deal vào "active".
-            #
-            # Đợt đầu của mọi báo giá đều ghi "Khi ký hợp đồng / trước khi bắt đầu". Trước đây
-            # task nhắc thu tiền chỉ sinh khi deal chuyển "active" (bấm "Bắt đầu triển khai"),
-            # tức MỘT NHỊP SAU thời điểm phải thu: freelancer đã bắt tay làm rồi hệ thống mới
-            # nhắc đi đòi cọc. Ngược đời, và đúng cái rủi ro SoloDesk sinh ra để ngăn.  #Huynh
-            #
-            # Idempotent (create_many_for_entity bỏ qua title đã có) nên khối tương tự bên
-            # `DealsService.transition_stage` VẪN GIỮ: hợp đồng ký từ trước ngày sửa này vẫn
-            # được vá khi deal vào active, mà chuyển active sau đó không nhân đôi task.
-            #
-            # Import CỤC BỘ trong hàm, y như deals đang làm — tránh vòng import giữa các module.
-            from src.modules.projects.application.service import ProjectService
-            from src.modules.proposals.application.service import (
-                payment_task_payloads_for_deal,
-            )
-            from src.modules.tasks.application.service import TaskService
-
-            deal = await self.repo.get_deal(contract.deal_id)
-            project = await ProjectService(db=self.db).get_or_create_for_deal(
-                contract.deal_id, user_id, name=deal.title if deal else None
-            )
-            payloads = await payment_task_payloads_for_deal(self.db, contract.deal_id, user_id)
-            if payloads:
-                await TaskService(self.db).create_many_for_entity(
-                    "project", project.id, user_id, payloads
-                )
-        elif target == ContractStatus.PENDING_SIGNATURES or target in TERMINAL_CONTRACT_STATUSES:
+            await self._apply_active_side_effects(contract, user_id)
+        elif target == ContractStatus.PENDING_SIGNATURES:
+            contract.share_token = secrets.token_urlsafe(32)
+            contract.share_expires_at = now + timedelta(days=SHARE_LINK_VALID_DAYS)
+        elif target in TERMINAL_CONTRACT_STATUSES:
             pass
 
         return await self.repo.save(contract)
+
+    async def _apply_active_side_effects(self, contract, user_id: uuid.UUID) -> None:
+        """Project creation + payment tasks — must run once a contract has both signatures.
+
+        SINH TASK "Thu tiền:" NGAY TẠI ĐÂY — lúc ký, không đợi deal vào "active".
+        Đợt đầu của mọi báo giá đều ghi "Khi ký hợp đồng / trước khi bắt đầu". Trước đây
+        task nhắc thu tiền chỉ sinh khi deal chuyển "active" (bấm "Bắt đầu triển khai"),
+        tức MỘT NHỊP SAU thời điểm phải thu: freelancer đã bắt tay làm rồi hệ thống mới
+        nhắc đi đòi cọc. Ngược đời, và đúng cái rủi ro SoloDesk sinh ra để ngăn.  #Huynh
+
+        Idempotent (create_many_for_entity bỏ qua title đã có) nên khối tương tự bên
+        `DealsService.transition_stage` VẪN GIỮ: hợp đồng ký từ trước ngày sửa này vẫn
+        được vá khi deal vào active, mà chuyển active sau đó không nhân đôi task — vì vậy
+        an toàn khi được gọi từ nhiều nơi (freelancer tự đánh dấu, khách ký qua link công
+        khai) mà không nhân đôi project/task.
+
+        Import CỤC BỘ trong hàm, y như deals đang làm — tránh vòng import giữa các module.
+        """
+        from src.modules.projects.application.service import ProjectService
+        from src.modules.proposals.application.service import (
+            payment_task_payloads_for_deal,
+        )
+        from src.modules.tasks.application.service import TaskService
+
+        deal = await self.repo.get_deal(contract.deal_id)
+        project = await ProjectService(db=self.db).get_or_create_for_deal(
+            contract.deal_id, user_id, name=deal.title if deal else None
+        )
+        payloads = await payment_task_payloads_for_deal(self.db, contract.deal_id, user_id)
+        if payloads:
+            await TaskService(self.db).create_many_for_entity(
+                "project", project.id, user_id, payloads
+            )
 
     async def amend(self, user_id: uuid.UUID, contract_id: uuid.UUID, payload: ContractRequest):  # type: ignore[return]
         contract = await self._get_contract(user_id, contract_id)
@@ -291,10 +306,49 @@ class ContractsService:
         contract.signed_by_freelancer_at = now
         if contract.signed_by_client_at is not None:
             contract.status = ContractStatus.ACTIVE
+            await self._apply_active_side_effects(contract, user_id)
         return await self.repo.save(contract)
 
     async def terminate(self, user_id: uuid.UUID, contract_id: uuid.UUID):  # type: ignore[return]
         return await self.transition_status(user_id, contract_id, "terminated")
+
+    async def _get_by_share_token(self, share_token: str):  # type: ignore[return]
+        contract = await self.repo.get_public_by_token(share_token)
+        if contract is None:
+            raise NotFoundError("Contract not found or link is invalid")
+        return contract
+
+    async def get_public_view(self, share_token: str):  # type: ignore[return]
+        """Client-facing read view. 410s once the share link has expired."""
+        contract = await self._get_by_share_token(share_token)
+        if contract.share_expires_at is not None and datetime.now(UTC) > contract.share_expires_at:
+            raise ExpiredError("This share link has expired")
+        return contract
+
+    async def sign_via_share_token(self, share_token: str, signer_name: str):  # type: ignore[return]
+        """Client signs via the public link — no authenticated user_id.
+
+        If the freelancer already signed via /contracts/{id}/sign, this is the second
+        signature and the contract goes active immediately (same as the reverse order).
+        """
+        contract = await self._get_by_share_token(share_token)
+        expired = (
+            contract.share_expires_at is not None and datetime.now(UTC) > contract.share_expires_at
+        )
+        if expired or contract.status != ContractStatus.PENDING_SIGNATURES:
+            raise BusinessRuleError(
+                "This contract is not awaiting signature, or its share link has expired"
+            )
+
+        now = datetime.now(UTC)
+        contract.signed_by_client_at = now
+        content = dict(contract.content or {})
+        content["client_signature"] = {"signer_name": signer_name, "signed_at": now.isoformat()}
+        contract.content = content
+        if contract.signed_by_freelancer_at is not None:
+            contract.status = ContractStatus.ACTIVE
+            await self._apply_active_side_effects(contract, contract.owner_user_id)
+        return await self.repo.save(contract)
 
     async def _build_document(self, user_id: uuid.UUID, contract_id: uuid.UUID):
         """Dựng ContractDocument — DÙNG CHUNG cho HTML preview và (sau này) PDF.

@@ -4611,6 +4611,7 @@ components:
             - FORBIDDEN
             - NOT_FOUND
             - CONFLICT
+            - EXPIRED
             - BUSINESS_RULE_VIOLATION
             - SUBSCRIPTION_REQUIRED
             - AI_QUOTA_EXCEEDED

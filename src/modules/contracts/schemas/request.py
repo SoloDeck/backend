@@ -24,3 +24,9 @@ class ContractStatusRequest(BaseModel):
 
 class ContractTerminateRequest(BaseModel):
     reason: str | None = Field(default=None, description="Optional termination reason")
+
+
+class ClientSignRequest(BaseModel):
+    """Client's signature, submitted via the public share link."""
+
+    signer_name: str = Field(..., description="Name of the client signatory")

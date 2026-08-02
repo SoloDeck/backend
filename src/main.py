@@ -27,6 +27,7 @@ from src.modules.analytics.api.router import router as analytics_router
 # Module routers
 from src.modules.auth.api.router import router as auth_router
 from src.modules.clients.api.router import router as clients_router
+from src.modules.contracts.api.public_router import router as public_contracts_router
 from src.modules.contracts.api.router import router as contracts_router
 from src.modules.deals.api.public_router import router as public_intake_router
 from src.modules.deals.api.router import router as deals_router
@@ -39,6 +40,7 @@ from src.modules.notifications.api.router import router as notifications_router
 from src.modules.payments.api.public_router import router as public_payments_router
 from src.modules.payments.api.router import router as payments_router
 from src.modules.projects.api.router import router as projects_router
+from src.modules.proposals.api.public_router import router as public_proposals_router
 from src.modules.proposals.api.router import router as proposals_router
 from src.modules.reminders.api.router import router as reminders_router
 from src.modules.subscriptions.api.router import router as subscriptions_router
@@ -214,7 +216,9 @@ app.include_router(users_router, prefix=f"{API_V1}/users", tags=["Users"])
 app.include_router(subscriptions_router, prefix=f"{API_V1}/subscriptions", tags=["Subscriptions"])
 app.include_router(clients_router, prefix=f"{API_V1}/clients", tags=["Clients"])
 app.include_router(deals_router, prefix=f"{API_V1}/deals", tags=["Deals"])
+app.include_router(public_proposals_router, prefix=f"{API_V1}/proposals/public", tags=["Public"])
 app.include_router(proposals_router, prefix=f"{API_V1}/proposals", tags=["Proposals"])
+app.include_router(public_contracts_router, prefix=f"{API_V1}/contracts/public", tags=["Public"])
 app.include_router(contracts_router, prefix=f"{API_V1}/contracts", tags=["Contracts"])
 app.include_router(public_invoices_router, prefix=f"{API_V1}/invoices/public", tags=["Public"])
 app.include_router(invoices_router, prefix=f"{API_V1}/invoices", tags=["Invoices"])

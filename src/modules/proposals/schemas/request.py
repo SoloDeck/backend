@@ -1,5 +1,6 @@
 import uuid
 from decimal import Decimal
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -12,6 +13,13 @@ class ProposalRequest(BaseModel):
 
 class ProposalStatusRequest(BaseModel):
     status: str = Field(..., description="Target status: sent, accepted, rejected, expired")
+
+
+class ProposalRespondRequest(BaseModel):
+    """Client's accept/reject decision, submitted via the public share link."""
+
+    decision: Literal["accepted", "rejected"]
+    note: str | None = None
 
 
 class AiProposalRequest(BaseModel):

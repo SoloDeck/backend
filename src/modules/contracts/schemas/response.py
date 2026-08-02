@@ -11,6 +11,20 @@ class TermTemplateOption(BaseModel):
     name: str
 
 
+class PublicContractResponse(BaseModel):
+    """Client-facing read-only view via share link — only what's needed to review and sign."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    version_number: int
+    status: str
+    content: dict
+    effective_date: date | None
+    end_date: date | None
+    signed_by_freelancer_at: datetime | None
+    signed_by_client_at: datetime | None
+
+
 class ContractResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

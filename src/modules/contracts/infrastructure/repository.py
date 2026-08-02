@@ -29,6 +29,11 @@ class ContractsRepository:
             )
         )
 
+    async def get_public_by_token(self, share_token: str):
+        return await self.db.scalar(
+            select(ContractModel).where(ContractModel.share_token == share_token)
+        )
+
     async def get_proposal(self, proposal_id: uuid.UUID):
         return await self.db.scalar(select(ProposalModel).where(ProposalModel.id == proposal_id))
 
