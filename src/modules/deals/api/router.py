@@ -12,9 +12,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.infrastructure.database.session import get_db_session
 from src.modules.deals.application.attachment_service import DealAttachmentService
 from src.modules.deals.application.service import DealsService
+from src.modules.deals.domain.entities.deal_activity import DealActivityType
 from src.modules.deals.domain.value_objects.deal_stage import DealStage
-from src.modules.deals.schemas.request import DealRequest, DealStageRequest
+from src.modules.deals.schemas.request import AddNoteRequest, DealRequest, DealStageRequest
 from src.modules.deals.schemas.response import (
+    DealActivityEntryResponse,
     DealAttachmentResponse,
     DealResponse,
     IntakeResponse,
@@ -188,6 +190,49 @@ async def transition_stage(
 ) -> ApiResponse[DealResponse]:
     deal = await DealsService(db=db).transition_stage(user_id, deal_id, payload)
     return ApiResponse.ok(DealResponse.model_validate(deal))
+
+
+@router.get("/{deal_id}/activity", response_model=PaginatedResponse[DealActivityEntryResponse])
+async def list_deal_activity(
+    deal_id: uuid.UUID,
+    user_id: CurrentUserId,
+    db: DBSession,
+    entry_type: DealActivityType | None = Query(
+        default=None, description="Filter by activity type"
+    ),
+    sort_order: str = Query(default="desc", pattern="^(asc|desc)$"),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
+) -> PaginatedResponse[DealActivityEntryResponse]:
+    entries, total = await DealsService(db=db).list_activity(
+        user_id,
+        deal_id,
+        entry_type=entry_type.value if entry_type else None,
+        sort_order=sort_order,
+        page=page,
+        page_size=page_size,
+    )
+    return PaginatedResponse.ok(
+        [DealActivityEntryResponse.model_validate(e) for e in entries],
+        total=total,
+        page=page,
+        page_size=page_size,
+    )
+
+
+@router.post(
+    "/{deal_id}/notes",
+    response_model=ApiResponse[DealActivityEntryResponse],
+    status_code=201,
+)
+async def add_deal_note(
+    deal_id: uuid.UUID,
+    payload: AddNoteRequest,
+    user_id: CurrentUserId,
+    db: DBSession,
+) -> ApiResponse[DealActivityEntryResponse]:
+    entry = await DealsService(db=db).add_note(user_id, deal_id, payload.description)
+    return ApiResponse.created(DealActivityEntryResponse.model_validate(entry))
 
 
 # ---------------------------------------------------------------------------

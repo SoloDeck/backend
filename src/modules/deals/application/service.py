@@ -506,6 +506,14 @@ class DealsService:
             deal.closed_at = datetime.now(UTC)
             await self.repo.cancel_pending_reminders(deal_id, user_id)
         saved = await self.repo.save(deal)
+        await self.repo.create_activity_entry(
+            deal_id=deal_id,
+            owner_user_id=user_id,
+            entry_type=DealActivityType.STAGE_CHANGE.value,
+            description=f"Stage changed from {current.value} to {target.value}",
+            previous_stage=current.value,
+            new_stage=target.value,
+        )
         # Design decision #3 (Phase 24): a deal entering `active` auto-provisions a
         # linked Project. We call ProjectService directly (in the same session /
         # transaction) and idempotently — re-running a transition never duplicates
@@ -528,6 +536,34 @@ class DealsService:
                     "project", project.id, user_id, payloads
                 )
         return saved
+
+    async def list_activity(
+        self,
+        user_id: uuid.UUID,
+        deal_id: uuid.UUID,
+        entry_type: str | None = None,
+        sort_order: str = "desc",
+        page: int = 1,
+        page_size: int = 20,
+    ) -> tuple[list, int]:
+        await self._get_deal(user_id, deal_id)
+        return await self.repo.list_activity(
+            deal_id,
+            user_id,
+            entry_type=entry_type,
+            sort_order=sort_order,
+            page=page,
+            page_size=page_size,
+        )
+
+    async def add_note(self, user_id: uuid.UUID, deal_id: uuid.UUID, description: str):  # type: ignore[return]
+        await self._get_deal(user_id, deal_id)
+        return await self.repo.create_activity_entry(
+            deal_id=deal_id,
+            owner_user_id=user_id,
+            entry_type=DealActivityType.NOTE_ADDED.value,
+            description=description,
+        )
 
     async def _run_ai_qualification(self, deal_model, inquiry_context: str) -> dict:
         """Run AI lead qualification against inquiry_context and persist scores on deal_model."""
