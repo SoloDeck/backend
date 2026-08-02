@@ -1,4 +1,6 @@
 import uuid
+from datetime import date
+from decimal import Decimal
 
 from pydantic import BaseModel, Field
 
@@ -30,3 +32,17 @@ class ClientSignRequest(BaseModel):
     """Client's signature, submitted via the public share link."""
 
     signer_name: str = Field(..., description="Name of the client signatory")
+
+
+class CreatePaymentMilestoneRequest(BaseModel):
+    description: str
+    amount: Decimal = Field(gt=0)
+    due_date: date | None = None
+    sort_order: int = 0
+
+
+class UpdatePaymentMilestoneRequest(BaseModel):
+    description: str | None = None
+    amount: Decimal | None = Field(default=None, gt=0)
+    due_date: date | None = None
+    sort_order: int | None = None

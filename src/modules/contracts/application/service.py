@@ -13,7 +13,11 @@ from src.modules.contracts.domain.value_objects.contract_status import (
     ContractStatus,
 )
 from src.modules.contracts.infrastructure.repository import ContractsRepository
-from src.modules.contracts.schemas.request import ContractRequest
+from src.modules.contracts.schemas.request import (
+    ContractRequest,
+    CreatePaymentMilestoneRequest,
+    UpdatePaymentMilestoneRequest,
+)
 from src.modules.subscriptions.application.ai_usage import AiUsageService
 from src.shared.exceptions.domain import (
     BusinessRuleError,
@@ -102,6 +106,70 @@ class ContractsService:
         if payload.content:
             contract.content = payload.content
         return await self.repo.save(contract)
+
+    async def list_milestones(self, user_id: uuid.UUID, contract_id: uuid.UUID) -> list:
+        await self._get_contract(user_id, contract_id)
+        return await self.repo.get_milestones(contract_id)
+
+    async def add_milestone(
+        self, user_id: uuid.UUID, contract_id: uuid.UUID, payload: CreatePaymentMilestoneRequest
+    ):  # type: ignore[return]
+        contract = await self._get_contract(user_id, contract_id)
+        if contract.status != ContractStatus.DRAFT:
+            raise BusinessRuleError(
+                f"Milestones can only be added while the contract is in draft status "
+                f"(current status: '{contract.status}')"
+            )
+        return await self.repo.create_milestone(
+            contract_id=contract_id,
+            description=payload.description,
+            amount=payload.amount,
+            due_date=payload.due_date,
+            sort_order=payload.sort_order,
+        )
+
+    async def _get_milestone(self, user_id: uuid.UUID, contract_id: uuid.UUID, milestone_id: uuid.UUID):  # type: ignore[return]
+        await self._get_contract(user_id, contract_id)
+        milestone = await self.repo.get_milestone(milestone_id, contract_id)
+        if milestone is None:
+            raise NotFoundError(f"Milestone {milestone_id} not found")
+        return milestone
+
+    async def update_milestone(
+        self,
+        user_id: uuid.UUID,
+        contract_id: uuid.UUID,
+        milestone_id: uuid.UUID,
+        payload: UpdatePaymentMilestoneRequest,
+    ):  # type: ignore[return]
+        contract = await self._get_contract(user_id, contract_id)
+        if contract.status != ContractStatus.DRAFT:
+            raise BusinessRuleError(
+                f"Milestones can only be edited while the contract is in draft status "
+                f"(current status: '{contract.status}')"
+            )
+        milestone = await self._get_milestone(user_id, contract_id, milestone_id)
+        if payload.description is not None:
+            milestone.description = payload.description
+        if payload.amount is not None:
+            milestone.amount = payload.amount
+        if payload.due_date is not None:
+            milestone.due_date = payload.due_date
+        if payload.sort_order is not None:
+            milestone.sort_order = payload.sort_order
+        return await self.repo.save_milestone(milestone)
+
+    async def delete_milestone(
+        self, user_id: uuid.UUID, contract_id: uuid.UUID, milestone_id: uuid.UUID
+    ) -> None:
+        contract = await self._get_contract(user_id, contract_id)
+        if contract.status != ContractStatus.DRAFT:
+            raise BusinessRuleError(
+                f"Milestones can only be deleted while the contract is in draft status "
+                f"(current status: '{contract.status}')"
+            )
+        milestone = await self._get_milestone(user_id, contract_id, milestone_id)
+        await self.repo.delete_milestone(milestone)
 
     async def transition_status(
         self, user_id: uuid.UUID, contract_id: uuid.UUID, target_status: str

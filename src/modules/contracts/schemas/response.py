@@ -1,5 +1,6 @@
 import uuid
 from datetime import date, datetime
+from decimal import Decimal
 
 from pydantic import BaseModel, ConfigDict
 
@@ -50,3 +51,16 @@ class ContractExportResponse(BaseModel):
     status: str
     task_id: str | None = None
     download_url: str | None = None
+
+
+class PaymentMilestoneResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    contract_id: uuid.UUID
+    description: str
+    amount: Decimal
+    due_date: date | None
+    invoice_id: uuid.UUID | None
+    sort_order: int
+    created_at: datetime
