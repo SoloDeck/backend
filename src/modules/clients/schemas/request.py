@@ -1,12 +1,12 @@
 from datetime import datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from src.modules.clients.domain.value_objects.client_status import ClientStatus, ClientType
 
 
 class ClientRequest(BaseModel):
-    name: str
+    name: str = Field(min_length=1, max_length=255)
     email: str | None = None
     phone: str | None = None
     type: ClientType = ClientType.INDIVIDUAL
@@ -29,7 +29,7 @@ class ClientUpdateRequest(BaseModel):
     what let the service layer's `if value is not None` skip actually work.
     """
 
-    name: str | None = None
+    name: str | None = Field(default=None, min_length=1, max_length=255)
     email: str | None = None
     phone: str | None = None
     type: ClientType | None = None

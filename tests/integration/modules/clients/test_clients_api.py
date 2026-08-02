@@ -70,6 +70,11 @@ class TestCreateClient:
         resp = await client.post("/api/v1/clients", json={"email": "x@x.com"}, headers=headers)
         assert resp.status_code == 422
 
+    async def test_empty_name_returns_422(self, client: AsyncClient) -> None:
+        headers = await _auth_headers(client)
+        resp = await client.post("/api/v1/clients", json={"name": ""}, headers=headers)
+        assert resp.status_code == 422
+
 
 # ---------------------------------------------------------------------------
 # GET /clients  (list + status filter)
@@ -559,6 +564,17 @@ class TestUpdateClient:
         )
         assert resp.status_code == 200
         assert resp.json()["data"]["name"] == "Updated Name"
+
+    async def test_update_empty_name_returns_422(self, client: AsyncClient) -> None:
+        headers = await _auth_headers(client)
+        created = await _create_client(client, headers)
+
+        resp = await client.patch(
+            f"/api/v1/clients/{created['id']}",
+            json={"name": ""},
+            headers=headers,
+        )
+        assert resp.status_code == 422
 
     async def test_update_persists_on_get(self, client: AsyncClient) -> None:
         headers = await _auth_headers(client)
