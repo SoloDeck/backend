@@ -169,6 +169,8 @@ class AuthService:
         user = await self.repo.get_user_by_id(user_id)
         if user is None or user.status != "active":
             raise AuthenticationError("User not found or suspended")
+        if user.sessions_revoked_at is not None and claims["iat"] < user.sessions_revoked_at.timestamp():
+            raise AuthenticationError("Session has been revoked")
 
         return await self._issue_tokens(user_id=user.id, email=user.email, role=user.role)
 

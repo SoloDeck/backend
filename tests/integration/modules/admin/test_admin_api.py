@@ -651,12 +651,12 @@ class TestAdminRevokeUserSessions:
         resp = await client.delete(f"/api/v1/admin/users/{user_id}/sessions", headers=headers)
         assert resp.status_code == 204
 
-    async def test_revoke_user_with_no_tokens_returns_204(
+    async def test_revoke_nonexistent_user_returns_404(
         self, client: AsyncClient, db_session: AsyncSession
     ) -> None:
         headers = await _admin_headers(client, db_session)
         resp = await client.delete(f"/api/v1/admin/users/{uuid.uuid4()}/sessions", headers=headers)
-        assert resp.status_code == 204
+        assert resp.status_code == 404
 
     async def test_non_admin_returns_403(self, client: AsyncClient) -> None:
         headers = await _user_headers(client)

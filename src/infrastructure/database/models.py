@@ -214,6 +214,12 @@ class UserModel(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     full_name: Mapped[str] = mapped_column(String(255), nullable=False)
     role: Mapped[str] = mapped_column(_user_role, nullable=False, server_default="freelancer")
     status: Mapped[str] = mapped_column(_user_status, nullable=False, server_default="active")
+    # Cutoff for admin-forced session invalidation (suspend, revoke_user_sessions) — any
+    # access/refresh token with an `iat` before this is rejected regardless of its own
+    # expiry. NULL means no forced revocation has ever happened for this user.
+    sessions_revoked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     hashed_password: Mapped[str | None] = mapped_column(String(255), nullable=True)
     avatar_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     bio: Mapped[str | None] = mapped_column(Text, nullable=True)

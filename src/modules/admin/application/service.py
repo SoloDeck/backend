@@ -2,7 +2,7 @@
 
 import uuid
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -120,6 +120,7 @@ class AdminService:
         entity = AdminUser(id=user.id, email=user.email, role=user.role, status=user.status)
         entity.suspend(is_last_active_admin=is_last_active_admin)
         user.status = entity.status
+        user.sessions_revoked_at = datetime.now(UTC)
 
         user = await self.repo.save(user)
         await self.repo.create_audit_log(
@@ -149,14 +150,18 @@ class AdminService:
         )
         return user
 
-    async def revoke_user_sessions(self, user_id: uuid.UUID) -> None:
-        tokens = await self.repo.get_user_refresh_tokens(user_id)
-        for token in tokens:
-            await self.repo.blacklist_refresh_token(
-                jti=token.token_hash,
-                user_id=user_id,
-                expires_at=token.expires_at,
-            )
+    async def revoke_user_sessions(self, user_id: uuid.UUID, *, admin_id: uuid.UUID) -> None:
+        user = await self.get_user(user_id)
+        user.sessions_revoked_at = datetime.now(UTC)
+
+        user = await self.repo.save(user)
+        await self.repo.create_audit_log(
+            event_type="user.sessions_revoked",
+            actor_user_id=admin_id,
+            target_type="user",
+            target_id=user_id,
+            description=f"Admin revoked all sessions for user {user.email}",
+        )
 
     # -------------------------------------------------------------------------
     # Plans
