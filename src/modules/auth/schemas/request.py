@@ -1,6 +1,6 @@
 from typing import Literal
 
-from pydantic import BaseModel, EmailStr, field_validator
+from pydantic import BaseModel, EmailStr, Field, field_validator
 
 
 class RegisterRequest(BaseModel):
@@ -46,8 +46,8 @@ class PasswordResetRequestBody(BaseModel):
 
 
 class PasswordResetConfirmRequest(BaseModel):
-    otp: str
-    new_password: str
+    otp: str = Field(pattern=r"^\d{6}$", description="6-digit OTP sent via email")
+    new_password: str = Field(min_length=8)
 
 
 class GoogleAuthRequest(BaseModel):

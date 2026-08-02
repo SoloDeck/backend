@@ -363,5 +363,10 @@ class AuthService:
         user = await self.repo.get_user_by_id(reset_token.user_id)
         if user is not None:
             user.hashed_password = hash_password(payload.new_password)
+            # A password reset is the exact moment a still-valid stolen session (from
+            # whatever compromised the password in the first place) should die — reuses
+            # the same cutoff get_current_user()/refresh() already check for admin
+            # suspend/revoke, so every other active token stops working immediately.
+            user.sessions_revoked_at = now
 
         await self.repo.flush()

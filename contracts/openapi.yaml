@@ -505,10 +505,11 @@ paths:
   /auth/password-reset/request:
     post:
       tags: [Auth]
-      summary: Request a password reset email
+      summary: Request a password reset OTP by email
       description: |
-        Always returns 204 regardless of whether the email is registered, to prevent
-        email enumeration. The reset link is valid for 1 hour.
+        Always responds the same way regardless of whether the email is registered, to
+        prevent email enumeration. Sends a 6-digit OTP (not a link) valid for 15 minutes.
+        Not currently rate-limited.
       security: []
       requestBody:
         required: true
@@ -517,18 +518,28 @@ paths:
             schema:
               $ref: '#/components/schemas/PasswordResetRequestBody'
       responses:
-        '204':
-          description: Reset email sent (always 204 regardless of whether email exists)
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
+        '200':
+          description: OTP sent if the email is registered (same response either way)
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/MessageResponse'
 
   /auth/password-reset/confirm:
     post:
       tags: [Auth]
-      summary: Apply new password using reset token
+      summary: Apply new password using the emailed OTP
       description: |
-        Token is single-use and expires after 1 hour. On success, all existing sessions
-        for the account are revoked immediately.
+        OTP is single-use and expires after 15 minutes. On success, all of the account's
+        existing sessions (access and refresh tokens already issued) are invalidated
+        immediately, same mechanism as an admin-forced session revocation. Invalid,
+        expired, and already-used OTPs all return the identical 401 — deliberately not
+        distinguished, to avoid leaking which case applies to a guesser.
       security: []
       requestBody:
         required: true
@@ -537,16 +548,19 @@ paths:
             schema:
               $ref: '#/components/schemas/PasswordResetConfirmRequest'
       responses:
-        '204':
+        '200':
           description: Password updated
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '410':
-          description: Token expired or already used
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/MessageResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
 
   # -------------------------------------------------------------------------
   # USERS
@@ -4767,10 +4781,12 @@ components:
 
     PasswordResetConfirmRequest:
       type: object
-      required: [token, new_password]
+      required: [otp, new_password]
       properties:
-        token:
+        otp:
           type: string
+          pattern: '^\d{6}$'
+          description: 6-digit OTP sent via email
         new_password:
           type: string
           format: password
