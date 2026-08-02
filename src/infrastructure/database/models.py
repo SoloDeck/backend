@@ -54,6 +54,9 @@ _billing_event_type = PgEnum(
     "payment_failed",
     "subscription_renewed",
     "subscription_cancelled",
+    "subscription_expired",
+    "subscription_upgraded",
+    "subscription_downgrade_scheduled",
     name="billing_event_type",
     create_type=False,
 )

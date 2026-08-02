@@ -33,6 +33,14 @@ class SubscriptionResponse(BaseModel):
     cancel_at_period_end: bool
 
 
+class UsageRecordResponse(BaseModel):
+    user_id: uuid.UUID
+    billing_period_start: datetime
+    billing_period_end: datetime
+    ai_generations_used: int
+    ai_generations_limit: int
+
+
 class PaymentLinkResponse(BaseModel):
     type: Literal["checkout_url", "deep_link", "qr_code", "bank_transfer_instruction"]
     url: str | None = None
