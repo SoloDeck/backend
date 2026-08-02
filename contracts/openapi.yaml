@@ -5384,6 +5384,8 @@ components:
       properties:
         name:
           type: string
+        type:
+          $ref: '#/components/schemas/ClientType'
         email:
           type: string
           format: email

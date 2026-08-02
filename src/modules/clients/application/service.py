@@ -7,7 +7,11 @@ from datetime import UTC, datetime
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.modules.clients.infrastructure.repository import ClientsRepository
-from src.modules.clients.schemas.request import ClientRequest, CommLogRequest
+from src.modules.clients.schemas.request import (
+    ClientRequest,
+    ClientUpdateRequest,
+    CommLogRequest,
+)
 from src.shared.exceptions.domain import BusinessRuleError, NotFoundError
 
 
@@ -127,7 +131,7 @@ class ClientsService:
         client.deal_count = count
         return client
 
-    async def update(self, user_id: uuid.UUID, client_id: uuid.UUID, payload: ClientRequest):  # type: ignore[return]
+    async def update(self, user_id: uuid.UUID, client_id: uuid.UUID, payload: ClientUpdateRequest):  # type: ignore[return]
         client = await self._get_client(user_id, client_id)
         for field in (
             "name",

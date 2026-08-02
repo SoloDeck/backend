@@ -625,6 +625,49 @@ class TestUpdateClient:
         )
         assert resp.status_code == 401
 
+    async def test_partial_update_does_not_require_name(self, client: AsyncClient) -> None:
+        headers = await _auth_headers(client)
+        created = await _create_client(client, headers, name="Original Name")
+
+        resp = await client.patch(
+            f"/api/v1/clients/{created['id']}",
+            json={"notes": "Called them yesterday"},
+            headers=headers,
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["data"]["name"] == "Original Name"
+        assert resp.json()["data"]["notes"] == "Called them yesterday"
+
+    async def test_partial_update_does_not_reset_type_and_status(
+        self, client: AsyncClient
+    ) -> None:
+        headers = await _auth_headers(client)
+        created = await _create_client(client, headers, type="company", status="active")
+        assert created["type"] == "company"
+        assert created["status"] == "active"
+
+        resp = await client.patch(
+            f"/api/v1/clients/{created['id']}",
+            json={"email": "new@example.com"},
+            headers=headers,
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()["data"]
+        assert body["email"] == "new@example.com"
+        assert body["type"] == "company"
+        assert body["status"] == "active"
+
+    async def test_update_invalid_status_returns_422(self, client: AsyncClient) -> None:
+        headers = await _auth_headers(client)
+        created = await _create_client(client, headers)
+
+        resp = await client.patch(
+            f"/api/v1/clients/{created['id']}",
+            json={"status": "not_a_real_status"},
+            headers=headers,
+        )
+        assert resp.status_code == 422
+
 
 # ---------------------------------------------------------------------------
 # POST + GET /clients/{id}/comm-logs

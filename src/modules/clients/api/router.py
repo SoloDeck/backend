@@ -9,7 +9,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.infrastructure.database.session import get_db_session
 from src.modules.clients.application.service import ClientsService
 from src.modules.clients.domain.value_objects.client_status import ClientStatus
-from src.modules.clients.schemas.request import ClientRequest, CommLogRequest
+from src.modules.clients.schemas.request import (
+    ClientRequest,
+    ClientUpdateRequest,
+    CommLogRequest,
+)
 from src.modules.clients.schemas.response import (
     ClientResponse,
     CommLogResponse,
@@ -73,7 +77,7 @@ async def get_client(
 @router.patch("/{client_id}", response_model=ApiResponse[ClientResponse])
 async def update_client(
     client_id: uuid.UUID,
-    payload: ClientRequest,
+    payload: ClientUpdateRequest,
     user_id: CurrentUserId,
     db: DBSession,
 ) -> ApiResponse[ClientResponse]:
