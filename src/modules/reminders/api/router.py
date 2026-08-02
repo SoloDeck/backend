@@ -20,7 +20,11 @@ from src.modules.reminders.domain.value_objects.reminder_rules import (
 )
 from src.modules.reminders.domain.value_objects.reminder_status import ReminderStatus
 from src.modules.reminders.domain.value_objects.reminder_target import ReminderTargetType
-from src.modules.reminders.schemas.request import ReminderRequest, ReminderRuleUpdate
+from src.modules.reminders.schemas.request import (
+    CreateReminderRequest,
+    ReminderRuleUpdate,
+    UpdateReminderRequest,
+)
 from src.modules.reminders.schemas.response import (
     ReminderDeliveryResponse,
     ReminderResponse,
@@ -41,7 +45,7 @@ class MsgResp(BaseModel):
 
 @router.post("", response_model=ApiResponse[ReminderResponse], status_code=201)
 async def create_reminder(
-    payload: ReminderRequest,
+    payload: CreateReminderRequest,
     user_id: CurrentUserId,
     db: DBSession,
 ) -> ApiResponse[ReminderResponse]:
@@ -263,7 +267,7 @@ async def get_reminder(
 @router.patch("/{reminder_id}", response_model=ApiResponse[ReminderResponse])
 async def update_reminder(
     reminder_id: uuid.UUID,
-    payload: ReminderRequest,
+    payload: UpdateReminderRequest,
     user_id: CurrentUserId,
     db: DBSession,
 ) -> ApiResponse[ReminderResponse]:
