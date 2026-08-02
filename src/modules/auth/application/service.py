@@ -165,12 +165,28 @@ class AuthService:
         if claims.get("type") != "refresh":
             raise AuthenticationError("Invalid token type")
 
+        if await self.repo.is_token_blacklisted(claims["jti"]):
+            raise AuthenticationError("Refresh token has already been used")
+
         user_id = uuid.UUID(claims["sub"])
         user = await self.repo.get_user_by_id(user_id)
         if user is None or user.status != "active":
             raise AuthenticationError("User not found or suspended")
         if user.sessions_revoked_at is not None and claims["iat"] < user.sessions_revoked_at.timestamp():
             raise AuthenticationError("Session has been revoked")
+
+        # Single-use: this refresh token is consumed the moment it mints a new pair —
+        # blacklist it by its own jti so replaying it (e.g. a stolen/leaked token used
+        # after the legitimate client already refreshed) is rejected, not honored.
+        await self.repo.add_token_blacklist(
+            TokenBlacklistModel(
+                jti=claims["jti"],
+                user_id=user_id,
+                expires_at=datetime.fromtimestamp(claims["exp"], tz=UTC),
+                blacklisted_at=datetime.now(UTC),
+            )
+        )
+        await self.repo.flush()
 
         return await self._issue_tokens(user_id=user.id, email=user.email, role=user.role)
 

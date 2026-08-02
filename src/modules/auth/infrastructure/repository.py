@@ -67,6 +67,12 @@ class AuthRepository:
     async def add_token_blacklist(self, entry: TokenBlacklistModel) -> None:
         self.db.add(entry)
 
+    async def is_token_blacklisted(self, jti: str) -> bool:
+        result = await self.db.scalar(
+            select(TokenBlacklistModel.id).where(TokenBlacklistModel.jti == jti)
+        )
+        return result is not None
+
     async def get_oauth_identity(self, provider: str, provider_sub: str):
         return await self.db.scalar(
             select(OAuthIdentityModel).where(
