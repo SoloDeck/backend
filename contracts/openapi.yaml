@@ -6391,6 +6391,9 @@ components:
           type: number
           format: decimal
           default: 0
+          minimum: 0
+          maximum: 1
+          description: Fraction of subtotal, e.g. 0.10 for 10% VAT — not a percentage.
         notes:
           type: string
         line_items:
@@ -6424,6 +6427,9 @@ components:
         tax_rate:
           type: number
           format: decimal
+          minimum: 0
+          maximum: 1
+          description: Fraction of subtotal, e.g. 0.10 for 10% VAT — not a percentage.
         notes:
           type: string
         line_items:
