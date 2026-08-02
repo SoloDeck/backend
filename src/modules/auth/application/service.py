@@ -190,7 +190,13 @@ class AuthService:
 
         return await self._issue_tokens(user_id=user.id, email=user.email, role=user.role)
 
-    async def logout(self, user_id: uuid.UUID, jti: str, expires_at: datetime) -> None:
+    async def logout(
+        self,
+        user_id: uuid.UUID,
+        jti: str,
+        expires_at: datetime,
+        refresh_token: str | None = None,
+    ) -> None:
         entry = TokenBlacklistModel(
             jti=jti,
             user_id=user_id,
@@ -198,6 +204,29 @@ class AuthService:
             blacklisted_at=datetime.now(UTC),
         )
         await self.repo.add_token_blacklist(entry)
+
+        # Blacklisting only the access token leaves the refresh token valid for up
+        # to 30 more days — anyone still holding it (cached mobile app, captured
+        # token) could mint new access tokens after the user thinks they've logged
+        # out. Optional: older/other clients that don't send one still just get the
+        # access-token blacklist, same as before.
+        if refresh_token:
+            try:
+                claims = jwt.decode(
+                    refresh_token, settings.jwt_secret_key, algorithms=[settings.jwt_algorithm]
+                )
+            except JWTError:
+                claims = None
+            if claims is not None and claims.get("type") == "refresh":
+                await self.repo.add_token_blacklist(
+                    TokenBlacklistModel(
+                        jti=claims["jti"],
+                        user_id=user_id,
+                        expires_at=datetime.fromtimestamp(claims["exp"], tz=UTC),
+                        blacklisted_at=datetime.now(UTC),
+                    )
+                )
+
         await self.repo.flush()
 
     @staticmethod

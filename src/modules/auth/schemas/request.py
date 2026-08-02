@@ -41,6 +41,15 @@ class RefreshRequest(BaseModel):
     refresh_token: str
 
 
+class LogoutRequest(BaseModel):
+    # Optional so existing callers that only ever sent an access token keep working.
+    # Without it, logout only blacklists the access token — the refresh token stays
+    # valid until it naturally expires (up to 30 days), so anyone still holding it
+    # (a cached mobile app, a captured token) can silently mint new access tokens
+    # after the user thinks they've logged out. Pass it to actually close that gap.
+    refresh_token: str | None = None
+
+
 class PasswordResetRequestBody(BaseModel):
     email: EmailStr
 

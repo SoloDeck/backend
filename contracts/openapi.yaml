@@ -458,11 +458,29 @@ paths:
       tags: [Auth]
       summary: Invalidate current session
       description: |
-        Blacklists the caller's access token in Redis. Any subsequent request carrying
-        the same token returns 401. The refresh token is also revoked server-side.
+        Blacklists the caller's access token (stored in Postgres, not Redis). Any
+        subsequent request carrying the same token returns 401. Pass `refresh_token`
+        in the body to also blacklist it — without it, the refresh token stays valid
+        until it naturally expires (up to 30 days), so anyone else holding it can
+        still mint new access tokens after this call.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LogoutRequest'
       responses:
-        '204':
+        '200':
           description: Logged out
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/MessageResponse'
         '401':
           $ref: '#/components/responses/Unauthorized'
 
@@ -4770,6 +4788,15 @@ components:
           enum: [development, staging, production]
         google_web_client_id:
           type: string
+
+    LogoutRequest:
+      type: object
+      properties:
+        refresh_token:
+          type: string
+          description: |
+            Optional. If provided, also blacklisted so it can't be used to mint a new
+            access token — without it, only the current access token is invalidated.
 
     PasswordResetRequestBody:
       type: object
