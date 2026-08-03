@@ -9,6 +9,7 @@ from sqlalchemy import insert, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.ai.shared.constants import SUPPORTED_LLM_PROVIDERS
+from src.config.settings import settings
 from src.infrastructure.database.models import (
     AiCostRecordModel,
     AIProviderConfigurationModel,
@@ -63,6 +64,20 @@ async def _admin_headers_with_id(client: AsyncClient, db_session: AsyncSession) 
     headers = await _admin_headers(client, db_session)
     me = await client.get("/api/v1/users/me", headers=headers)
     return headers, me.json()["data"]["id"]
+
+
+@pytest.fixture
+def all_provider_keys_set(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Giả lập môi trường ĐÃ cấu hình đủ API key cho mọi nhà cung cấp LLM.
+
+    PATCH /admin/ai-provider giờ dựng thử provider trước khi ghi, nên việc đổi
+    sang một nhà cung cấp chỉ thành công khi key của nó có mặt. CI KHÔNG đặt
+    GROQ_API_KEY/GEMINI_API_KEY (xem job "Test / Integration" trong ci.yml),
+    còn máy dev thì thường có trong `.env` — không ghim lại thì cùng một test sẽ
+    xanh ở máy và đỏ trên CI.
+    """
+    for name in SUPPORTED_LLM_PROVIDERS:
+        monkeypatch.setattr(settings, f"{name}_api_key", f"test-{name}-key", raising=False)
 
 
 def _plan_payload(**overrides: object) -> dict:
@@ -1243,7 +1258,7 @@ class TestAdminGetAiProvider:
 
 class TestAdminUpdateAiProvider:
     async def test_switches_provider_and_persists(
-        self, client: AsyncClient, db_session: AsyncSession
+        self, client: AsyncClient, db_session: AsyncSession, all_provider_keys_set: None
     ) -> None:
         headers = await _admin_headers(client, db_session)
 
@@ -1290,6 +1305,41 @@ class TestAdminUpdateAiProvider:
         headers = await _admin_headers(client, db_session)
         resp = await client.patch("/api/v1/admin/ai-provider", json={}, headers=headers)
         assert resp.status_code == 422
+
+    async def test_provider_without_api_key_is_refused_not_persisted(
+        self,
+        client: AsyncClient,
+        db_session: AsyncSession,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Đổi sang nhà cung cấp chưa có API key phải bị từ chối NGAY, không ghi.
+
+        Đây là kịch bản làm sập toàn bộ AI: tên nhà cung cấp hợp lệ nên schema
+        cho qua, nhưng provider ném RuntimeError lúc khởi tạo vì thiếu key. Nếu
+        cứ ghi rồi trả 200, ProviderFactory đọc lại dòng này ở MỌI request AI và
+        cả bốn generator trả 500 cho tới khi có người đổi ngược lại.
+        """
+        headers = await _admin_headers(client, db_session)
+
+        before = await client.get("/api/v1/admin/ai-provider", headers=headers)
+        active = before.json()["data"]["llm_provider"]
+        target = next(p for p in sorted(SUPPORTED_LLM_PROVIDERS) if p != active)
+
+        # Nhà cung cấp đích không có key; nhà cung cấp đang dùng thì có.
+        monkeypatch.setattr(settings, f"{target}_api_key", "", raising=False)
+        monkeypatch.setattr(settings, f"{active}_api_key", f"test-{active}-key", raising=False)
+
+        resp = await client.patch(
+            "/api/v1/admin/ai-provider",
+            json={"llm_provider": target},
+            headers=headers,
+        )
+        assert resp.status_code == 422, resp.text
+        assert target in resp.json()["error"]["message"]
+
+        # Quan trọng nhất: cấu hình KHÔNG được đổi.
+        after = await client.get("/api/v1/admin/ai-provider", headers=headers)
+        assert after.json()["data"]["llm_provider"] == active
 
     async def test_non_admin_returns_403(self, client: AsyncClient) -> None:
         headers = await _user_headers(client)
@@ -1381,7 +1431,7 @@ class TestAdminAuditLogs:
         assert any("full_name=Audited Name" in e["description"] for e in logs)
 
     async def test_ai_provider_update_creates_audit_log(
-        self, client: AsyncClient, db_session: AsyncSession
+        self, client: AsyncClient, db_session: AsyncSession, all_provider_keys_set: None
     ) -> None:
         headers, admin_id = await _admin_headers_with_id(client, db_session)
 

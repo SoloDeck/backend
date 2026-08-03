@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.ai.shared.constants import SUPPORTED_LLM_PROVIDERS
+from src.ai.shared.llm_provider import get_llm_provider
 from src.infrastructure.database.models import AIProviderConfigurationModel, PlanModel, SubscriptionModel, UserModel
 from src.modules.admin.domain.entities import AdminUser, FeatureFlagRollout, SubscriptionOverride
 from src.modules.admin.infrastructure.repository import AdminRepository
@@ -387,6 +388,20 @@ class AdminService:
             raise ValidationError(
                 f"Unsupported LLM provider: {llm_provider}"
             )
+
+        # Dựng thử provider TRƯỚC khi ghi. Tên hợp lệ không có nghĩa là dùng
+        # được: GroqProvider/GeminiProvider ném RuntimeError khi thiếu API key,
+        # và một provider chưa cài đặt `generate` thì ném TypeError. Nếu ghi
+        # trước rồi mới phát hiện, PATCH vẫn trả 200 nhưng MỌI request AI sau đó
+        # trả 500 (ProviderFactory đọc lại dòng này ở mọi request) cho tới khi
+        # có người đổi ngược lại — mất toàn bộ tính năng AI vì một thao tác
+        # tưởng như đã thành công.
+        try:
+            get_llm_provider(llm_provider)
+        except Exception as err:  # noqa: BLE001 — mọi lỗi khởi tạo đều KHÔNG được ghi
+            raise ValidationError(
+                f"LLM provider '{llm_provider}' is not usable: {err}"
+            ) from err
 
         configuration.llm_provider = llm_provider
         configuration.updated_by = admin_id

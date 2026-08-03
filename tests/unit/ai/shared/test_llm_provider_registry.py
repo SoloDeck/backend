@@ -15,7 +15,20 @@ from src.ai.shared.constants import (
     LLMProviderName,
 )
 from src.ai.shared.llm_provider import _PROVIDERS, BaseLLMProvider, get_llm_provider
+from src.config.settings import settings
 from src.modules.admin.schemas.request import AdminUpdateLLMProviderRequest
+
+
+@pytest.fixture(autouse=True)
+def _provider_api_keys(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Cấp key giả cho mọi nhà cung cấp.
+
+    Provider đọc API key ngay trong __init__ và ném RuntimeError nếu trống, nên
+    nếu không ghim thì các test dựng provider dưới đây sẽ xanh ở máy dev (có
+    `.env`) và đỏ trên CI — job test KHÔNG đặt GROQ_API_KEY/GEMINI_API_KEY.
+    """
+    for name in SUPPORTED_LLM_PROVIDERS:
+        monkeypatch.setattr(settings, f"{name}_api_key", f"test-{name}-key", raising=False)
 
 
 class TestProviderRegistryConsistency:
