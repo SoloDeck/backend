@@ -5,6 +5,8 @@ from typing import Literal
 
 from pydantic import BaseModel, EmailStr, Field
 
+from src.ai.shared.constants import LLMProviderName
+
 
 class AdminUpdateUserRequest(BaseModel):
     role: Literal["freelancer", "admin"] | None = None
@@ -71,8 +73,6 @@ class AdminUpdateFeatureFlagRequest(BaseModel):
 
 
 class AdminUpdateLLMProviderRequest(BaseModel):
-    llm_provider: Literal[
-        "groq",
-        "gemini",
-        "openai",
-    ]
+    # Dùng chung LLMProviderName với get_llm_provider() để danh sách nhà cung
+    # cấp chỉ tồn tại ở MỘT nơi (src/ai/shared/constants.py).
+    llm_provider: LLMProviderName

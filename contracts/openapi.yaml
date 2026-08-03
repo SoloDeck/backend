@@ -7574,7 +7574,7 @@ components:
       properties:
         llm_provider:
           type: string
-          enum: [groq, gemini, openai]
+          enum: [groq, gemini]
 
     AdminUpdateLLMProviderRequest:
       type: object
@@ -7582,7 +7582,7 @@ components:
       properties:
         llm_provider:
           type: string
-          enum: [groq, gemini, openai]
+          enum: [groq, gemini]
 
     PlatformMetricsResponse:
       type: object
