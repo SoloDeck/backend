@@ -313,3 +313,72 @@ class TestNgayTrenBaoGia:
 
         han = (self.TAO_LUC + timedelta(days=DEFAULT_VALID_DAYS)).strftime("%d/%m/%Y")
         assert doc.valid_until == han
+
+
+class TestCongChanTongHangMuc:
+    """Không cho gửi khi tổng các hạng mục chi phí ≠ giá chào khách.
+
+    Cùng lý do với cổng "tổng mốc thanh toán = 100%": khách cầm tờ báo giá tự cộng cột
+    "Thành tiền" ra một số, rồi đọc dòng "Tổng báo giá" ra số khác. Mất uy tín ngay tại
+    bàn, và không cãi được.  #Huynh
+    """
+
+    @staticmethod
+    def _proposal_with(items, total=500_000_000):
+        return _make_proposal(
+            status="draft",
+            content={
+                "pricing_detail": {"final_price": total, "suggested": total},
+                "pricing_items": items,
+            },
+        )
+
+    async def test_chan_gui_khi_tong_lech_gia_chao(self) -> None:
+        proposal = self._proposal_with(
+            [
+                {"label": "Backend", "amount": 200_000_000},
+                {"label": "Frontend", "amount": 100_000_000},  # tổng 300tr ≠ 500tr
+            ]
+        )
+        db = AsyncMock()
+        db.scalar.side_effect = [proposal, None]
+
+        with pytest.raises(BusinessRuleError) as err:
+            await ProposalsService(db=db).transition_status(
+                proposal.owner_user_id, proposal.id, "sent"
+            )
+
+        # Câu lỗi phải nêu CẢ HAI con số, không chỉ nói "sai".
+        assert "300" in str(err.value) and "500" in str(err.value)
+
+    async def test_cho_gui_khi_tong_khop(self) -> None:
+        proposal = self._proposal_with(
+            [
+                {"label": "Backend", "amount": 300_000_000},
+                {"label": "Frontend", "amount": 200_000_000},  # đúng 500tr
+            ]
+        )
+        db = AsyncMock()
+        db.scalar.side_effect = [proposal, None]
+
+        with patch("src.modules.proposals.application.service.event_bus") as bus:
+            bus.publish = AsyncMock()
+            result = await ProposalsService(db=db).transition_status(
+                proposal.owner_user_id, proposal.id, "sent"
+            )
+
+        assert result.status == "sent"
+
+    async def test_khong_chan_dang_cu_chi_co_nhan(self) -> None:
+        """Dạng cũ (chỉ nhãn) thì backend tự chia đều nên KHÔNG BAO GIỜ lệch — chặn là oan."""
+        proposal = self._proposal_with(["Backend", "Frontend", "Kiem thu"])
+        db = AsyncMock()
+        db.scalar.side_effect = [proposal, None]
+
+        with patch("src.modules.proposals.application.service.event_bus") as bus:
+            bus.publish = AsyncMock()
+            result = await ProposalsService(db=db).transition_status(
+                proposal.owner_user_id, proposal.id, "sent"
+            )
+
+        assert result.status == "sent"

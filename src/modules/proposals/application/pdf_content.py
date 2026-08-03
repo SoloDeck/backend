@@ -21,6 +21,7 @@ PDF, dù frontend làm ĐÚNG hợp đồng.
 thiếu dữ liệu thì để trống chứ không nổ.  #Huynh
 """
 
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from src.ai.proposal_generator.schemas.proposal_document import (
@@ -109,6 +110,31 @@ def _resolve_total_int(content: dict[str, Any]) -> int:
     return 0
 
 
+def typed_pricing_items(override: list[Any]) -> list[tuple[str, int]]:
+    """Bóc dạng MỚI ``[{"label", "amount"}]`` ra ``[(nhãn, tiền)]``. Rỗng = không phải dạng này.
+
+    Chỉ nhận khi **mọi** phần tử đều là dict có nhãn — nửa nọ nửa kia thì trả rỗng để chỗ gọi
+    rơi về dạng cũ, thay vì dựng một bảng lắp ghép từ hai nguồn.
+
+    Tiền thiếu/hỏng tính là 0 chứ không loại bỏ dòng: mất hẳn một hạng mục khỏi báo giá gửi
+    khách nguy hiểm hơn nhiều so với một dòng ghi 0đ mà freelancer nhìn thấy và sửa.  #Huynh
+    """
+    if not all(isinstance(item, dict) for item in override):
+        return []
+
+    typed: list[tuple[str, int]] = []
+    for item in override:
+        label = _text(item.get("label") or item.get("description"))
+        if not label:
+            return []
+        try:
+            amount = int(Decimal(str(item.get("amount") or 0)))
+        except (TypeError, ValueError, InvalidOperation):
+            amount = 0
+        typed.append((label, max(amount, 0)))
+    return typed
+
+
 def _structured_pricing(content: dict[str, Any]) -> tuple[list[PricingLineItem], str, str]:
     """Bảng giá có cấu trúc cho template — LẤY TỪ CÙNG NGUỒN với card trên màn hình.
 
@@ -120,11 +146,35 @@ def _structured_pricing(content: dict[str, Any]) -> tuple[list[PricingLineItem],
     tổng đó, và ĐỒNG LẺ do làm tròn dồn vào dòng cuối để bảng cộng ra ĐÚNG tổng — y hệt
     frontend. Bảng cộng không ra tổng là thứ khách soi ra ngay.  #Huynh
     """
-    # NHÁNH ƯU TIÊN — freelancer đã tự sửa danh sách hạng mục ở màn review (Stage 4, mục 7).
-    # `pricing_items` chỉ chứa NHÃN; số tiền chia ĐỀU từ giá đã chốt, dòng cuối gánh phần lẻ
-    # để tổng khớp tuyệt đối. Ghi đè cách chia của bộ định giá vì đây là ý freelancer.  #Huynh
+    # NHÁNH ƯU TIÊN — freelancer đã tự sửa hạng mục ở màn review (Stage 4, mục 7).
+    #
+    # Nhận HAI dạng, vì shape đã đổi và bản nháp cũ trong DB vẫn dùng dạng cũ:
+    #   - `["Nhãn A", "Nhãn B"]`            (cũ) → chỉ có nhãn, số tiền CHIA ĐỀU từ giá chốt
+    #   - `[{"label": ..., "amount": ...}]` (mới) → freelancer tự gõ tiền, DÙNG THẲNG
+    #
+    # Vì sao thêm dạng mới: bảng bên trái màn review hiện số tiền chia đều, nhưng đó chỉ là
+    # con số FE tự tính để hiển thị — nó không được gửi đi. Nên khi freelancer mới chỉ chốt
+    # giá mà chưa sửa nhãn, panel hiện "125tr × 4" trong khi tờ báo giá vẫn giữ tỷ lệ của bộ
+    # định giá (200/150/75/75). Hai bên nói hai kiểu. Cho gõ tiền thẳng thì hết mơ hồ: cái
+    # freelancer thấy chính là cái khách nhận.
+    #
+    # KHÔNG ép tổng các dòng phải bằng giá chào ở đây — `ProposalsService.transition_status`
+    # mới là chỗ chặn gửi khi lệch, giống hệt cổng "tổng mốc thanh toán = 100%". Tầng render
+    # thì vẽ trung thực thứ đang có, để freelancer nhìn thấy chỗ lệch mà sửa.  #Huynh
     override = content.get("pricing_items")
-    if isinstance(override, list):
+    if isinstance(override, list) and override:
+        typed = typed_pricing_items(override)
+        if typed:
+            total = sum(amount for _, amount in typed)
+            return (
+                [
+                    PricingLineItem(description=label, amount=_money(amount, "VND"))
+                    for label, amount in typed
+                ],
+                _money(total, "VND"),
+                "",
+            )
+
         labels = [_text(x) for x in override if _text(x)]
         total_int = _resolve_total_int(content)
         if labels and total_int > 0:

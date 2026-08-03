@@ -22,6 +22,7 @@ from src.modules.deals.infrastructure.repository import DealsRepository
 from src.modules.proposals.application.pdf_content import (
     build_proposal_document,
     extract_payment_milestones,
+    typed_pricing_items,
 )
 from src.modules.proposals.infrastructure.repository import ProposalsRepository
 from src.modules.proposals.schemas.request import ProposalRequest
@@ -652,6 +653,26 @@ class ProposalsService:
                     raise BusinessRuleError(
                         f"Tổng tỷ lệ các đợt thanh toán đang là {total_percent}%, phải bằng 100%. "
                         "Hãy sửa mục 'Mốc thanh toán' trước khi gửi cho khách."
+                    )
+
+            # KHÔNG cho gửi khi tổng các hạng mục chi phí ≠ giá chào khách.
+            #
+            # Cùng lý do với cổng 100% ngay trên: khách cầm tờ báo giá tự cộng cột "Thành
+            # tiền" ra một số, rồi đọc dòng "Tổng báo giá" ra số khác. Mất uy tín ngay tại
+            # bàn, và không cãi được.
+            #
+            # CHỈ chặn khi freelancer đã tự gõ tiền từng dòng (dạng `{label, amount}`). Dạng
+            # cũ chỉ có nhãn thì backend tự chia đều theo giá chốt nên không bao giờ lệch —
+            # chặn là chặn oan.  #Huynh
+            typed_items = typed_pricing_items(content.get("pricing_items") or [])
+            if typed_items:
+                items_total = sum(amount for _, amount in typed_items)
+                agreed = int(final_price or dto_total or 0)
+                if agreed > 0 and items_total != agreed:
+                    raise BusinessRuleError(
+                        f"Tổng các hạng mục chi phí đang là {items_total:,.0f} đ, "
+                        f"nhưng giá chào khách là {agreed:,.0f} đ. "
+                        "Hãy sửa mục 'Hạng mục chi phí' cho khớp trước khi gửi."
                     )
 
             existing = await self.repo.get_sent_by_deal(proposal.deal_id, proposal_id)
