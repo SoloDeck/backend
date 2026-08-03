@@ -13,7 +13,7 @@ import hashlib
 import hmac
 import time
 import uuid
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
 import httpx
@@ -30,6 +30,38 @@ class PaymentGatewayError(DomainError):
 
     def __init__(self, message: str = "Payment provider request failed") -> None:
         super().__init__(message)
+
+
+def _is_success_code(result_code: Any) -> bool:
+    """MoMo báo thành công bằng ``resultCode`` = 0. Nhận cả ``0`` lẫn ``"0"``.
+
+    Bản trước so thẳng ``payload.get("resultCode") == 0``. JSON chuẩn của MoMo trả số
+    nguyên, nhưng chỉ cần một khâu trung gian biến nó thành chuỗi (proxy, form-encoded,
+    bản mock của đối tác) là phép so ra ``False`` — và **thanh toán thành công bị ghi nhận
+    là THẤT BẠI**. Chữ ký vẫn khớp, vì chuỗi ký nội suy ``resultCode`` thành text ở cả hai
+    phía, nên lỗi lọt qua mọi lớp kiểm mà không để lại dấu vết.
+
+    Không parse được thì coi là thất bại: thà không kích hoạt gói còn hơn kích hoạt nhầm
+    cho một callback không đọc nổi.  #Huynh
+    """
+    try:
+        return int(str(result_code).strip()) == 0
+    except (TypeError, ValueError):
+        return False
+
+
+def _parse_amount(amount: Any) -> Decimal | None:
+    """Số tiền MoMo báo đã thu. ``None`` khi thiếu hoặc không đọc được.
+
+    Qua ``str()`` chứ không ``Decimal(float)``: dựng Decimal từ float kéo theo sai số nhị
+    phân (``Decimal(199000.0)`` không phải lúc nào cũng đúng y con số), mà đây là TIỀN.
+    """
+    if amount is None:
+        return None
+    try:
+        return Decimal(str(amount).strip())
+    except (TypeError, ValueError, InvalidOperation):
+        return None
 
 
 class _MomoSignedClient:
@@ -97,8 +129,9 @@ class _MomoSignedClient:
         return CallbackResult(
             order_id=payload["orderId"],
             provider_reference=str(trans_id) if trans_id is not None else None,
-            success=payload.get("resultCode") == 0,
+            success=_is_success_code(payload.get("resultCode")),
             message=str(payload.get("message", "")),
+            amount=_parse_amount(payload.get("amount")),
         )
 
     def build_ack_response(self, result: CallbackResult) -> dict[str, Any]:
