@@ -34,7 +34,14 @@ _CATEGORIES: list[FreelancerCategoryResponse] = [
 _NEW_THRESHOLD_DAYS = 30
 
 
-def _to_response(user, project_count: int) -> FreelancerPublicResponse:
+def _to_response(
+    user, project_count: int, *, include_intake_token: bool = False
+) -> FreelancerPublicResponse:
+    """Hồ sơ công khai của một freelancer.
+
+    `include_intake_token` chỉ bật ở trang hồ sơ — danh sách tìm kiếm không cần token, và
+    không trả thì payload gọn hơn.  #Huynh
+    """
     threshold = datetime.now(UTC) - timedelta(days=_NEW_THRESHOLD_DAYS)
     created = user.created_at
     if created.tzinfo is None:
@@ -54,6 +61,7 @@ def _to_response(user, project_count: int) -> FreelancerPublicResponse:
         completed_project_count=project_count,
         is_new=created >= threshold,
         created_at=user.created_at,
+        intake_share_token=user.intake_share_token if include_intake_token else None,
     )
 
 
@@ -146,4 +154,4 @@ class FreelancersService:
             or 0
         )
 
-        return _to_response(user, project_count)
+        return _to_response(user, project_count, include_intake_token=True)

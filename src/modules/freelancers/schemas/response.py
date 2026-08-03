@@ -26,3 +26,15 @@ class FreelancerPublicResponse(BaseModel):
     completed_project_count: int
     is_new: bool
     created_at: datetime
+
+    # Token biểu mẫu tiếp nhận — để trang hồ sơ công khai dựng nút "Gửi yêu cầu" trỏ thẳng
+    # tới `/bieu-mau/{token}` của chính freelancer này.
+    #
+    # Thiếu nó thì danh bạ là NGÕ CỤT: khách tìm ra người rồi không có đường liên hệ.
+    #
+    # KHÔNG phải rò rỉ: token sinh ra để freelancer tự đem đi chia sẻ, và cả hai truy vấn
+    # đọc bảng này đều lọc `is_listed=True` — chỉ người TỰ CHỌN hiện công khai mới lộ.
+    #
+    # `None` ở hai trường hợp: (1) tài khoản cũ chưa có token, (2) trong danh sách tìm kiếm
+    # — chỗ đó không cần nên không trả, cho payload gọn.  #Huynh
+    intake_share_token: str | None = None

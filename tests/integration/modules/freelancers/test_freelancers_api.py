@@ -292,6 +292,36 @@ class TestGetFreelancer:
         resp = await client.get(f"/api/v1/public/freelancers/{user['id']}")
         assert resp.status_code == 200
 
+    async def test_returns_intake_share_token(self, client: AsyncClient) -> None:
+        """Trang hồ sơ cần token để dựng nút "Gửi yêu cầu".
+
+        Thiếu trường này thì danh bạ là NGÕ CỤT: khách tìm ra người rồi không có đường liên
+        hệ. Token vốn sinh ra để freelancer tự đem đi chia sẻ, và endpoint đã lọc
+        `is_listed=True` nên chỉ người tự chọn hiện công khai mới lộ.  #Huynh
+        """
+        user = await _register(client)
+        await _set_profile(client, user["headers"], is_listed=True)
+
+        resp = await client.get(f"/api/v1/public/freelancers/{user['id']}")
+
+        token = resp.json()["data"]["intake_share_token"]
+        assert token, "hồ sơ công khai phải kèm token biểu mẫu"
+
+        # Token phải MỞ ĐƯỢC biểu mẫu thật, không chỉ là một chuỗi bất kỳ.
+        form = await client.get(f"/api/v1/intake/{token}/config")
+        assert form.status_code == 200, form.text
+
+    async def test_search_results_omit_intake_token(self, client: AsyncClient) -> None:
+        """Danh sách tìm kiếm KHÔNG trả token — chỗ đó không cần, để payload gọn."""
+        user = await _register(client)
+        await _set_profile(client, user["headers"], is_listed=True)
+
+        resp = await client.get("/api/v1/public/freelancers")
+
+        found = [f for f in resp.json()["data"] if f["id"] == user["id"]]
+        assert found, "freelancer đã bật hiện công khai phải nằm trong kết quả"
+        assert found[0]["intake_share_token"] is None
+
 
 # ---------------------------------------------------------------------------
 # PATCH /users/me/freelancer-profile
