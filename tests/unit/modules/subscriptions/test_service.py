@@ -259,10 +259,104 @@ async def test_callback_unknown_order_raises_not_found() -> None:
         await service.handle_payment_callback(PaymentProvider.MOMO, payload)
 
 
-async def test_callback_on_expired_checkout_does_not_activate_subscription() -> None:
+async def test_callback_success_after_expiry_still_activates_subscription() -> None:
+    """IPN báo TRẢ TIỀN THÀNH CÔNG tới muộn thì vẫn phải kích hoạt gói.
+
+    Trước đây chỗ này làm ngược: đánh dấu `expired` rồi ack "Confirm Success" cho MoMo mà
+    không kích hoạt — người dùng mất tiền, không nhận được gì, và không có log nào để biết.
+    Tiền là THẬT; hệ thống không có đường hoàn tiền tự động, nên từ chối kích hoạt là lấy
+    tiền mà không giao hàng.  #Huynh
+    """
+    momo = MockMomoClient()
+    user_id, sub_id, plan_id, payment_id = (uuid.uuid4() for _ in range(4))
+    payload = momo.sign_ipn(order_id=str(payment_id), amount=199000, trans_id=777)
+
+    payment = PaymentStub(
+        id=payment_id,
+        user_id=user_id,
+        subscription_id=sub_id,
+        plan_id=plan_id,
+        status="pending",
+        expires_at=datetime.now(UTC) - timedelta(minutes=1),
+    )
+    subscription = SubscriptionStub(id=sub_id, user_id=user_id, plan_id=uuid.uuid4())
+    plan = PlanStub(id=plan_id, slug="pro")
+    repo = _repo(
+        get_payment_by_id_for_update=payment, get_plan=plan, get_subscription=subscription
+    )
+    repo.create_billing_event = AsyncMock()
+    service = SubscriptionsService(db=AsyncMock(), repo=repo, momo_client=momo)
+
+    ack = await service.handle_payment_callback(PaymentProvider.MOMO, payload)
+
+    assert ack["resultCode"] == 0
+    assert payment.status == "succeeded"
+    assert subscription.plan_id == plan_id
+    assert subscription.status == "active"
+    repo.create_billing_event.assert_awaited_once()
+
+
+async def test_callback_with_mismatched_amount_does_not_activate() -> None:
+    """Số tiền provider báo thu lệch số ta yêu cầu → KHÔNG kích hoạt.
+
+    Chữ ký HMAC đã phủ `amount` nên không ai giả mạo được; đây là chốt cho trường hợp lệch
+    thật (cấu hình sai, thu thiếu). Lệch mà vẫn kích hoạt là biếu không cả gói.  #Huynh
+    """
+    momo = MockMomoClient()
+    user_id, sub_id, plan_id, payment_id = (uuid.uuid4() for _ in range(4))
+    # Ký một IPN hợp lệ nhưng số tiền chỉ bằng một phần giá gói (PaymentStub = 199000).
+    payload = momo.sign_ipn(order_id=str(payment_id), amount=50000)
+
+    payment = PaymentStub(
+        id=payment_id, user_id=user_id, subscription_id=sub_id, plan_id=plan_id, status="pending"
+    )
+    plan_truoc = uuid.uuid4()
+    subscription = SubscriptionStub(id=sub_id, user_id=user_id, plan_id=plan_truoc)
+    repo = _repo(get_payment_by_id_for_update=payment, get_subscription=subscription)
+    repo.create_billing_event = AsyncMock()
+    service = SubscriptionsService(db=AsyncMock(), repo=repo, momo_client=momo)
+
+    ack = await service.handle_payment_callback(PaymentProvider.MOMO, payload)
+
+    assert ack["resultCode"] == 0  # vẫn ack để MoMo ngừng retry — retry cũng vẫn lệch
+    assert payment.status == "failed"
+    assert "không khớp" in (payment.failure_reason or "")
+    # Gói giữ NGUYÊN như trước, không nhảy sang gói đã trả hụt tiền.
+    assert subscription.plan_id == plan_truoc
+
+
+async def test_callback_missing_plan_raises_instead_of_crashing() -> None:
+    """Gói bị xoá giữa chừng → lỗi rõ ràng, không phải AttributeError 500 trần.
+
+    Ném lỗi (MoMo sẽ retry) thay vì đánh dấu thất bại: admin khôi phục gói xong thì lần
+    retry kế tiếp tự kích hoạt được.  #Huynh
+    """
+    momo = MockMomoClient()
+    user_id, sub_id, plan_id, payment_id = (uuid.uuid4() for _ in range(4))
+    payload = momo.sign_ipn(order_id=str(payment_id), amount=199000)
+
+    payment = PaymentStub(
+        id=payment_id, user_id=user_id, subscription_id=sub_id, plan_id=plan_id, status="pending"
+    )
+    repo = _repo(
+        get_payment_by_id_for_update=payment,
+        get_plan=None,  # gói đã biến mất
+        get_subscription=SubscriptionStub(id=sub_id, user_id=user_id, plan_id=uuid.uuid4()),
+    )
+    repo.create_billing_event = AsyncMock()
+    service = SubscriptionsService(db=AsyncMock(), repo=repo, momo_client=momo)
+
+    with pytest.raises(NotFoundError):
+        await service.handle_payment_callback(PaymentProvider.MOMO, payload)
+
+
+async def test_callback_failure_after_expiry_marks_expired_without_activating() -> None:
+    """Callback THẤT BẠI đến muộn thì vẫn đóng intent lại — không có tiền nào để tôn trọng."""
     momo = MockMomoClient()
     payment_id = uuid.uuid4()
-    payload = momo.sign_ipn(order_id=str(payment_id), amount=199000)
+    payload = momo.sign_ipn(
+        order_id=str(payment_id), amount=199000, result_code=1, message="Payment failed"
+    )
 
     payment = PaymentStub(
         id=payment_id,

@@ -20,6 +20,9 @@ class CallbackResult(NamedTuple):
     provider_reference: str | None
     success: bool
     message: str
+    # Số tiền provider BÁO ĐÃ THU. Để đối chiếu với số tiền ta yêu cầu — lệch nhau là bất
+    # thường, phải có người xem. `None` khi provider không gửi hoặc không đọc được.
+    amount: Decimal | None = None
 
 
 class PaymentGateway(Protocol):

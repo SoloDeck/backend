@@ -167,3 +167,6 @@ class AdminPlatformMetricsResponse(BaseModel):
     total_deals: int
     total_clients: int
     ai_cost_last_30_days: Decimal
+
+class AdminLLMProviderResponse(BaseModel):
+    llm_provider: str

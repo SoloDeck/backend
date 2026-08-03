@@ -3817,6 +3817,48 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
 
+  /admin/ai-provider:
+    get:
+      tags: [Admin]
+      summary: Get the active LLM provider
+      description: There is exactly one configuration row for the whole platform — admins swap it, they don't create/delete entries.
+      responses:
+        '200':
+          description: Current AI provider configuration
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/AdminLLMProviderResponse'
+    patch:
+      tags: [Admin]
+      summary: Switch the active LLM provider
+      description: Applies immediately to all subsequent AI generation calls (lead qualifier, proposal/contract/follow-up generators). Recorded in the audit log.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminUpdateLLMProviderRequest'
+      responses:
+        '200':
+          description: Updated AI provider configuration
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/AdminLLMProviderResponse'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+
   /admin/platform-metrics:
     get:
       tags: [Admin]
@@ -7589,6 +7631,22 @@ components:
             format: uuid
         description:
           type: string
+
+    AdminLLMProviderResponse:
+      type: object
+      required: [llm_provider]
+      properties:
+        llm_provider:
+          type: string
+          enum: [groq, gemini, openai]
+
+    AdminUpdateLLMProviderRequest:
+      type: object
+      required: [llm_provider]
+      properties:
+        llm_provider:
+          type: string
+          enum: [groq, gemini, openai]
 
     PlatformMetricsResponse:
       type: object

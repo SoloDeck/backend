@@ -77,7 +77,7 @@ class TestRegister:
         await service.register(
             RegisterRequest(email="new@example.com", password="Test@1234!", full_name="New User")
         )
-        assert db.add.call_count == 2
+        assert db.add.call_count == 3  # user + subscription + refresh token record
 
     async def test_creates_only_user_when_no_free_plan(self) -> None:
         db = _mock_db([None, None, None])  # user check, free plan, issue_tokens sub
@@ -85,7 +85,7 @@ class TestRegister:
         result = await service.register(
             RegisterRequest(email="new@example.com", password="Test@1234!", full_name="New User")
         )
-        assert db.add.call_count == 1
+        assert db.add.call_count == 2  # user + refresh token record
         assert result.access_token
 
     async def test_duplicate_email_raises_already_exists(self) -> None:
@@ -239,7 +239,7 @@ class TestGoogleAuth:
         service = AuthService(db=db)
         result = await service.google_auth(GoogleAuthRequest(id_token="tok", platform="ios"))
         assert result.access_token
-        assert db.add.call_count == 3  # user + identity + subscription
+        assert db.add.call_count == 4  # user + identity + subscription + refresh token record
 
     @_patch(_VERIFY)
     async def test_existing_email_links_identity(self, mock_verify: MagicMock) -> None:
@@ -249,7 +249,7 @@ class TestGoogleAuth:
         service = AuthService(db=db)
         result = await service.google_auth(GoogleAuthRequest(id_token="tok", platform="web"))
         assert result.access_token
-        assert db.add.call_count == 1  # only the linked identity
+        assert db.add.call_count == 2  # linked identity + refresh token record
 
 
 # ---------------------------------------------------------------------------

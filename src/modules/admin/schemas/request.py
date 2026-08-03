@@ -68,3 +68,11 @@ class AdminUpdateFeatureFlagRequest(BaseModel):
     rollout_percentage: int | None = Field(default=None, ge=0, le=100)
     target_user_ids: list[uuid.UUID] | None = None
     description: str | None = None
+
+
+class AdminUpdateLLMProviderRequest(BaseModel):
+    llm_provider: Literal[
+        "groq",
+        "gemini",
+        "openai",
+    ]

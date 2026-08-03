@@ -60,7 +60,7 @@ def qualify_deal_async_by_id(self, user_id: str, deal_id: str) -> dict:  # type:
         )
         try:
             async with factory() as session:
-                service = DealsService(db=session, ai_facade=get_ai_facade())
+                service = DealsService(db=session, ai_facade=await get_ai_facade(session))
                 result = await service.qualify_deal(
                     user_id=_uuid.UUID(user_id),
                     deal_id=_uuid.UUID(deal_id),
@@ -141,7 +141,9 @@ def qualify_deal_async_by_job_id(self, job_id: str) -> dict:  # type: ignore[mis
                     await session.commit()
 
                 try:
-                    result = await DealsService(db=session, ai_facade=get_ai_facade()).qualify_deal(
+                    result = await DealsService(
+                        db=session, ai_facade=await get_ai_facade(session)
+                    ).qualify_deal(
                         user_id=job.owner_user_id,
                         deal_id=job.entity_id,
                     )
@@ -226,7 +228,7 @@ def generate_proposal_async(self, job_id: str) -> dict:  # type: ignore[misc]
                     proposal = await ProposalsService(db=session).generate_from_deal(
                         user_id=job.owner_user_id,
                         deal_id=job.entity_id,
-                        ai_facade=get_ai_facade(),
+                        ai_facade=await get_ai_facade(session),
                     )
                 except Exception as exc:
                     if await _was_cancelled(jobs_repo, job):
@@ -310,7 +312,7 @@ def generate_contract_async(self, job_id: str) -> dict:  # type: ignore[misc]
                     contract = await ContractsService(db=session).generate_content(
                         user_id=job.owner_user_id,
                         contract_id=job.entity_id,
-                        ai_facade=get_ai_facade(),
+                        ai_facade=await get_ai_facade(session),
                     )
                 except Exception as exc:
                     if await _was_cancelled(jobs_repo, job):
