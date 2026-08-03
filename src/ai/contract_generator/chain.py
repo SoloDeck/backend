@@ -1,11 +1,9 @@
-"""ContractGenerator Groq chain."""
+"""ContractGenerator AI chain."""
 
-import asyncio
 import json
 from typing import Any
 
 import structlog
-from groq import Groq
 
 from src.ai.contract_generator.schemas.contract_content import (
     ContractClauses,
@@ -14,49 +12,22 @@ from src.ai.contract_generator.schemas.contract_content import (
 from src.ai.shared.base import BaseAIChain
 from src.ai.shared.json_output import extract_json_object
 from src.ai.shared.prompt import load_prompt
-from src.ai.shared.token_usage import extract_usage
-from src.config.settings import settings
 from src.shared.exceptions.domain import AIOutputParseError
 
 log = structlog.get_logger()
 
-MODEL = "llama-3.3-70b-versatile"
-
-# openapi.yaml khai ContractContentDTO.governing_law có default là "Vietnam".
-# Đây là hằng số, không phải thứ để model đoán.  #Huynh
+# openapi.yaml declares ContractContentDTO.governing_law default as "Vietnam".
+# This is a constant, not something the model should infer.
 GOVERNING_LAW = "Vietnam"
 
 
 class ContractGenerator(BaseAIChain):
-    """Sinh điều khoản hợp đồng bằng Groq.
-
-    File này trước đây là khung rỗng: cả _build_chain lẫn _parse_output đều
-    `raise NotImplementedError`, kèm TODO bảo dựng LangChain chain. Tôi không đi
-    đường đó — không module AI nào trong repo làm vậy cả (lead_qualifier kế thừa
-    BaseAIChain nhưng override luôn run() và gọi thẳng Groq; proposal_generator
-    thậm chí không kế thừa). Đi đường LangChain là dựng lại từ đầu một kiến trúc
-    chưa ai chạy thật, và lãnh lại đúng mấy lỗi parse JSON đã sửa xong.  #Huynh
-    """
+    """Generate contract clauses using the configured LLM provider."""
 
     module_name = "contract_generator"
-    _client: Groq | None = None
-    # Token của lần gọi gần nhất — service đọc để ghi vào ai_cost_records.
+
+    # Token usage from the most recent generation.
     last_usage: dict[str, Any] | None = None
-
-    def _get_client(self) -> Groq:
-        if self._client is not None:
-            return self._client
-
-        api_key = settings.groq_api_key
-        if not api_key:
-            raise RuntimeError("GROQ_API_KEY is not set in settings")
-
-        self._client = Groq(api_key=api_key)
-        return self._client
-
-    def set_client_for_tests(self, client: Any) -> None:
-        """ONLY used in unit tests."""
-        self._client = client
 
     def _build_chain(self) -> Any:
         """Required by BaseAIChain."""
@@ -66,30 +37,15 @@ class ContractGenerator(BaseAIChain):
         try:
             return extract_json_object(raw)
         except json.JSONDecodeError as exc:
-            log.error("ai.contract_generator.parse_failed", raw=raw, error=str(exc))
+            log.error(
+                "ai.contract_generator.parse_failed",
+                raw=raw,
+                error=str(exc),
+            )
             raise AIOutputParseError(
                 f"Failed to parse contract generation output: {exc}",
                 raw_output=raw,
             ) from exc
-
-    def _call_groq(self, full_prompt: str) -> str:
-        """Gọi Groq (blocking) — chạy trong worker thread."""
-        client = self._get_client()
-
-        response = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=[{"role": "user", "content": full_prompt}],
-            # Hợp đồng là văn bản pháp lý: cần bám sát dữ liệu, không cần "sáng tạo".
-            # Để thấp hơn báo giá (0.2) cho model bớt tự bịa điều khoản.  #Huynh
-            temperature=0.1,
-            # Buộc API trả JSON thuần. Thiếu cờ này llama-4-scout bọc câu trả lời trong
-            # văn bản dẫn nhập và parser vỡ — đúng con bug đã làm chết lead_qualifier.
-            response_format={"type": "json_object"},
-        )
-
-        self.last_usage = extract_usage(response, model=getattr(response, "model", None) or MODEL)
-
-        return response.choices[0].message.content or ""
 
     async def run(self, **kwargs: Any) -> dict[str, Any]:
         deal_data: dict[str, Any] = kwargs.get("deal_data") or {}
@@ -115,11 +71,22 @@ class ContractGenerator(BaseAIChain):
 """
 
         try:
-            raw_response = await asyncio.to_thread(self._call_groq, full_prompt)
-            clauses = ContractClauses.model_validate(self._parse_output(raw_response))
+            provider = await self.get_provider()
 
-            # Ghép thành đủ 8 trường của ContractContentDTO: 6 điều khoản do AI viết,
-            # còn parties và governing_law thì code tự điền từ DB.  #Huynh
+            response = await provider.generate(
+                prompt=full_prompt,
+                temperature=0.1,
+                json_mode=True,
+            
+            )
+
+            self.last_usage = response.usage
+
+            clauses = ContractClauses.model_validate(
+                self._parse_output(response.text)
+            )
+
+            # Assemble the full ContractContentDTO.
             return {
                 **clauses.model_dump(),
                 "parties": build_parties(client_data, user_profile),
@@ -127,11 +94,12 @@ class ContractGenerator(BaseAIChain):
             }
 
         except Exception as exc:
-            log.error("ai.contract_generator.failed", error=str(exc))
+            log.error(
+                "ai.contract_generator.failed",
+                error=str(exc),
+            )
             raise
 
     def _load_system_prompt(self) -> str:
-        # KHÔNG có prompt dự phòng. Trước đây thiếu file thì rơi về vài dòng viết vội và hệ
-        # thống VẪN CHẠY — soạn ra một văn bản gửi cho khách hàng thật, bằng một prompt
-        # không ai rà soát. Thà nổ to lúc khởi động còn hơn.  #Huynh
+        # No fallback prompt. Missing prompts should fail loudly.
         return load_prompt("contract_generator")

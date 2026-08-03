@@ -6,8 +6,10 @@ from datetime import UTC, datetime
 from typing import Any
 
 import structlog
+from sqlalchemy.ext.asyncio import AsyncSession
 from tenacity import retry, stop_after_attempt, wait_exponential
 
+from src.ai.shared.provider_factory import ProviderFactory
 from src.config.settings import settings
 from src.shared.exceptions.domain import AIGenerationError, AIOutputParseError
 
@@ -15,11 +17,14 @@ log = structlog.get_logger()
 
 
 class BaseAIChain(ABC):
-    """Abstract base for LangChain-backed AI modules.
+    def __init__(self, db: AsyncSession):
+        self.db = db
+        self._provider = None
 
-    Subclasses implement `_build_chain()` and `_parse_output()`.
-    `run()` handles retries, logging, and error wrapping.
-    """
+    async def get_provider(self):
+        if self._provider is None:
+            self._provider = await ProviderFactory(self.db).get_provider()
+        return self._provider
 
     module_name: str  # must be set on each subclass
 
