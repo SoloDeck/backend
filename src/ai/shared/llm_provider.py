@@ -2,17 +2,17 @@
 
 from __future__ import annotations
 
+import asyncio
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from decimal import Decimal
-from typing import Any
-import asyncio
-from groq import Groq
+
 from google import genai
 from google.genai.types import GenerateContentConfig
+from groq import Groq
+
 from src.ai.shared.token_usage import extract_usage
 from src.config.settings import settings
-
 
 
 @dataclass
@@ -137,18 +137,25 @@ class OpenAIProvider(BaseLLMProvider):
     # implement later
 
 
+# Khoá của dict phải phủ đúng LLMProviderName — test
+# test_every_supported_provider_is_constructible canh việc này, nên thêm nhà
+# cung cấp vào Literal mà quên map ở đây sẽ fail test thay vì fail 500 lúc chạy.
+_PROVIDERS: dict[str, type[BaseLLMProvider]] = {
+    "groq": GroqProvider,
+    "gemini": GeminiProvider,
+    # "openai": OpenAIProvider — bỏ ra cho tới khi OpenAIProvider cài đặt
+    # `generate`; hiện là lớp rỗng nên không khởi tạo được (xem constants.py).
+}
+
+
 def get_llm_provider(provider: str) -> BaseLLMProvider:
     """Return the configured provider."""
 
-    provider = provider.lower()
-
-    if provider == "groq":
-        return GroqProvider()
-
-    if provider == "gemini":
-        return GeminiProvider()
-
-    if provider == "openai":
-        return OpenAIProvider()
-
-    raise ValueError(f"Unsupported LLM provider: {provider}")
+    try:
+        return _PROVIDERS[provider.lower()]()
+    except KeyError:
+        # Giá trị này đọc từ ai_provider_configuration, và schema của endpoint
+        # admin đã chặn giá trị lạ — nên tới được đây nghĩa là DB bị sửa tay
+        # hoặc nhà cung cấp bị xoá khỏi map mà còn trong Literal. Đây là lỗi
+        # cấu hình phía server (500), không phải lỗi của client.
+        raise ValueError(f"Unsupported LLM provider: {provider}") from None
