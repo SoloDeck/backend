@@ -2,17 +2,18 @@
 
 from __future__ import annotations
 
+import asyncio
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from decimal import Decimal
-from typing import Any
-import asyncio
-from groq import Groq
+
 from google import genai
 from google.genai.types import GenerateContentConfig
+from groq import Groq
+
 from src.ai.shared.token_usage import extract_usage
 from src.config.settings import settings
-
+from src.shared.exceptions.domain import AIGenerationError, DomainError
 
 
 @dataclass
@@ -30,10 +31,53 @@ class LLMResponse:
 
 
 class BaseLLMProvider(ABC):
-    """Interface every LLM provider must implement."""
+    """Interface every LLM provider must implement.
+
+    Cài đặt cụ thể viết vào `_generate`, KHÔNG override `generate`. `generate` là lớp
+    vỏ dịch mọi lỗi của SDK nhà cung cấp thành `AIGenerationError`.
+    """
+
+    async def generate(
+        self,
+        *,
+        prompt: str,
+        temperature: float = 0,
+        seed: int | None = None,
+        json_mode: bool = False,
+    ) -> LLMResponse:
+        """Gọi nhà cung cấp, dịch lỗi của họ sang lỗi miền của mình.
+
+        SDK mỗi hãng ném một họ exception riêng (`groq.PermissionDeniedError`,
+        `google.genai.errors.ClientError`...). Không hãng nào là DomainError nên chúng
+        rơi thẳng xuống handler cuối cùng và thành 500 "An unexpected error occurred" —
+        client không biết là do AI, còn nguyên nhân thật chỉ nằm trong log server.
+
+        Đã trả giá thật vì chuyện này: key Groq bị chặn theo vùng, `/deals/{id}/qualify`
+        và `/proposals/ai-generate` cùng ném 500 trống trơn, mất một lúc mới lần ra là
+        hỏng ở nhà cung cấp chứ không phải code mình.
+
+        `AIGenerationError` đã có sẵn đường ra 502 trong `shared/exceptions/http.py`.
+        Bọc ở lớp cha để mọi provider — kể cả cái viết sau này — đều được dịch, thay vì
+        trông chờ từng chain nhớ tự bắt.  #Huynh
+        """
+        try:
+            return await self._generate(
+                prompt=prompt,
+                temperature=temperature,
+                seed=seed,
+                json_mode=json_mode,
+            )
+        except DomainError:
+            # AIOutputParseError và họ hàng đã đúng nghĩa rồi, để nguyên.
+            raise
+        except Exception as exc:
+            raise AIGenerationError(
+                f"Nhà cung cấp AI ({type(self).__name__}) gọi không thành công: "
+                f"{type(exc).__name__}: {exc}"
+            ) from exc
 
     @abstractmethod
-    async def generate(
+    async def _generate(
         self,
         *,
         prompt: str,
@@ -54,7 +98,7 @@ class GroqProvider(BaseLLMProvider):
 
         self.client = Groq(api_key=api_key)
 
-    async def generate(
+    async def _generate(
         self,
         *,
         prompt: str,
@@ -86,6 +130,7 @@ class GroqProvider(BaseLLMProvider):
             text=response.choices[0].message.content or "",
             usage=usage,
         )
+
     # contains all the current Groq logic
 
 
@@ -99,7 +144,7 @@ class GeminiProvider(BaseLLMProvider):
 
         self.client = genai.Client(api_key=api_key)
 
-    async def generate(
+    async def _generate(
         self,
         *,
         prompt: str,
@@ -111,11 +156,7 @@ class GeminiProvider(BaseLLMProvider):
         config = GenerateContentConfig(
             temperature=temperature,
             seed=seed,
-            response_mime_type=(
-                "application/json"
-                if json_mode
-                else "text/plain"
-            ),
+            response_mime_type=("application/json" if json_mode else "text/plain"),
         )
 
         response = await asyncio.to_thread(
@@ -129,6 +170,7 @@ class GeminiProvider(BaseLLMProvider):
             text=response.text,
             usage=None,
         )
+
     # contains all current Gemini logic
 
 
@@ -138,17 +180,32 @@ class OpenAIProvider(BaseLLMProvider):
 
 
 def get_llm_provider(provider: str) -> BaseLLMProvider:
-    """Return the configured provider."""
+    """Return the configured provider.
 
-    provider = provider.lower()
+    Hỏng ở khâu DỰNG provider cũng phải ra `AIGenerationError` y như hỏng lúc GỌI. Cả
+    hai đều là "phần AI không dùng được lúc này", và cùng cần 502 kèm lý do. Trước đây
+    khâu này ném `ValueError`/`RuntimeError`/`TypeError` trần: thiếu key thì RuntimeError,
+    còn chọn 'openai' thì `OpenAIProvider()` ném TypeError vì lớp đó chưa cài `_generate`
+    nên vẫn là abstract. Cả ba đều rơi xuống handler cuối và thành 500 trống trơn.  #Huynh
+    """
+    key = provider.lower()
 
-    if provider == "groq":
-        return GroqProvider()
+    try:
+        if key == "groq":
+            return GroqProvider()
+        if key == "gemini":
+            return GeminiProvider()
+    except DomainError:
+        raise
+    except Exception as exc:
+        raise AIGenerationError(
+            f"Không khởi tạo được nhà cung cấp AI '{key}': {type(exc).__name__}: {exc}"
+        ) from exc
 
-    if provider == "gemini":
-        return GeminiProvider()
+    if key == "openai":
+        raise AIGenerationError(
+            "Nhà cung cấp AI 'openai' chưa được cài đặt. Đổi sang 'groq' hoặc 'gemini' "
+            "qua PATCH /admin/ai-provider."
+        )
 
-    if provider == "openai":
-        return OpenAIProvider()
-
-    raise ValueError(f"Unsupported LLM provider: {provider}")
+    raise AIGenerationError(f"Nhà cung cấp AI không hỗ trợ: '{provider}'")

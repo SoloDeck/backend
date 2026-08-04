@@ -2,7 +2,11 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field
 
-from src.modules.clients.domain.value_objects.client_status import ClientStatus, ClientType
+from src.modules.clients.domain.value_objects.client_status import (
+    ClientStatus,
+    ClientType,
+    CommChannel,
+)
 
 
 class ClientRequest(BaseModel):
@@ -43,7 +47,7 @@ class ClientUpdateRequest(BaseModel):
 
 
 class CommLogRequest(BaseModel):
-    channel: str
+    channel: CommChannel
     summary: str
     communicated_at: datetime
 
