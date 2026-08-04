@@ -160,15 +160,41 @@ app = FastAPI(
 )
 
 
-# Origins only — NO `/api/v1` suffix. The generated paths already carry the full
-# prefix (routers are mounted at `/api/v1/...`), so a server URL ending in `/api/v1`
-# would make Swagger post to `/api/v1/api/v1/...`. The old hand-written contract had
-# bare paths, which is why its server URLs did include the prefix.
+# Version namespace every router is mounted under. Defined here rather than beside the
+# include_router calls because the OpenAPI helpers below need it first.
+API_V1 = "/api/v1"
+
+# Origins only. `_relativize_paths` appends the shared prefix below, so these must
+# NOT already end in `/api/v1` — otherwise Swagger would post to `/api/v1/api/v1/...`.
 _OPENAPI_SERVERS: list[dict[str, str]] = [
     {"url": "http://localhost:8000", "description": "Local development"},
     {"url": "https://api-staging.solodesk.space", "description": "Staging"},
     {"url": "https://api.solodesk.space", "description": "Production"},
 ]
+
+
+def _relativize_paths(schema: dict[str, Any]) -> dict[str, Any]:
+    """Move the shared `/api/v1` prefix out of the path keys and into the server URLs.
+
+    Every router is mounted under `API_V1`, so `get_openapi` emits it on all 133 paths
+    and the endpoint list at `/docs` reads `/api/v1/...` over and over. Declaring it
+    once per server instead is equivalent for the client — Swagger concatenates
+    `servers[0].url` with the path — and leaves the list readable.
+
+    Bails out unchanged if anything is mounted outside the prefix. Appending the prefix
+    to the servers while some path did not carry it would silently point that endpoint
+    at a URL that does not exist; a repetitive but correct document beats a tidy broken
+    one.
+    """
+    paths: dict[str, Any] = schema.get("paths") or {}
+    if not paths or not all(p.startswith(API_V1) for p in paths):
+        return schema
+
+    schema["paths"] = {(p.removeprefix(API_V1) or "/"): item for p, item in paths.items()}
+    schema["servers"] = [
+        {**server, "url": server["url"] + API_V1} for server in schema.get("servers", [])
+    ]
+    return schema
 
 
 def custom_openapi() -> dict[str, Any]:
@@ -203,7 +229,7 @@ def custom_openapi() -> dict[str, Any]:
         servers.sort(key=lambda s: "localhost" not in s["url"])
     schema["servers"] = servers
 
-    app.openapi_schema = schema
+    app.openapi_schema = _relativize_paths(schema)
     return app.openapi_schema
 
 
@@ -233,8 +259,6 @@ setup_exception_handlers(app)
 # ---------------------------------------------------------------------------
 # Routers — API v1
 # ---------------------------------------------------------------------------
-API_V1 = "/api/v1"
-
 app.include_router(auth_router, prefix=f"{API_V1}/auth", tags=["Auth"])
 app.include_router(users_router, prefix=f"{API_V1}/users", tags=["Users"])
 app.include_router(subscriptions_router, prefix=f"{API_V1}/subscriptions", tags=["Subscriptions"])
