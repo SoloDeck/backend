@@ -853,3 +853,71 @@ class TestInquiryContext:
 
         assert SCORED_BLOCK_HEADING in prompt
         assert EXCLUDED_BLOCK_HEADING in prompt
+
+
+# ---------------------------------------------------------------------------
+# save_latest_qualification — bản đánh giá ĐÃ CHỐT (tab "Tài liệu")
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class LeadScoreStub:
+    id: uuid.UUID
+    score: int = 100
+    saved_at: object | None = None
+
+
+class TestSaveLatestQualification:
+    """Tab "Lịch sử" kể MỌI lần chấm; tab "Tài liệu" chỉ kể bản đã bấm "Lưu".
+
+    Trước đây hai thứ đó không phân biệt được: mỗi lần chấm ghi một dòng `lead_scores` giống
+    hệt nhau, còn nút Lưu chỉ đổi giai đoạn deal. Nên giao diện báo "đã lưu vào tab Tài liệu"
+    mà sang đó chẳng thấy gì — người dùng tưởng mất kết quả.  #Huynh
+    """
+
+    @staticmethod
+    def _service(latest, deal=None):  # type: ignore[no-untyped-def]
+        repo = AsyncMock()
+        repo.get_by_id.return_value = deal or DealStub(id=uuid.uuid4(), stage="new_lead")
+        repo.get_latest_lead_score.return_value = latest
+        repo.save.side_effect = lambda o: o
+        return DealsService(db=AsyncMock(), repo=repo, usage=AsyncMock()), repo
+
+    async def test_dong_dau_saved_at_len_ban_moi_nhat(self) -> None:
+        row = LeadScoreStub(id=uuid.uuid4())
+        service, _ = self._service(row)
+
+        result = await service.save_latest_qualification(uuid.uuid4(), uuid.uuid4())
+
+        assert result.saved_at is not None, "chưa đóng dấu thì tab Tài liệu không thấy gì"
+        assert result is row
+
+    async def test_chua_cham_lan_nao_thi_404(self) -> None:
+        """Không có gì để chốt — nói thẳng, đừng lặng lẽ tạo một bản rỗng."""
+        service, _ = self._service(None)
+
+        with pytest.raises(NotFoundError):
+            await service.save_latest_qualification(uuid.uuid4(), uuid.uuid4())
+
+    async def test_deal_khong_phai_cua_minh_thi_404_truoc_khi_doc_ban_cham(self) -> None:
+        """Chốt chặn quyền sở hữu phải chạy TRƯỚC, không thì biết id deal là chốt được hộ."""
+        repo = AsyncMock()
+        repo.get_by_id.return_value = None
+        service = DealsService(db=AsyncMock(), repo=repo, usage=AsyncMock())
+
+        with pytest.raises(NotFoundError):
+            await service.save_latest_qualification(uuid.uuid4(), uuid.uuid4())
+
+        repo.get_latest_lead_score.assert_not_awaited()
+
+    async def test_luu_lai_lan_nua_khong_xoa_dau_cua_ban_cu(self) -> None:
+        """Chấm lại rồi chốt lại là có HAI bản đã chốt thật, giống báo giá nhiều phiên bản."""
+        cu = LeadScoreStub(id=uuid.uuid4(), saved_at="2026-08-01T00:00:00Z")
+        moi = LeadScoreStub(id=uuid.uuid4())
+        service, repo = self._service(moi)
+
+        await service.save_latest_qualification(uuid.uuid4(), uuid.uuid4())
+
+        assert cu.saved_at == "2026-08-01T00:00:00Z", "dấu chốt cũ phải còn nguyên"
+        assert moi.saved_at is not None
+        assert repo.save.await_count == 1, "chỉ ghi ĐÚNG bản vừa chốt"

@@ -167,6 +167,27 @@ async def list_deal_qualifications(
     return ApiResponse.ok([LeadScoreHistoryResponse.model_validate(r) for r in rows])
 
 
+@router.post(
+    "/{deal_id}/qualifications/save",
+    response_model=ApiResponse[LeadScoreHistoryResponse],
+)
+async def save_deal_qualification(
+    deal_id: uuid.UUID,
+    user_id: CurrentUserId,
+    db: DBSession,
+) -> ApiResponse[LeadScoreHistoryResponse]:
+    """Chốt bản chấm mới nhất — đóng dấu `saved_at` để tab "Tài liệu" hiện nó.
+
+    Không nhận id bản chấm: bảng đánh giá luôn hiển thị lần chấm vừa xong, nên "chốt cái tôi
+    đang xem" chính là "chốt bản mới nhất". Nhận id từ client thì lại phải kiểm id đó có
+    thuộc deal này không — thêm một cửa để sai.
+
+    Chưa chấm lần nào -> 404, vì không có gì để chốt.  #Huynh
+    """
+    row = await DealsService(db=db).save_latest_qualification(user_id, deal_id)
+    return ApiResponse.ok(LeadScoreHistoryResponse.model_validate(row))
+
+
 @router.post("/{deal_id}/qualify")
 async def qualify_deal(
     deal_id: uuid.UUID,

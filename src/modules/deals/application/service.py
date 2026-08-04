@@ -701,6 +701,37 @@ class DealsService:
         await self._get_deal(user_id, deal_id)  # 404 nếu deal không phải của người này
         return await self.repo.list_lead_scores(deal_id, user_id)
 
+    async def save_latest_qualification(self, user_id: uuid.UUID, deal_id: uuid.UUID):
+        """Chốt bản chấm mới nhất — đây là thứ tab "Tài liệu" hiển thị.
+
+        Hai tab có vai trò khác nhau và trước đây không tài nào phân biệt được:
+
+        * **Lịch sử** — MỌI lần bấm "Đánh giá", kể cả chấm thử rồi bỏ. Nguồn: mọi dòng
+          `lead_scores`.
+        * **Tài liệu** — CHỈ bản freelancer đã chủ động bấm "Lưu & chuyển sang Đã đánh giá".
+          Nguồn: những dòng có `saved_at`.
+
+        Không có mốc chốt riêng thì mỗi lần chấm nghịch lại đẻ thêm một "tài liệu", và tài
+        liệu mất nghĩa. Trước đây nút Lưu chỉ đổi giai đoạn deal, không đánh dấu gì cả — nên
+        giao diện báo "đã lưu vào tab Tài liệu" mà sang đó chẳng thấy gì.
+
+        Chốt bản MỚI NHẤT chứ không nhận id từ ngoài: bảng đánh giá luôn hiển thị đúng lần
+        chấm vừa xong, nên "chốt cái tôi đang xem" và "chốt bản mới nhất" là một. Nhận id từ
+        client thì lại phải kiểm id đó có thuộc deal này không — thêm một cửa để sai.
+
+        Bấm lưu nhiều lần thì mỗi lần là một mốc riêng; KHÔNG xoá dấu chốt của bản cũ. Người
+        dùng chấm lại rồi chốt lại là có hai bản đã chốt thật, giống báo giá có nhiều phiên
+        bản.  #Huynh
+        """
+        await self._get_deal(user_id, deal_id)  # 404 nếu deal không phải của người này
+
+        latest = await self.repo.get_latest_lead_score(deal_id, user_id)
+        if latest is None:
+            raise NotFoundError("Deal chưa có bản đánh giá nào để lưu")
+
+        latest.saved_at = datetime.now(UTC)
+        return await self.repo.save(latest)
+
     async def _build_inquiry_context(self, deal_model, user_id: uuid.UUID) -> str:
         """Dựng ngữ cảnh gửi cho lead qualifier — HAI khối, và ranh giới nằm ĐÚNG chỗ.
 

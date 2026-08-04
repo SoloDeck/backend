@@ -802,6 +802,17 @@ class LeadScoreModel(Base):
     # thì không trả lời được "sao deal này 52 mà deal kia 80".  #Huynh
     prompt_version: Mapped[str | None] = mapped_column(String(16), nullable=True)
 
+    # Lúc freelancer bấm "Lưu & chuyển sang Đã đánh giá" — NULL nghĩa là chưa chốt.
+    #
+    # Bảng này append-only: mỗi lần bấm "Đánh giá" là một dòng, kể cả những lần chấm thử rồi
+    # bỏ. Tab "Lịch sử" kể HẾT, đúng vai trò của nó. Nhưng tab "Tài liệu" chỉ được kể bản mà
+    # freelancer đã CHỦ ĐỘNG chốt — không thì mỗi lần chấm nghịch lại đẻ thêm một "tài liệu",
+    # và tài liệu mất nghĩa. Không có cột này thì hai tab không tài nào phân biệt được.
+    #
+    # Nullable, và mọi dòng cũ đều NULL: bản chấm trước khi có tính năng này thì đúng là chưa
+    # ai chốt cả, đừng đoán hộ.  #Huynh
+    saved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
     __table_args__ = (
         Index("idx_lead_scores_deal", "deal_id"),
         CheckConstraint("score BETWEEN 0 AND 100", name="ck_lead_scores_score_range"),
