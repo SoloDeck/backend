@@ -1491,6 +1491,28 @@ class TaskModel(UUIDMixin, TimestampMixin, Base):
     priority: Mapped[str] = mapped_column(_task_priority, nullable=False, server_default="medium")
     status: Mapped[str] = mapped_column(_task_status, nullable=False, server_default="todo")
     deadline: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Hóa đơn đã xuất cho task này. CHỈ có ý nghĩa với task "Thu tiền:" — mỗi mốc thanh toán
+    # một hóa đơn riêng.
+    #
+    # Vì sao phải là một cột chứ không suy ra được: `invoices` chỉ có `deal_id`, mà một deal
+    # có N mốc → N task → N hóa đơn CÙNG `deal_id`. Lịch 50/50 còn cho ra hai hóa đơn SỐ TIỀN
+    # BẰNG NHAU, nên cũng không phân biệt được bằng tiền. Không có cột này thì không cách nào
+    # biết hóa đơn nào của mốc nào.
+    #
+    # `ON DELETE SET NULL`: xóa hóa đơn thì task quay về "chưa xuất hóa đơn" và xuất lại được,
+    # chứ không kéo theo cả task — task là việc phải làm, hóa đơn chỉ là chứng từ của nó.
+    #
+    # KHÔNG thêm giá trị vào enum `task_status`: "đã gửi hóa đơn" là trạng thái của HÓA ĐƠN
+    # (`draft/sent/partially_paid/paid/void`), suy ra từ đây. Nhét vào `task_status` là làm bẩn
+    # trạng thái của mọi task khác trong hệ thống.  #Huynh
+    invoice_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("invoices.id", ondelete="SET NULL"), nullable=True
+    )
+
+    # `selectin` chứ không lazy mặc định: danh sách công việc trả về hàng chục task một lúc,
+    # lazy-load là N+1 truy vấn — và trong ngữ cảnh async thì lazy-load còn NỔ hẳn
+    # (`MissingGreenlet`) chứ không chỉ chậm.
+    invoice: Mapped["InvoiceModel | None"] = relationship("InvoiceModel", lazy="selectin")
 
     checklist_items: Mapped[list["ChecklistItemModel"]] = relationship(
         "ChecklistItemModel",
