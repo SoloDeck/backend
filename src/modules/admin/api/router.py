@@ -17,6 +17,7 @@ from src.modules.admin.schemas.request import (
     AdminUpdatePlanRequest,
     AdminUpdateTemplateRequest,
     AdminUpdateUserRequest,
+    AdminUpdateLLMProviderRequest,
 )
 from src.modules.admin.schemas.response import (
     AdminAiCostPagedResponse,
@@ -30,6 +31,7 @@ from src.modules.admin.schemas.response import (
     AdminTemplateResponse,
     AdminUserResponse,
     Paginated,
+    AdminLLMProviderResponse,
 )
 from src.shared.dependencies.auth import AdminUser
 from src.shared.responses.response import ApiResponse
@@ -315,6 +317,45 @@ async def list_ai_costs(
         )
     )
 
+# ---------------------------------------------------------------------------
+# AI Provider Configuration
+# ---------------------------------------------------------------------------
+
+@router.get(
+    "/ai-provider",
+    response_model=ApiResponse[AdminLLMProviderResponse],
+)
+async def get_ai_provider(
+    _: AdminUser,
+    db: DBSession,
+) -> ApiResponse[AdminLLMProviderResponse]:
+    configuration = await AdminService(db=db).get_ai_provider_configuration()
+
+    return ApiResponse.ok(
+        AdminLLMProviderResponse(
+            llm_provider=configuration.llm_provider,
+        )
+    )
+
+@router.patch(
+    "/ai-provider",
+    response_model=ApiResponse[AdminLLMProviderResponse],
+)
+async def update_ai_provider(
+    payload: AdminUpdateLLMProviderRequest,
+    admin: AdminUser,
+    db: DBSession,
+) -> ApiResponse[AdminLLMProviderResponse]:
+    configuration = await AdminService(db=db).update_ai_provider_configuration(
+        llm_provider=payload.llm_provider,
+        admin_id=uuid.UUID(admin.sub),
+    )
+
+    return ApiResponse.ok(
+        AdminLLMProviderResponse(
+            llm_provider=configuration.llm_provider,
+        )
+    )
 
 # ---------------------------------------------------------------------------
 # Audit Logs

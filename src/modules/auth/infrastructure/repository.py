@@ -10,6 +10,7 @@ from src.infrastructure.database.models import (
     OAuthIdentityModel,
     PasswordResetTokenModel,
     PlanModel,
+    RefreshTokenModel,
     SubscriptionModel,
     TokenBlacklistModel,
     UserModel,
@@ -65,6 +66,15 @@ class AuthRepository:
         )
 
     async def add_token_blacklist(self, entry: TokenBlacklistModel) -> None:
+        self.db.add(entry)
+
+    async def is_token_blacklisted(self, jti: str) -> bool:
+        result = await self.db.scalar(
+            select(TokenBlacklistModel.id).where(TokenBlacklistModel.jti == jti)
+        )
+        return result is not None
+
+    async def add_refresh_token(self, entry: RefreshTokenModel) -> None:
         self.db.add(entry)
 
     async def get_oauth_identity(self, provider: str, provider_sub: str):

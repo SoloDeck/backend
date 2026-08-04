@@ -7,36 +7,20 @@ from typing import Any
 import pytest
 
 from src.ai.followup_generator.chain import FollowUpGenerator
+from src.ai.shared.llm_provider import LLMResponse
+from src.shared.exceptions.domain import AIOutputParseError
 
 
-class _FakeMessage:
-    def __init__(self, content: str) -> None:
-        self.content = content
+class FakeProvider:
+    """Stands in for a real BaseLLMProvider (Groq/Gemini/...) — no network calls."""
 
-
-class _FakeChoice:
-    def __init__(self, content: str) -> None:
-        self.message = _FakeMessage(content)
-
-
-class _FakeResponse:
-    def __init__(self, content: str) -> None:
-        self.choices = [_FakeChoice(content)]
-
-
-class _FakeCompletions:
-    def __init__(self, content: str) -> None:
-        self._content = content
+    def __init__(self, text: str) -> None:
+        self._text = text
         self.last_kwargs: dict[str, Any] = {}
 
-    def create(self, **kwargs: Any) -> _FakeResponse:
+    async def generate(self, **kwargs: Any) -> LLMResponse:
         self.last_kwargs = kwargs
-        return _FakeResponse(self._content)
-
-
-class _FakeGroq:
-    def __init__(self, content: str) -> None:
-        self.chat = type("Chat", (), {"completions": _FakeCompletions(content)})()
+        return LLMResponse(text=self._text)
 
 
 VALID = json.dumps(
@@ -48,14 +32,19 @@ VALID = json.dumps(
 )
 
 
+def _make_chain(text: str) -> FollowUpGenerator:
+    chain = FollowUpGenerator(db=None)
+    chain._provider = FakeProvider(text)
+    return chain
+
+
 def _run(chain: FollowUpGenerator, **kwargs: Any) -> dict[str, Any]:
     return asyncio.run(chain.run(**kwargs))
 
 
 class TestFollowUpGenerator:
     def test_soan_duoc_tin_nhan(self) -> None:
-        chain = FollowUpGenerator()
-        chain.set_client_for_tests(_FakeGroq(VALID))
+        chain = _make_chain(VALID)
 
         result = _run(
             chain,
@@ -73,8 +62,7 @@ class TestFollowUpGenerator:
             {"subject": "", "message_text": ["Chào anh Mười,", "Em nhắc anh hoá đơn ạ."]},
             ensure_ascii=False,
         )
-        chain = FollowUpGenerator()
-        chain.set_client_for_tests(_FakeGroq(raw))
+        chain = _make_chain(raw)
 
         result = _run(chain, reminder_type="follow_up", client_data={})
 
@@ -82,33 +70,26 @@ class TestFollowUpGenerator:
 
     def test_thieu_subject_thi_de_rong(self) -> None:
         raw = json.dumps({"message_text": "Chào anh ạ."}, ensure_ascii=False)
-        chain = FollowUpGenerator()
-        chain.set_client_for_tests(_FakeGroq(raw))
+        chain = _make_chain(raw)
 
         assert _run(chain, reminder_type="follow_up")["subject"] == ""
 
     def test_bat_json_mode_khi_goi_groq(self) -> None:
         """Thiếu cờ này là llama-4-scout bọc JSON trong văn bản dẫn nhập -> parser vỡ."""
-        fake = _FakeGroq(VALID)
-        chain = FollowUpGenerator()
-        chain.set_client_for_tests(fake)
+        chain = _make_chain(VALID)
 
         _run(chain, reminder_type="follow_up")
 
-        assert fake.chat.completions.last_kwargs["response_format"] == {"type": "json_object"}
+        assert chain._provider.last_kwargs["json_mode"] is True
 
     def test_model_boc_json_trong_van_ban_van_doc_duoc(self) -> None:
         raw = f"Đây là tin nhắn bạn cần:\n```json\n{VALID}\n```\nChúc may mắn!"
-        chain = FollowUpGenerator()
-        chain.set_client_for_tests(_FakeGroq(raw))
+        chain = _make_chain(raw)
 
         assert "Chào anh Mười" in _run(chain, reminder_type="follow_up")["message_text"]
 
     def test_model_tra_rac_thi_bao_loi_ro_rang(self) -> None:
-        from src.shared.exceptions.domain import AIOutputParseError
-
-        chain = FollowUpGenerator()
-        chain.set_client_for_tests(_FakeGroq("xin lỗi tôi không thể"))
+        chain = _make_chain("xin lỗi tôi không thể")
 
         with pytest.raises(AIOutputParseError):
             _run(chain, reminder_type="follow_up")

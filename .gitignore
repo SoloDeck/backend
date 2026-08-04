@@ -60,6 +60,9 @@ compose.override.yml
 # Temporary image storage
 temp_docs/
 
+# Fully-authored report deliverables (SEP490 submissions) — not repo content
+report_docs/
+
 # Private docs — instructions/info not meant for the repo
 private_docs/
 

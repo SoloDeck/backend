@@ -38,7 +38,7 @@ async def qualify_lead(
     await AiUsageService(db=db).consume(user_id)
 
     try:
-        result = await LeadQualifier().run(inquiry_text=request.inquiry_text)
+        result = await LeadQualifier(db).run(inquiry_text=request.inquiry_text)
     except AIGenerationError:
         raise
     except Exception as exc:

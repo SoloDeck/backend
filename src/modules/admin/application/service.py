@@ -2,11 +2,12 @@
 
 import uuid
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.infrastructure.database.models import PlanModel, SubscriptionModel, UserModel
+from src.ai.shared.constants import SUPPORTED_LLM_PROVIDERS
+from src.infrastructure.database.models import AIProviderConfigurationModel, PlanModel, SubscriptionModel, UserModel
 from src.modules.admin.domain.entities import AdminUser, FeatureFlagRollout, SubscriptionOverride
 from src.modules.admin.infrastructure.repository import AdminRepository
 from src.modules.admin.schemas.request import (
@@ -150,6 +151,7 @@ class AdminService:
         return user
 
     async def revoke_user_sessions(self, user_id: uuid.UUID) -> None:
+        now = datetime.now(UTC)
         tokens = await self.repo.get_user_refresh_tokens(user_id)
         for token in tokens:
             await self.repo.blacklist_refresh_token(
@@ -157,6 +159,7 @@ class AdminService:
                 user_id=user_id,
                 expires_at=token.expires_at,
             )
+            token.revoked_at = now
 
     # -------------------------------------------------------------------------
     # Plans
@@ -359,6 +362,48 @@ class AdminService:
             from_date=from_date,
             to_date=to_date,
         )
+
+    # -------------------------------------------------------------------------
+    # AI Provider Configuration
+    # -------------------------------------------------------------------------
+
+    async def get_ai_provider_configuration(self) -> AIProviderConfigurationModel:
+        configuration = await self.repo.get_ai_provider_configuration()
+
+        if configuration is None:
+            raise NotFoundError("AI provider configuration not found")
+
+        return configuration
+
+    async def update_ai_provider_configuration(
+            self,
+            *,
+            llm_provider: str,
+            admin_id: uuid.UUID,
+    ) -> AIProviderConfigurationModel:
+        configuration = await self.get_ai_provider_configuration()
+
+        if llm_provider not in SUPPORTED_LLM_PROVIDERS:
+            raise ValidationError(
+                f"Unsupported LLM provider: {llm_provider}"
+            )
+
+        configuration.llm_provider = llm_provider
+        configuration.updated_by = admin_id
+
+        configuration = await self.repo.update_ai_provider_configuration(
+            configuration
+        )
+
+        await self.repo.create_audit_log(
+            event_type="ai_provider.updated",
+            actor_user_id=admin_id,
+            target_type="ai_provider_configuration",
+            target_id=configuration.id,
+            description=f"Admin changed AI provider to '{llm_provider}'",
+        )
+
+        return configuration
 
     # -------------------------------------------------------------------------
     # Templates

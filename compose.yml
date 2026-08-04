@@ -16,10 +16,18 @@
 # (postgres, redis) publish nothing — reach them with
 # `docker compose exec postgres psql -U solodesk` or add a temporary mapping.
 #
-# Configuration: every service reads `.env` when present. The `environment:`
-# blocks below only supply defaults via `${VAR:-fallback}`, so a value set in
-# `.env` applies to *all* services uniformly. Never hardcode a bare value
-# there — it silently overrides `.env` for that one service.
+# Configuration: every service reads `.env` when present via `env_file:`. Most
+# vars (API keys, feature flags, ...) should stay as `${VAR:-fallback}` so a
+# value set in `.env` applies to *all* services uniformly.
+#
+# Exception — DATABASE_URL/REDIS_URL/CELERY_BROKER_URL/CELERY_RESULT_BACKEND
+# are hardcoded to the in-network hostnames (postgres/redis) on migrate, api,
+# worker, beat. `.env` is shared with running the app natively on the host,
+# where those same var names must point at `localhost` — and Compose loads
+# root `.env` for `${VAR}` substitution too, so the host-facing value would
+# silently win over the in-container default and every container would try
+# to reach Postgres/Redis on its own loopback interface. `environment:`
+# always overrides `env_file:` for the same key, so hardcoding here is safe.
 # ===========================================================================
 
 # Cap container logs so the shared host can't be filled by a dev stack.
@@ -53,34 +61,6 @@ services:
   # -------------------------------------------------------------------------
   # Redis
   # -------------------------------------------------------------------------
-  # Object storage S3-compatible cho file đính kèm (hợp đồng scan, biên nhận chuyển
-  # khoản...). Trước đây frontend nhét cả nội dung file dạng base64 vào localStorage:
-  # giới hạn ~5MB nên một cái PDF là vỡ, đổi máy là mất sạch, và file không bao giờ ra
-  # khỏi trình duyệt nên không gửi được cho khách.
-  #
-  # .env.example vốn đã khai STORAGE_ENDPOINT/BUCKET/ACCESS_KEY — team định dùng S3 từ
-  # đầu, chỉ chưa ai dựng. MinIO là S3 chạy local; khi deploy chỉ cần trỏ STORAGE_ENDPOINT
-  # sang AWS S3 hay Cloudflare R2, không phải sửa code.  #Huynh
-  minio:
-    image: minio/minio:latest
-    restart: always
-    command: server /data --console-address ":9001"
-    environment:
-      MINIO_ROOT_USER: solodesk
-      MINIO_ROOT_PASSWORD: solodesk123
-    ports:
-      - "9000:9000"   # API S3
-      - "9001:9001"   # Giao diện quản trị
-    volumes:
-      - minio_data:/data
-    healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
-    networks:
-      - solodesk-network
-
   redis:
     image: redis:7-alpine
     restart: always
@@ -103,7 +83,7 @@ services:
       target: runtime
     restart: "no"
     environment:
-      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://solodesk:solodesk@postgres:5432/solodesk}
+      DATABASE_URL: postgresql+asyncpg://solodesk:solodesk@postgres:5432/solodesk
       APP_ENV: ${APP_ENV:-development}
     depends_on:
       postgres:
@@ -128,10 +108,10 @@ services:
       - path: .env
         required: false
     environment:
-      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://solodesk:solodesk@postgres:5432/solodesk}
-      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
-      CELERY_BROKER_URL: ${CELERY_BROKER_URL:-redis://redis:6379/1}
-      CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND:-redis://redis:6379/2}
+      DATABASE_URL: postgresql+asyncpg://solodesk:solodesk@postgres:5432/solodesk
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
       PORT: 8000
     ports:
       - "127.0.0.1:${API_PORT:-8001}:8000"
@@ -167,10 +147,10 @@ services:
       - path: .env
         required: false
     environment:
-      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://solodesk:solodesk@postgres:5432/solodesk}
-      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
-      CELERY_BROKER_URL: ${CELERY_BROKER_URL:-redis://redis:6379/1}
-      CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND:-redis://redis:6379/2}
+      DATABASE_URL: postgresql+asyncpg://solodesk:solodesk@postgres:5432/solodesk
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
     depends_on:
       postgres:
         condition: service_healthy
@@ -196,9 +176,9 @@ services:
       - path: .env
         required: false
     environment:
-      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://solodesk:solodesk@postgres:5432/solodesk}
-      CELERY_BROKER_URL: ${CELERY_BROKER_URL:-redis://redis:6379/1}
-      CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND:-redis://redis:6379/2}
+      DATABASE_URL: postgresql+asyncpg://solodesk:solodesk@postgres:5432/solodesk
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
     depends_on:
       redis:
         condition: service_healthy
@@ -212,6 +192,15 @@ services:
   # -------------------------------------------------------------------------
   # MinIO — local S3-compatible object storage (for avatar/file uploads)
   # Console: http://127.0.0.1:9001  login: minioadmin / minioadmin
+  #
+  # Object storage S3-compatible cho file đính kèm (hợp đồng scan, biên nhận chuyển
+  # khoản...). Trước đây frontend nhét cả nội dung file dạng base64 vào localStorage:
+  # giới hạn ~5MB nên một cái PDF là vỡ, đổi máy là mất sạch, và file không bao giờ ra
+  # khỏi trình duyệt nên không gửi được cho khách.
+  #
+  # .env.example vốn đã khai STORAGE_ENDPOINT/BUCKET/ACCESS_KEY — team định dùng S3 từ
+  # đầu, chỉ chưa ai dựng. MinIO là S3 chạy local; khi deploy chỉ cần trỏ STORAGE_ENDPOINT
+  # sang AWS S3 hay Cloudflare R2, không phải sửa code.  #Huynh
   # -------------------------------------------------------------------------
   minio:
     image: minio/minio:latest
@@ -292,9 +281,3 @@ services:
 volumes:
   postgres_data:
   minio_data:
-
-
-networks:
-  solodesk-network:
-    name: solodesk-network
-    driver: bridge
