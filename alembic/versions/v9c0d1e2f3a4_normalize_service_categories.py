@@ -20,7 +20,11 @@ from collections.abc import Sequence
 from alembic import op
 
 revision: str = "v9c0d1e2f3a4"
-down_revision: str | None = "u8b9c0d1e2f3"
+# Nối SAU migration ai_provider_configuration của #91: hai bản cùng khai
+# `u8b9c0d1e2f3` làm cha nên sau khi gộp main sẽ thành hai head và
+# `alembic upgrade head` báo lỗi. Bản này chưa lên remote nên dời cha là sạch
+# nhất, khỏi phải thêm một migration hợp nhất.  #Huynh
+down_revision: str | None = "51e81d80cf5c"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
