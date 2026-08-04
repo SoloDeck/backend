@@ -292,6 +292,36 @@ class TestGetFreelancer:
         resp = await client.get(f"/api/v1/public/freelancers/{user['id']}")
         assert resp.status_code == 200
 
+    async def test_returns_intake_share_token(self, client: AsyncClient) -> None:
+        """Trang hồ sơ cần token để dựng nút "Gửi yêu cầu".
+
+        Thiếu trường này thì danh bạ là NGÕ CỤT: khách tìm ra người rồi không có đường liên
+        hệ. Token vốn sinh ra để freelancer tự đem đi chia sẻ, và endpoint đã lọc
+        `is_listed=True` nên chỉ người tự chọn hiện công khai mới lộ.  #Huynh
+        """
+        user = await _register(client)
+        await _set_profile(client, user["headers"], is_listed=True)
+
+        resp = await client.get(f"/api/v1/public/freelancers/{user['id']}")
+
+        token = resp.json()["data"]["intake_share_token"]
+        assert token, "hồ sơ công khai phải kèm token biểu mẫu"
+
+        # Token phải MỞ ĐƯỢC biểu mẫu thật, không chỉ là một chuỗi bất kỳ.
+        form = await client.get(f"/api/v1/intake/{token}/config")
+        assert form.status_code == 200, form.text
+
+    async def test_search_results_omit_intake_token(self, client: AsyncClient) -> None:
+        """Danh sách tìm kiếm KHÔNG trả token — chỗ đó không cần, để payload gọn."""
+        user = await _register(client)
+        await _set_profile(client, user["headers"], is_listed=True)
+
+        resp = await client.get("/api/v1/public/freelancers")
+
+        found = [f for f in resp.json()["data"] if f["id"] == user["id"]]
+        assert found, "freelancer đã bật hiện công khai phải nằm trong kết quả"
+        assert found[0]["intake_share_token"] is None
+
 
 # ---------------------------------------------------------------------------
 # PATCH /users/me/freelancer-profile
@@ -346,3 +376,70 @@ class TestUpdateFreelancerProfile:
     async def test_unauthenticated_returns_401(self, client: AsyncClient) -> None:
         resp = await client.patch("/api/v1/users/me/freelancer-profile", json={"is_listed": True})
         assert resp.status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# Chặn dữ liệu rác + tìm theo kỹ năng + trả trạng thái công khai
+# ---------------------------------------------------------------------------
+
+
+class TestServiceCategoryValidation:
+    """Onboarding từng ghi chức danh tiếng Anh vào đây và backend nhận 200, khiến bộ lọc
+    danh bạ không bao giờ khớp. Giờ phải 422 ngay tại cửa."""
+
+    async def test_rejects_free_text_category(self, client: AsyncClient) -> None:
+        user = await _register(client)
+        resp = await client.patch(
+            "/api/v1/users/me/freelancer-profile",
+            json={"service_categories": ["Web Developer"]},
+            headers=user["headers"],
+        )
+        assert resp.status_code == 422, resp.text
+
+    async def test_rejects_when_one_of_many_is_invalid(self, client: AsyncClient) -> None:
+        user = await _register(client)
+        resp = await client.patch(
+            "/api/v1/users/me/freelancer-profile",
+            json={"service_categories": ["programming", "khong-co-that"]},
+            headers=user["headers"],
+        )
+        assert resp.status_code == 422, resp.text
+
+    async def test_accepts_valid_slugs(self, client: AsyncClient) -> None:
+        user = await _register(client)
+        await _set_profile(client, user["headers"], service_categories=["design", "content"])
+
+
+class TestSearchBySkill:
+    async def test_finds_by_skill_name(self, client: AsyncClient) -> None:
+        user = await _register(client)
+        await _set_profile(
+            client,
+            user["headers"],
+            skills=["ReactJS", "NodeJS"],
+            service_categories=["programming"],
+            is_listed=True,
+        )
+        resp = await client.get("/api/v1/public/freelancers", params={"q": "React"})
+        ids = [fl["id"] for fl in resp.json()["data"]]
+        assert user["id"] in ids
+
+
+class TestMeExposesDirectoryFields:
+    """FE cần đọc lại được trạng thái của chính mình, nếu không thì công tắc "hiện công
+    khai" luôn hiển thị sai sau khi tải lại trang."""
+
+    async def test_me_returns_is_listed_and_categories(self, client: AsyncClient) -> None:
+        user = await _register(client)
+        await _set_profile(
+            client,
+            user["headers"],
+            service_categories=["marketing"],
+            professional_title="Tư vấn Marketing",
+            is_listed=True,
+        )
+        me = await client.get("/api/v1/users/me", headers=user["headers"])
+        data = me.json()["data"]
+        assert data["is_listed"] is True
+        assert data["service_categories"] == ["marketing"]
+        assert data["professional_title"] == "Tư vấn Marketing"

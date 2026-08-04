@@ -3,6 +3,10 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
+from src.modules.freelancers.application.service import (
+    all_category_slugs,
+    is_valid_category,
+)
 from src.modules.intake_form.professions import is_valid_profession
 
 
@@ -44,6 +48,25 @@ class FreelancerProfileUpdateRequest(BaseModel):
     def _valid_profession(cls, v: str | None) -> str | None:
         if not is_valid_profession(v):
             raise ValueError("Nghề không hợp lệ")
+        return v
+
+    @field_validator("service_categories")
+    @classmethod
+    def _valid_service_categories(cls, v: list[str] | None) -> list[str] | None:
+        """Chỉ nhận slug trong danh mục của danh bạ.
+
+        Trước đây trường này là `list[str]` trần không kiểm gì: onboarding gửi chức danh
+        tiếng Anh ("Web Developer"), backend trả 200, rồi bộ lọc danh bạ so khớp bằng
+        slug nên chọn nhóm nào cũng ra rỗng — hỏng âm thầm, không ai thấy lỗi ở đâu.
+        Chặn tại cửa thì dữ liệu trong bảng luôn lọc được.  #Huynh
+        """
+        if v is None:
+            return None
+        invalid = [c for c in v if not is_valid_category(c)]
+        if invalid:
+            raise ValueError(
+                f"Nhóm dịch vụ không hợp lệ: {invalid}. Hợp lệ: {all_category_slugs()}"
+            )
         return v
 
 
