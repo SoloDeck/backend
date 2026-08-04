@@ -60,6 +60,9 @@ def build_user_fields(obj: Any) -> dict[str, Any]:
         "avatar_url": obj.avatar_url,
         "bio": obj.bio,
         "profession": obj.profession,
+        "professional_title": obj.professional_title,
+        "service_categories": obj.service_categories or [],
+        "is_listed": obj.is_listed,
         "intake_share_token": obj.intake_share_token,
         "professional_profile": obj,
         "preferences": obj,
@@ -82,6 +85,12 @@ class UserResponse(BaseModel):
     avatar_url: str | None
     bio: str | None
     profession: str | None = None
+    # Ba trường của danh bạ công khai. Thiếu chúng thì FE không đọc lại được trạng thái
+    # của chính mình — công tắc "hiện công khai" sẽ luôn hiển thị sai sau khi tải lại
+    # trang, và nhóm dịch vụ đã chọn cũng không hiện ra được.  #Huynh
+    professional_title: str | None = None
+    service_categories: list[str] = []
+    is_listed: bool = False
     intake_share_token: str | None
     professional_profile: ProfessionalProfileDTO
     preferences: PreferencesDTO
