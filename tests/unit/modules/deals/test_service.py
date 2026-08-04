@@ -6,7 +6,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 import structlog
 
-from src.modules.deals.application.service import DealsService
+from src.ai.shared.prompt import load_prompt
+from src.modules.deals.application.service import (
+    EXCLUDED_BLOCK_HEADING,
+    SCORED_BLOCK_HEADING,
+    DealsService,
+)
 from src.modules.deals.schemas.request import DealRequest, DealStageRequest, PublicIntakeRequest
 from src.shared.exceptions.domain import (
     BusinessRuleError,
@@ -577,16 +582,38 @@ class DealModelStub:
     deleted_at: object | None = None
 
 
-def _make_qualify_service(ai_result: dict):
+@dataclass
+class AttachmentStub:
+    """File khách gửi kèm ĐÃ bóc được chữ — chỉ loại này mới đưa cho AI đọc."""
+
+    filename: str
+    extracted_text: str | None
+
+
+def _make_qualify_service(
+    ai_result: dict,
+    *,
+    # Giữ NGUYÊN mặc định cũ để 8 chỗ gọi sẵn có không đổi hành vi.
+    intake_text: str | None = "I need a website built.",
+    attachments: list | None = None,
+    **deal_fields,
+):
     client_id = uuid.uuid4()
     deal_id = uuid.uuid4()
     owner_id = uuid.uuid4()
-    intake = IntakeStub(id=uuid.uuid4(), client_id=client_id)
-    deal_model = DealModelStub(id=deal_id, owner_user_id=owner_id, client_id=client_id)
+    intake = IntakeStub(id=uuid.uuid4(), client_id=client_id, inquiry_text=intake_text)
+    deal_model = DealModelStub(
+        id=deal_id, owner_user_id=owner_id, client_id=client_id, **deal_fields
+    )
 
     repo = AsyncMock()
     repo.get_by_id.return_value = deal_model
+    # Service tra phiếu theo DEAL (`get_intake_for_deal`), không theo client. Chỉ mock
+    # `get_intake_by_client_id` thì `intake` chỉ là MagicMock tự sinh, và mọi assert về nội
+    # dung prompt đều vô nghĩa vì f-string in ra "<MagicMock id=...>".  #Huynh
+    repo.get_intake_for_deal.return_value = intake
     repo.get_intake_by_client_id.return_value = intake
+    repo.list_attachments_with_text.return_value = attachments or []
     repo.create_lead_score.return_value = None
     repo.save.return_value = deal_model
 
@@ -719,3 +746,110 @@ async def test_qualify_deal_incomplete_ai_output_logs_missing_keys() -> None:
     assert warnings[0]["log_level"] == "warning"
     assert warnings[0]["deal_id"] == str(deal_model.id)
     assert warnings[0]["missing_keys"] == ["detected_signals", "price_range_min"]
+
+
+# ---------------------------------------------------------------------------
+# qualify_deal — ngữ cảnh gửi cho AI (thuần chuỗi, KHÔNG gọi LLM)
+# ---------------------------------------------------------------------------
+
+
+class TestInquiryContext:
+    """Dán chữ vào ô "Nội dung yêu cầu" phải nằm CÙNG khối với brief khách gửi kèm.
+
+    Bug thật, đo trên bản đang chạy: cùng một bản brief, gửi bằng file PDF thì chấm ngon,
+    copy dán vào ô "Nội dung yêu cầu" thì chấm 12/100 — budget 0 dù có "Ngân sách: 700
+    triệu", timeline 0 dù có "Thời gian build: 5 tháng". Chữ KHÔNG mất (deals.notes có 306
+    ký tự trong DB), nó chỉ bị dán nhãn "Ghi chú nội bộ" dưới tiêu đề "không phải lời khách"
+    — mà prompt ra luật không chấm khối đó.
+
+    Trước đây KHÔNG có test nào chạm vào `inquiry_context`, nên một lỗi dán nhãn đi thẳng ra
+    sản phẩm mà không ai chặn được.  #Huynh
+    """
+
+    @staticmethod
+    async def _context(*, intake_text=None, attachments=None, **deal_fields) -> str:
+        service, _, deal_model = _make_qualify_service(
+            _AI_RESULT, intake_text=intake_text, attachments=attachments, **deal_fields
+        )
+        return await service._build_inquiry_context(deal_model, deal_model.owner_user_id)
+
+    async def test_noi_dung_yeu_cau_nam_trong_khoi_cham_diem(self) -> None:
+        ctx = await self._context(notes="Ngân sách: 700 triệu. Thời gian build: 5 tháng.")
+
+        assert ctx.startswith(SCORED_BLOCK_HEADING)
+        scored = ctx.partition(EXCLUDED_BLOCK_HEADING)[0]
+        assert "- Nội dung yêu cầu: Ngân sách: 700 triệu. Thời gian build: 5 tháng." in scored
+
+    async def test_khong_con_dan_nhan_ghi_chu_noi_bo(self) -> None:
+        """Đúng hai chuỗi này làm AI bỏ qua chữ người dùng dán vào — cấm chúng quay lại."""
+        ctx = await self._context(
+            notes="5 hạng mục: đăng nhập, giỏ hàng, thanh toán, CMS, báo cáo"
+        )
+
+        assert "Ghi chú nội bộ" not in ctx
+        assert "FREELANCER TỰ NHẬP" not in ctx
+        assert "5 hạng mục" in ctx
+
+    async def test_dan_chu_va_gui_file_ra_cung_mot_khoi(self) -> None:
+        """Yêu cầu của người dùng: thích dùng đường nào cũng được, điểm phải như nhau."""
+        brief = "Ngân sách: 700 triệu. Thời gian build: 5 tháng. Hạng mục: A, B, C, D, E."
+
+        dan = await self._context(notes=brief)
+        gui_file = await self._context(
+            attachments=[AttachmentStub(filename="brief.pdf", extracted_text=brief)]
+        )
+
+        for ctx in (dan, gui_file):
+            assert brief in ctx.partition(EXCLUDED_BLOCK_HEADING)[0]
+            assert ctx.index(SCORED_BLOCK_HEADING) < ctx.index(brief)
+
+    async def test_gia_tri_du_kien_chi_nam_trong_khoi_cam(self) -> None:
+        """Hồi quy bug GỐC: "Estimated value: 200000 VND" từng bị chấm 20/25 ngân sách."""
+        ctx = await self._context(notes="Khách chưa nói gì về tiền.", estimated_value=200000)
+
+        scored, sep, excluded = ctx.partition(EXCLUDED_BLOCK_HEADING)
+        assert sep == EXCLUDED_BLOCK_HEADING
+        assert "200000" not in scored
+        assert "Giá trị dự kiến" not in scored
+        assert "200000" in excluded
+
+    async def test_khong_co_gia_tri_du_kien_thi_khong_in_khoi_cam(self) -> None:
+        """Tiêu đề rỗng chỉ tổ mời model đi tìm xem "khối kia" nằm ở đâu."""
+        ctx = await self._context(notes="Làm web bán hàng")
+
+        assert EXCLUDED_BLOCK_HEADING not in ctx
+
+    async def test_nguon_deal_van_o_khoi_cham_diem(self) -> None:
+        """Tiêu chí `context` cho điểm "kênh khách đến" — đẩy `source` sang khối cấm là tự trừ."""
+        ctx = await self._context(source="referral", estimated_value=200000)
+
+        assert "- Nguồn deal: referral" in ctx.partition(EXCLUDED_BLOCK_HEADING)[0]
+
+    async def test_chi_co_ten_du_an_thi_khoi_cham_diem_chi_mot_dong(self) -> None:
+        """Luật "chỉ có tên dự án -> scope tối đa 12" phải còn nhận ra được tình huống đó."""
+        ctx = await self._context()
+
+        assert ctx.splitlines() == [SCORED_BLOCK_HEADING, "- Tên dự án: Test Deal"]
+
+    async def test_chuoi_ghep_duoc_truyen_thang_xuong_ai(self) -> None:
+        """Khoá luôn phần đấu dây: dựng đúng mà gọi sai tham số thì cũng vô nghĩa."""
+        service, _, deal_model = _make_qualify_service(
+            _AI_RESULT, intake_text=None, notes="Ngân sách: 700 triệu"
+        )
+
+        await service.qualify_deal(deal_model.owner_user_id, deal_model.id)
+
+        sent = service.ai_facade.qualify_lead.await_args.kwargs["inquiry_text"]
+        assert sent.startswith(SCORED_BLOCK_HEADING)
+        assert "Ngân sách: 700 triệu" in sent
+
+    async def test_tieu_de_khoi_khop_voi_prompt(self) -> None:
+        """Mã nguồn và prompt phải gọi hai khối bằng ĐÚNG một tên.
+
+        Đây là chỗ duy nhất phát hiện được việc sửa tiêu đề ở một phía: AI không báo lỗi khi
+        luật trỏ vào một khối không tồn tại, nó chỉ lặng lẽ chấm sai.  #Huynh
+        """
+        prompt = load_prompt("lead_qualifier")
+
+        assert SCORED_BLOCK_HEADING in prompt
+        assert EXCLUDED_BLOCK_HEADING in prompt
