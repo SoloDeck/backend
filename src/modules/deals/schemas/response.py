@@ -122,6 +122,12 @@ class LeadScoreHistoryResponse(BaseModel):
     urgency_signal: str | None = None
     red_flags: list | None = None
 
+    # Lúc freelancer bấm "Lưu & chuyển sang Đã đánh giá". None = mới chấm, chưa chốt.
+    #
+    # Đây là thứ phân biệt tab "Lịch sử" (kể HẾT mọi lần chấm) với tab "Tài liệu" (chỉ kể
+    # bản đã chốt). Giao diện lọc theo trường này chứ đừng đoán theo "bản mới nhất".  #Huynh
+    saved_at: datetime | None = None
+
     # Bản ghi CŨ (trước khi thêm mấy cột này) không có -> None. Giao diện phải chịu được.
     breakdown: list | None = None
     next_step: str | None = None

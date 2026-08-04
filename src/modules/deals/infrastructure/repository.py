@@ -422,3 +422,21 @@ class DealsRepository:
             .order_by(LeadScoreModel.generated_at.desc())
         )
         return list(rows)
+
+    async def get_latest_lead_score(self, deal_id: uuid.UUID, owner_user_id: uuid.UUID):
+        """Bản chấm mới nhất của deal, hoặc None nếu chưa chấm lần nào.
+
+        Cùng phép JOIN lọc chủ sở hữu như `list_lead_scores` — `lead_scores` không có cột
+        `owner_user_id`, lọc thiếu là ai biết id deal người khác cũng chốt được bản chấm
+        của họ.  #Huynh
+        """
+        return await self.db.scalar(
+            select(LeadScoreModel)
+            .join(DealModel, DealModel.id == LeadScoreModel.deal_id)
+            .where(
+                LeadScoreModel.deal_id == deal_id,
+                DealModel.owner_user_id == owner_user_id,
+            )
+            .order_by(LeadScoreModel.generated_at.desc())
+            .limit(1)
+        )
