@@ -3,13 +3,12 @@
 import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from pathlib import Path
 from typing import Any
 
 import structlog
-import yaml
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.openapi.utils import get_openapi
 from fastapi.responses import HTMLResponse, JSONResponse
 from sqlalchemy import text
 
@@ -161,23 +160,48 @@ app = FastAPI(
 )
 
 
+# Origins only — NO `/api/v1` suffix. The generated paths already carry the full
+# prefix (routers are mounted at `/api/v1/...`), so a server URL ending in `/api/v1`
+# would make Swagger post to `/api/v1/api/v1/...`. The old hand-written contract had
+# bare paths, which is why its server URLs did include the prefix.
+_OPENAPI_SERVERS: list[dict[str, str]] = [
+    {"url": "http://localhost:8000", "description": "Local development"},
+    {"url": "https://api-staging.solodesk.space", "description": "Staging"},
+    {"url": "https://api.solodesk.space", "description": "Production"},
+]
+
+
 def custom_openapi() -> dict[str, Any]:
-    """Serve the contract-first OpenAPI document while API routers are scaffolded."""
+    """Build the OpenAPI document from the routes actually registered on the app.
+
+    This used to serve `contracts/openapi.yaml` — a hand-maintained document from the
+    contract-first bootstrap, back when the routers were still scaffolding. The code
+    outgrew it: 35 implemented endpoints had accumulated that the file never gained,
+    among them `PATCH /proposals/{id}/price`, `POST /proposals/ai-generate`, every
+    `/notifications` route and the whole reminder rules/preview/send group. Because
+    Swagger renders this document, those endpoints were invisible at `/docs` and
+    could not be called from there at all — they looked unimplemented to anyone
+    reading the docs page, including us.
+
+    `contracts/openapi.yaml` is kept as a design artefact. It is no longer the served
+    truth, so it can no longer drift away from the implementation unnoticed.
+    """
     if app.openapi_schema:
         return app.openapi_schema
 
-    contract_path = Path(__file__).resolve().parents[1] / "contracts" / "openapi.yaml"
-    with contract_path.open(encoding="utf-8") as spec_file:
-        schema = yaml.safe_load(spec_file)
+    schema = get_openapi(
+        title=app.title,
+        version=app.version,
+        description=app.description,
+        routes=app.routes,
+    )
 
-    # In development, promote the localhost server to the top so Swagger UI
-    # sends requests to the local instance instead of production.
+    # Swagger UI sends "Try it out" requests to servers[0]. Outside production, put
+    # localhost first so the docs page drives the local instance, not the deployed API.
+    servers = list(_OPENAPI_SERVERS)
     if settings.debug or settings.app_env == "development":
-        servers: list[dict[str, Any]] = schema.get("servers", [])
-        local = [s for s in servers if "localhost" in s.get("url", "")]
-        others = [s for s in servers if "localhost" not in s.get("url", "")]
-        if local:
-            schema["servers"] = local + others
+        servers.sort(key=lambda s: "localhost" not in s["url"])
+    schema["servers"] = servers
 
     app.openapi_schema = schema
     return app.openapi_schema
