@@ -1,3 +1,28 @@
+# =============================================================================
+# DESIGN ARTEFACT — NOT SERVED. Editing this file does not change the API,
+# /docs, or /openapi.json.
+#
+# Until 2026-08-04 this document WAS the served schema: src/main.py's
+# custom_openapi() loaded it verbatim. The code outgrew it without anyone
+# noticing — 148 operations here against 175 implemented — so 35 working
+# endpoints were invisible in Swagger and could not be called from /docs at
+# all. Among them PATCH /proposals/{id}/price, POST /proposals/ai-generate,
+# every /notifications route, and the whole reminder rules/preview/send group.
+# They read as unimplemented to anyone consulting the docs page.
+#
+# The live schema is now generated from the routes registered in src/main.py,
+# so it cannot drift again. This file is kept for two things only:
+#   1. the original contract-first design record (see x-contract-verification)
+#   2. DTO shape reference — doc comments across src/ai/** still cite it for
+#      ContractContentDTO, FollowUpGenerationResponse and friends, and those
+#      shapes remain accurate.
+#
+# It is NOT a reliable answer to "does endpoint X exist?". Ask the running app:
+#   curl -s localhost:8000/openapi.json | jq '.paths | keys'
+#
+# Do not spend time hand-syncing the drift. That rebuilds the second source of
+# truth this change removed.
+# =============================================================================
 openapi: 3.1.0
 info:
   title: SoloDesk API
