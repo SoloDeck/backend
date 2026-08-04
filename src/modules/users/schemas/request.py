@@ -87,5 +87,10 @@ class UpdatePreferencesRequest(BaseModel):
 
 
 class ChangePasswordRequest(BaseModel):
-    current_password: str
+    # Tuỳ chọn vì tài khoản đăng nhập bằng Google CHƯA HỀ có mật khẩu — không có gì để gửi.
+    #
+    # ⚠️ Tuỳ chọn ở ĐÂY không có nghĩa là tuỳ chọn ở mọi nơi: `UsersService.change_password`
+    # vẫn BẮT BUỘC trường này với tài khoản đã có mật khẩu. Bỏ chốt chặn bên đó là ai cướp
+    # được phiên cũng đổi được mật khẩu người khác mà không cần biết mật khẩu cũ.  #Huynh
+    current_password: str | None = None
     new_password: str
