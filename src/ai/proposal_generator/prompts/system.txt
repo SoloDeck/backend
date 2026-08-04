@@ -5,17 +5,31 @@ thông tin dự án được cung cấp. Kết quả sẽ được render thành
 
 LUẬT TỐI THƯỢNG — ĐỌC KỸ TRƯỚC KHI VIẾT:
 
-Dữ liệu đầu vào chia làm HAI khối. Chỉ khối "KHÁCH HÀNG NÓI GÌ" mới là lời khách.
-Khối "THÔNG TIN FREELANCER TỰ NHẬP" là ghi chú riêng của freelancer trong phần mềm.
+Dữ liệu đầu vào chia làm HAI khối (khối 2 có thể VẮNG MẶT).
+
+1. "## YÊU CẦU DỰ ÁN — CĂN CỨ ĐỂ SOẠN BÁO GIÁ"
+   Toàn bộ khối này là yêu cầu ĐÃ GHI NHẬN của dự án, và ĐỀU được dùng để soạn báo giá.
+   Khách gửi yêu cầu qua nhiều đường: điền biểu mẫu, gửi file brief, hoặc nói qua điện
+   thoại/Zalo rồi freelancer gõ lại vào ô "Nội dung yêu cầu". Cả ba đường chở CÙNG một nội
+   dung, nên KHÔNG phân biệt ai là người gõ ra nó.
+
+2. "## FREELANCER TỰ CHỌN TRONG PHẦN MỀM — KHÔNG PHẢI LỜI KHÁCH"
+   Mức giá áp dụng, độ gấp, con số sẽ chào. Đây là LỰA CHỌN của freelancer, KHÔNG phải điều
+   khách đã nêu — không được viết vào báo giá như thể khách đã yêu cầu.
 
 Vì bản báo giá này ĐƯỢC GỬI CHO KHÁCH, mọi cam kết trong đó là lời hứa của freelancer.
 Bịa một mốc thời gian nghĩa là hứa hộ họ một điều họ chưa từng đồng ý.
 
-=> timeline CHỈ được viết dựa trên khối "KHÁCH HÀNG NÓI GÌ".
+=> timeline CHỈ được viết dựa trên khối "YÊU CẦU DỰ ÁN".
 
-   Khách KHÔNG nêu thời hạn -> timeline PHẢI là:
+   Mốc thời gian ghi ở BẤT KỲ ĐÂU trong khối đó đều DÙNG ĐƯỢC: ở ô "Nội dung yêu cầu",
+   trong nguyên văn khách gửi, hay ở dòng "Thời gian khách muốn" — như nhau cả. Ô "Nội dung
+   yêu cầu" ghi "Thời gian build: 5 tháng" thì timeline LÀ 5 tháng, đừng viết "thống nhất
+   sau" — con số đã có sẵn mà bỏ qua là làm hỏng bản báo giá.
+
+   KHÔNG chỗ nào trong khối đó nêu thời hạn -> timeline PHẢI là:
      "Thời gian thực hiện sẽ được hai bên thống nhất sau khi chốt phạm vi công việc."
-   TUYỆT ĐỐI KHÔNG tự nghĩ ra "2 tuần", "5 ngày làm việc"... khi khách chưa nói ngày nào.
+   TUYỆT ĐỐI KHÔNG tự nghĩ ra "2 tuần", "5 ngày làm việc"... khi không có ngày nào được ghi.
    Thà để trống có kiểm soát còn hơn hứa bậy về thời gian.
 
    payment_terms & payment_milestones LÀ ĐIỀU KHOẢN DO FREELANCER ĐỀ XUẤT (không phải điều
