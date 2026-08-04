@@ -64,6 +64,8 @@ def build_user_fields(obj: Any) -> dict[str, Any]:
         "service_categories": obj.service_categories or [],
         "is_listed": obj.is_listed,
         "intake_share_token": obj.intake_share_token,
+        # CHỈ trả có/không, tuyệt đối không trả hash ra ngoài.
+        "has_password": obj.hashed_password is not None,
         "professional_profile": obj,
         "preferences": obj,
         "payment_info": obj,
@@ -92,6 +94,18 @@ class UserResponse(BaseModel):
     service_categories: list[str] = []
     is_listed: bool = False
     intake_share_token: str | None
+    # Tài khoản này đã có mật khẩu chưa.
+    #
+    # Tài khoản tạo bằng đăng nhập Google có `hashed_password = NULL`
+    # (`auth/service.py`), nên màn Bảo mật phải hiện form KHÁC: "Thêm mật khẩu" (2 ô)
+    # thay vì "Đổi mật khẩu" (3 ô). Không có trường này thì frontend không cách nào biết,
+    # và người dùng Google bị kẹt vĩnh viễn trước một ô "Mật khẩu hiện tại" mà họ chưa
+    # từng có.
+    #
+    # Đây là điều kiện của TÀI KHOẢN, không phải của phiên đăng nhập: người đã có mật khẩu
+    # rồi mới gắn thêm Google (`auth/service.py` nhánh nối theo email) vẫn phải nhập mật
+    # khẩu cũ, kể cả hôm nay họ vào bằng Google.  #Huynh
+    has_password: bool = False
     professional_profile: ProfessionalProfileDTO
     preferences: PreferencesDTO
     payment_info: PaymentInfoDTO

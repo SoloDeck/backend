@@ -5,13 +5,86 @@ from unittest.mock import AsyncMock
 import pytest
 
 from src.modules.users.application.service import UsersService
-from src.shared.exceptions.domain import NotFoundError, ValidationError
+from src.modules.users.schemas.request import ChangePasswordRequest
+from src.shared.exceptions.domain import (
+    AuthenticationError,
+    NotFoundError,
+    ValidationError,
+)
+from src.shared.security.passwords import hash_password, verify_password
 
 
 @dataclass
 class UserStub:
     id: uuid.UUID
     avatar_url: str | None = None
+    hashed_password: str | None = None
+
+
+class TestDatVaDoiMatKhau:
+    """Đặt mật khẩu lần đầu (tài khoản Google) và đổi mật khẩu đang có.
+
+    Ranh giới giữa hai nhánh là chỗ dễ làm sai nhất: `current_password` khai tuỳ chọn ở tầng
+    schema để tài khoản Google gửi được, nhưng tài khoản ĐÃ CÓ mật khẩu thì vẫn phải bắt buộc.
+    Hụt chốt chặn đó là ai cướp được phiên cũng đổi được mật khẩu người khác.
+    """
+
+    @staticmethod
+    def _service(user: UserStub):  # type: ignore[no-untyped-def]
+        repo = AsyncMock()
+        repo.get_by_id.return_value = user
+        repo.save.side_effect = lambda u: u
+        return UsersService(db=AsyncMock(), repo=repo, storage=AsyncMock())
+
+    async def test_chua_co_mat_khau_thi_dat_duoc_ma_khong_can_mat_khau_cu(self) -> None:
+        """Tài khoản đăng nhập bằng Google: `hashed_password=None`, không có gì để nhập."""
+        user = UserStub(id=uuid.uuid4(), hashed_password=None)
+        service = self._service(user)
+
+        await service.change_password(user.id, ChangePasswordRequest(new_password="MatKhauMoi2026"))
+
+        assert user.hashed_password is not None
+        assert verify_password("MatKhauMoi2026", user.hashed_password)
+
+    async def test_da_co_mat_khau_ma_khong_gui_mat_khau_cu_thi_bi_tu_choi(self) -> None:
+        """Ca bảo mật quan trọng nhất của cả thay đổi này.
+
+        `current_password` tuỳ chọn ở schema, nên nếu service không TỰ kiểm trường hợp thiếu
+        thì một phiên bị đánh cắp là đủ để đổi mật khẩu nạn nhân."""
+        cu = hash_password("MatKhauCu2026")
+        user = UserStub(id=uuid.uuid4(), hashed_password=cu)
+        service = self._service(user)
+
+        with pytest.raises(AuthenticationError):
+            await service.change_password(
+                user.id, ChangePasswordRequest(new_password="KeXauTuDat2026")
+            )
+
+        assert user.hashed_password == cu, "mật khẩu KHÔNG được đổi"
+
+    async def test_da_co_mat_khau_ma_gui_sai_mat_khau_cu_thi_bi_tu_choi(self) -> None:
+        cu = hash_password("MatKhauCu2026")
+        user = UserStub(id=uuid.uuid4(), hashed_password=cu)
+        service = self._service(user)
+
+        with pytest.raises(AuthenticationError):
+            await service.change_password(
+                user.id,
+                ChangePasswordRequest(current_password="doan-bua", new_password="MatKhauMoi2026"),
+            )
+
+        assert user.hashed_password == cu, "mật khẩu KHÔNG được đổi"
+
+    async def test_da_co_mat_khau_va_gui_dung_thi_doi_duoc(self) -> None:
+        user = UserStub(id=uuid.uuid4(), hashed_password=hash_password("MatKhauCu2026"))
+        service = self._service(user)
+
+        await service.change_password(
+            user.id,
+            ChangePasswordRequest(current_password="MatKhauCu2026", new_password="MatKhauMoi2026"),
+        )
+
+        assert verify_password("MatKhauMoi2026", user.hashed_password)
 
 
 class TestUploadAvatar:

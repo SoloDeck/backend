@@ -3,10 +3,16 @@
 import uuid
 from datetime import date
 from decimal import Decimal
+from unittest.mock import AsyncMock, patch
 
 from httpx import AsyncClient
 
 from tests.integration.modules.clients.test_clients_api import _auth_headers, _create_client
+
+# `/send` giờ GỬI EMAIL THẬT rồi mới đánh dấu đã gửi (trước đây chỉ đổi trạng thái). Mock
+# lớp SMTP chứ không dùng `notify=false`: như vậy test vẫn đi qua đường dựng thư thật trên
+# PostgreSQL thật — chỗ mà unit test (mock repo) không với tới được.
+SEND_EMAIL = "src.shared.email.smtp.send_email"
 
 
 async def _create_deal(http: AsyncClient, headers: dict, client_id: str) -> dict:
@@ -45,9 +51,12 @@ async def test_invoice_send_payment_and_payment_list(client: AsyncClient) -> Non
     headers = await _auth_headers(client)
     invoice = await _create_invoice(client, headers)
 
-    send_resp = await client.post(f"/api/v1/invoices/{invoice['id']}/send", headers=headers)
-    assert send_resp.status_code == 200
+    with patch(SEND_EMAIL, new=AsyncMock()) as send_email:
+        send_resp = await client.post(f"/api/v1/invoices/{invoice['id']}/send", headers=headers)
+    assert send_resp.status_code == 200, send_resp.text
     assert send_resp.json()["data"]["status"] == "sent"
+    # Thư phải thật sự được gửi đi, không chỉ đổi trạng thái.
+    send_email.assert_awaited_once()
 
     payment_resp = await client.post(
         f"/api/v1/invoices/{invoice['id']}/payments",
@@ -71,8 +80,9 @@ async def test_public_invoice_view_via_share_token(client: AsyncClient) -> None:
     invoice = await _create_invoice(client, headers)
 
     # Send invoice to generate share_token
-    send_resp = await client.post(f"/api/v1/invoices/{invoice['id']}/send", headers=headers)
-    assert send_resp.status_code == 200
+    with patch(SEND_EMAIL, new=AsyncMock()):
+        send_resp = await client.post(f"/api/v1/invoices/{invoice['id']}/send", headers=headers)
+    assert send_resp.status_code == 200, send_resp.text
     share_token = send_resp.json()["data"].get("share_token")
     assert share_token is not None, "send() must generate a share_token"
 

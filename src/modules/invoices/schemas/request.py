@@ -45,6 +45,21 @@ class InvoiceUpdateRequest(BaseModel):
     line_items: list[InvoiceLineItemRequest] | None = None
 
 
+class InvoiceSendRequest(BaseModel):
+    """Tuỳ chọn khi gửi hóa đơn. Body để trống thì gửi email kèm QR tự sinh."""
+
+    # `False` = CHỈ đánh dấu đã gửi, không gửi thư. Dành cho freelancer đã tự gửi tay qua
+    # Zalo/Messenger — trước đây đây là hành vi DUY NHẤT của endpoint này, nên giữ lại một
+    # đường đi cho nó thay vì bắt mọi người phải gửi email.  #Huynh
+    notify: bool = True
+    # Ảnh freelancer tự đính (ảnh mã QR chụp từ app ngân hàng, ảnh sản phẩm…). Mỗi phần tử
+    # là `{"key", "filename", "content_type"}` do `POST /reminders/attachments` trả về —
+    # dùng lại đúng kho ảnh đó, không dựng đường tải lên thứ hai.
+    #
+    # Có ảnh thì thư KHÔNG kèm QR tự sinh nữa (xem `build_payment_block(with_qr=…)`).
+    attachments: list[dict[str, str]] = Field(default_factory=list)
+
+
 class PaymentRequest(BaseModel):
     amount: Decimal = Field(gt=0)
     payment_date: date

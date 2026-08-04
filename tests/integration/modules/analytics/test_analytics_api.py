@@ -95,7 +95,11 @@ async def test_revenue_aggregates_paid_invoices(client: AsyncClient) -> None:
             headers=headers,
         )
     ).json()["data"]
-    await client.post(f"/api/v1/invoices/{inv['id']}/send", headers=headers)
+    # `notify: false` — chỉ đánh dấu đã gửi, KHÔNG gửi email. Bài test này đo doanh thu chứ
+    # không đo việc gửi thư; để nó gửi thật thì test phụ thuộc vào có máy chủ SMTP hay không.
+    await client.post(
+        f"/api/v1/invoices/{inv['id']}/send", json={"notify": False}, headers=headers
+    )
     await client.post(
         f"/api/v1/invoices/{inv['id']}/payments",
         json={"amount": "500.00", "payment_date": "2026-01-01", "payment_method": "bank_transfer"},
@@ -154,7 +158,11 @@ async def test_revenue_monthly_buckets_a_paid_invoice(client: AsyncClient) -> No
             headers=headers,
         )
     ).json()["data"]
-    await client.post(f"/api/v1/invoices/{inv['id']}/send", headers=headers)
+    # `notify: false` — chỉ đánh dấu đã gửi, KHÔNG gửi email. Bài test này đo doanh thu chứ
+    # không đo việc gửi thư; để nó gửi thật thì test phụ thuộc vào có máy chủ SMTP hay không.
+    await client.post(
+        f"/api/v1/invoices/{inv['id']}/send", json={"notify": False}, headers=headers
+    )
 
     resp = await client.get("/api/v1/analytics/revenue/monthly?months=24", headers=headers)
     data = resp.json()["data"]

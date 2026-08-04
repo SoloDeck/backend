@@ -148,6 +148,18 @@ class Settings(BaseSettings):
     smtp_from_name: str = "SoloDesk"
     smtp_tls: bool = False  # True → SMTP_SSL (port 465)
     smtp_starttls: bool = False  # True → STARTTLS after connect (port 587)
+    # Hết giờ chờ cho MỘT lần gửi thư. `smtplib` mặc định KHÔNG có timeout, nên máy chủ
+    # thư im lặng (nhà cung cấp chặn cổng 587, hoặc gói tin bị nuốt) là treo tới tận
+    # timeout TCP của hệ điều hành — cỡ 2 phút — và giữ luôn một thread trong pool.
+    #
+    # 10 giây không phải số tuỳ tiện: axios của web bỏ cuộc ở 15 giây
+    # (`web/src/configs/axios.ts`). Backend phải trả lời TRƯỚC mốc đó, không thì mọi lỗi
+    # SMTP đều hiện thành "mất mạng" ở phía người dùng và cả phần phân loại lỗi bên dưới
+    # thành vô dụng vì câu trả lời không bao giờ về kịp. Sửa số này thì phải xem lại số kia.
+    #
+    # Đo thật trên staging 04/08: một lần gửi qua Gmail mất 3,7–4,4 giây, nên 10 giây còn
+    # dư gấp đôi cho lúc mạng chậm.  #Huynh
+    smtp_timeout_seconds: float = 10.0
 
     # -----------------------------------------------------------------------
     # CORS

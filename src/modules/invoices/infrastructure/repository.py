@@ -11,6 +11,7 @@ from src.infrastructure.database.models import (
     InvoiceLineItemModel,
     InvoiceModel,
     InvoicePaymentRecordModel,
+    UserModel,
 )
 
 
@@ -97,6 +98,19 @@ class InvoicesRepository:
         if invoice_number is not None:
             conditions.append(InvoiceModel.invoice_number.ilike(f"%{invoice_number}%"))
         result = await self.db.execute(select(InvoiceModel).where(*conditions))
+        return list(result.scalars().all())
+
+    async def get_owner(self, owner_user_id: uuid.UUID):
+        """Hồ sơ freelancer — cần tên + email để ký thư, và thông tin ngân hàng để dựng QR."""
+        return await self.db.scalar(select(UserModel).where(UserModel.id == owner_user_id))
+
+    async def list_line_items(self, invoice_id: uuid.UUID) -> list:
+        """Hạng mục của hóa đơn, theo đúng thứ tự hiển thị trên chứng từ."""
+        result = await self.db.execute(
+            select(InvoiceLineItemModel)
+            .where(InvoiceLineItemModel.invoice_id == invoice_id)
+            .order_by(InvoiceLineItemModel.sort_order)
+        )
         return list(result.scalars().all())
 
     async def add_payment(self, **values):
