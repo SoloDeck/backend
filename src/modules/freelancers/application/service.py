@@ -31,10 +31,36 @@ _CATEGORIES: list[FreelancerCategoryResponse] = [
     ),
 ]
 
+def all_category_slugs() -> list[str]:
+    """Slug của mọi nhóm dịch vụ, theo đúng thứ tự hiển thị."""
+    return [c.slug for c in _CATEGORIES]
+
+
+def is_valid_category(value: str) -> bool:
+    """Slug có nằm trong danh mục không.
+
+    ĐƯỜNG NỐI (seam) giống `intake_form/professions.py`: mọi nơi khác chỉ được kiểm tra
+    nhóm dịch vụ QUA hàm này, không đọc thẳng `_CATEGORIES`.
+
+    Sinh ra vì `service_categories` từng KHÔNG được validate lúc ghi: onboarding gửi
+    chức danh tiếng Anh ("Web Developer") và backend nhận 200, trong khi bộ lọc danh bạ
+    so khớp bằng slug — kết quả là chọn nhóm nào cũng ra rỗng mà không ai thấy lỗi ở
+    đâu. Chặn ngay lúc ghi thì chuyện đó không lặp lại được.  #Huynh
+    """
+    return value in {c.slug for c in _CATEGORIES}
+
+
 _NEW_THRESHOLD_DAYS = 30
 
 
-def _to_response(user, project_count: int) -> FreelancerPublicResponse:
+def _to_response(
+    user, project_count: int, *, include_intake_token: bool = False
+) -> FreelancerPublicResponse:
+    """Hồ sơ công khai của một freelancer.
+
+    `include_intake_token` chỉ bật ở trang hồ sơ — danh sách tìm kiếm không cần token, và
+    không trả thì payload gọn hơn.  #Huynh
+    """
     threshold = datetime.now(UTC) - timedelta(days=_NEW_THRESHOLD_DAYS)
     created = user.created_at
     if created.tzinfo is None:
@@ -54,6 +80,7 @@ def _to_response(user, project_count: int) -> FreelancerPublicResponse:
         completed_project_count=project_count,
         is_new=created >= threshold,
         created_at=user.created_at,
+        intake_share_token=user.intake_share_token if include_intake_token else None,
     )
 
 
@@ -84,6 +111,11 @@ class FreelancersService:
                     UserModel.full_name.ilike(f"%{q}%"),
                     UserModel.bio.ilike(f"%{q}%"),
                     UserModel.professional_title.ilike(f"%{q}%"),
+                    # Kỹ năng cũng phải tìm được: ô tìm kiếm trên FE gợi ý gõ tên công
+                    # nghệ, mà gõ "React" lại ra rỗng dù freelancer có kỹ năng ReactJS.
+                    # Nối mảng thành chuỗi rồi ilike — đủ cho quy mô danh bạ này và
+                    # không phải thêm chỉ mục toàn văn.  #Huynh
+                    func.array_to_string(UserModel.skills, " ").ilike(f"%{q}%"),
                 )
             )
         if categories:
@@ -146,4 +178,4 @@ class FreelancersService:
             or 0
         )
 
-        return _to_response(user, project_count)
+        return _to_response(user, project_count, include_intake_token=True)

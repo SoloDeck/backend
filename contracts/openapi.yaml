@@ -4926,6 +4926,22 @@ components:
           type: string
           nullable: true
           description: Hard-to-guess token for the user's public intake link (POST /intake/{share_token}).
+        professional_title:
+          type: string
+          nullable: true
+          description: Headline shown on the public directory card.
+        service_categories:
+          type: array
+          items:
+            type: string
+          description: >-
+            Directory category slugs (design, programming, marketing, content, consulting).
+            Validated on write — an unknown slug returns 422.
+        is_listed:
+          type: boolean
+          description: >-
+            Whether this freelancer opted into the public directory. Defaults to false;
+            only the owner can change it via PATCH /users/me/freelancer-profile.
         professional_profile:
           $ref: '#/components/schemas/ProfessionalProfileDTO'
         preferences:
