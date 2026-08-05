@@ -17,6 +17,10 @@ class Paginated(BaseModel, Generic[T]):
     page_size: int
 
 
+class AdminMessageResponse(BaseModel):
+    detail: str
+
+
 class AdminPlanResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

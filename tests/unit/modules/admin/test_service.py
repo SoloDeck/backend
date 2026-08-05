@@ -21,7 +21,11 @@ from src.modules.admin.schemas.request import (
     AdminUpdateTemplateRequest,
     AdminUpdateUserRequest,
 )
-from src.shared.exceptions.domain import AlreadyExistsError, NotFoundError
+from src.shared.exceptions.domain import (
+    AlreadyExistsError,
+    BusinessRuleError,
+    NotFoundError,
+)
 
 
 @dataclass
@@ -426,6 +430,63 @@ class TestUpdatePlan:
 
 
 # ---------------------------------------------------------------------------
+# delete_plan
+# ---------------------------------------------------------------------------
+
+
+class TestDeletePlan:
+    async def test_success_deletes_and_writes_audit_log(self) -> None:
+        plan = PlanStub(id=uuid.uuid4(), name="Pro", slug="pro")
+        repo = _repo(
+            get_plan=plan,
+            count_subscriptions_for_plan=0,
+            count_payments_for_plan=0,
+        )
+        service = AdminService(db=AsyncMock(), repo=repo)
+        admin_id = uuid.uuid4()
+
+        await service.delete_plan(plan.id, admin_id=admin_id)
+
+        repo.delete_plan.assert_awaited_once_with(plan)
+        kwargs = repo.create_audit_log.await_args.kwargs
+        assert kwargs["event_type"] == "plan.deleted"
+        assert kwargs["actor_user_id"] == admin_id
+        assert kwargs["target_id"] == plan.id
+        assert "Pro" in kwargs["description"]
+
+    async def test_not_found_raises(self) -> None:
+        repo = _repo(get_plan=None)
+        service = AdminService(db=AsyncMock(), repo=repo)
+
+        with pytest.raises(NotFoundError):
+            await service.delete_plan(uuid.uuid4())
+
+    async def test_plan_with_subscribers_raises_business_rule(self) -> None:
+        plan = PlanStub(id=uuid.uuid4(), name="Pro")
+        repo = _repo(get_plan=plan, count_subscriptions_for_plan=3)
+        service = AdminService(db=AsyncMock(), repo=repo)
+
+        with pytest.raises(BusinessRuleError, match="3 thuê bao"):
+            await service.delete_plan(plan.id)
+
+        repo.delete_plan.assert_not_awaited()
+
+    async def test_plan_with_payments_raises_business_rule(self) -> None:
+        plan = PlanStub(id=uuid.uuid4(), name="Pro")
+        repo = _repo(
+            get_plan=plan,
+            count_subscriptions_for_plan=0,
+            count_payments_for_plan=2,
+        )
+        service = AdminService(db=AsyncMock(), repo=repo)
+
+        with pytest.raises(BusinessRuleError, match="2 giao dịch"):
+            await service.delete_plan(plan.id)
+
+        repo.delete_plan.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
 # list_subscriptions_paginated
 # ---------------------------------------------------------------------------
 
@@ -603,6 +664,40 @@ class TestUpdateTemplate:
 
         with pytest.raises(NotFoundError):
             await service.update_template(uuid.uuid4(), AdminUpdateTemplateRequest(name="X"))
+
+
+class TestDeleteTemplate:
+    async def test_success_deletes_and_writes_audit_log(self) -> None:
+        template = TemplateStub(id=uuid.uuid4(), name="Default Proposal")
+        repo = _repo(get_template=template, count_child_templates=0)
+        service = AdminService(db=AsyncMock(), repo=repo)
+        admin_id = uuid.uuid4()
+
+        await service.delete_template(template.id, admin_id=admin_id)
+
+        repo.delete_template.assert_awaited_once_with(template)
+        kwargs = repo.create_audit_log.await_args.kwargs
+        assert kwargs["event_type"] == "template.deleted"
+        assert kwargs["actor_user_id"] == admin_id
+        assert kwargs["target_id"] == template.id
+        assert "Default Proposal" in kwargs["description"]
+
+    async def test_not_found_raises(self) -> None:
+        repo = _repo(get_template=None)
+        service = AdminService(db=AsyncMock(), repo=repo)
+
+        with pytest.raises(NotFoundError):
+            await service.delete_template(uuid.uuid4())
+
+    async def test_template_with_children_raises_business_rule(self) -> None:
+        template = TemplateStub(id=uuid.uuid4(), name="Base")
+        repo = _repo(get_template=template, count_child_templates=2)
+        service = AdminService(db=AsyncMock(), repo=repo)
+
+        with pytest.raises(BusinessRuleError, match="2 mẫu phái sinh"):
+            await service.delete_template(template.id)
+
+        repo.delete_template.assert_not_awaited()
 
 
 # ---------------------------------------------------------------------------

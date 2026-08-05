@@ -25,6 +25,7 @@ from src.modules.admin.schemas.response import (
     AdminAiCostTotals,
     AdminAuditLogResponse,
     AdminFeatureFlagResponse,
+    AdminMessageResponse,
     AdminPlanResponse,
     AdminPlatformMetricsResponse,
     AdminSubscriptionResponse,
@@ -203,6 +204,22 @@ async def update_plan(
         plan_id, payload, admin_id=uuid.UUID(admin.sub)
     )
     return ApiResponse.ok(AdminPlanResponse.model_validate(plan))
+
+
+@router.delete("/plans/{plan_id}", response_model=ApiResponse[AdminMessageResponse])
+async def delete_plan(
+    plan_id: uuid.UUID,
+    admin: AdminUser,
+    db: DBSession,
+) -> ApiResponse[AdminMessageResponse]:
+    """Xoá một gói cước.
+
+    Chỉ xoá được khi không còn thuê bao hay giao dịch thanh toán nào trỏ vào gói —
+    ngược lại trả 409. Muốn ngừng bán mà vẫn giữ người dùng hiện tại thì dùng
+    `PATCH /admin/plans/{plan_id}` với `is_active=false`.
+    """
+    await AdminService(db=db).delete_plan(plan_id, admin_id=uuid.UUID(admin.sub))
+    return ApiResponse.ok(AdminMessageResponse(detail="Plan deleted"))
 
 
 # ---------------------------------------------------------------------------
@@ -451,6 +468,21 @@ async def update_template(
 ) -> ApiResponse[AdminTemplateResponse]:
     template = await AdminService(db=db).update_template(template_id, payload)
     return ApiResponse.ok(AdminTemplateResponse.model_validate(template))
+
+
+@router.delete("/templates/{template_id}", response_model=ApiResponse[AdminMessageResponse])
+async def delete_template(
+    template_id: uuid.UUID,
+    admin: AdminUser,
+    db: DBSession,
+) -> ApiResponse[AdminMessageResponse]:
+    """Xoá một mẫu hệ thống khỏi thư viện.
+
+    Đề xuất/hợp đồng đã tạo từ mẫu không bị ảnh hưởng (nội dung đã được sao chép sang).
+    Chỉ chặn khi còn mẫu phái sinh trỏ vào mẫu này — khi đó trả 409.
+    """
+    await AdminService(db=db).delete_template(template_id, admin_id=uuid.UUID(admin.sub))
+    return ApiResponse.ok(AdminMessageResponse(detail="Template deleted"))
 
 
 # ---------------------------------------------------------------------------
