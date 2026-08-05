@@ -485,6 +485,28 @@ class TestDeletePlan:
 
         repo.delete_plan.assert_not_awaited()
 
+    async def test_blocked_delete_writes_no_audit_log(self) -> None:
+        """Chặn rồi thì không được ghi 'đã xoá' — nhật ký sai còn tệ hơn không có."""
+        plan = PlanStub(id=uuid.uuid4(), name="Pro")
+        repo = _repo(get_plan=plan, count_subscriptions_for_plan=1)
+        service = AdminService(db=AsyncMock(), repo=repo)
+
+        with pytest.raises(BusinessRuleError):
+            await service.delete_plan(plan.id)
+
+        repo.create_audit_log.assert_not_awaited()
+
+    async def test_subscriber_check_runs_before_payment_check(self) -> None:
+        """Còn thuê bao thì báo ngay chuyện thuê bao — đó mới là việc admin phải xử."""
+        plan = PlanStub(id=uuid.uuid4(), name="Pro")
+        repo = _repo(get_plan=plan, count_subscriptions_for_plan=1, count_payments_for_plan=5)
+        service = AdminService(db=AsyncMock(), repo=repo)
+
+        with pytest.raises(BusinessRuleError, match="thuê bao"):
+            await service.delete_plan(plan.id)
+
+        repo.count_payments_for_plan.assert_not_awaited()
+
 
 # ---------------------------------------------------------------------------
 # list_subscriptions_paginated
@@ -698,6 +720,16 @@ class TestDeleteTemplate:
             await service.delete_template(template.id)
 
         repo.delete_template.assert_not_awaited()
+
+    async def test_blocked_delete_writes_no_audit_log(self) -> None:
+        template = TemplateStub(id=uuid.uuid4(), name="Base")
+        repo = _repo(get_template=template, count_child_templates=1)
+        service = AdminService(db=AsyncMock(), repo=repo)
+
+        with pytest.raises(BusinessRuleError):
+            await service.delete_template(template.id)
+
+        repo.create_audit_log.assert_not_awaited()
 
 
 # ---------------------------------------------------------------------------
