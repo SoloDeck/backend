@@ -285,7 +285,7 @@ async def test_cancel_subscription_after_upgrade(
     )
     await client.post("/api/v1/payments/webhooks/momo", json=ipn_payload)
 
-    cancel_resp = await client.post("/api/v1/subscriptions/cancel", headers=headers)
+    cancel_resp = await client.post("/api/v1/subscriptions/me/cancel", headers=headers)
     assert cancel_resp.status_code == 200
     body = cancel_resp.json()["data"]
     assert body["cancel_at_period_end"] is True
@@ -293,7 +293,7 @@ async def test_cancel_subscription_after_upgrade(
     assert body["plan_slug"] == "pro"
 
     # Already scheduled — cancelling again is rejected, not a silent no-op.
-    second_cancel = await client.post("/api/v1/subscriptions/cancel", headers=headers)
+    second_cancel = await client.post("/api/v1/subscriptions/me/cancel", headers=headers)
     assert second_cancel.status_code == 400
 
 
@@ -303,7 +303,7 @@ async def test_cancel_subscription_on_free_plan_is_rejected(
     await PlansSeeder(db_session).run()
     headers = await _auth_headers(client)
 
-    cancel_resp = await client.post("/api/v1/subscriptions/cancel", headers=headers)
+    cancel_resp = await client.post("/api/v1/subscriptions/me/cancel", headers=headers)
     assert cancel_resp.status_code == 400
 
 
@@ -321,7 +321,7 @@ async def test_expire_lapsed_subscriptions_downgrades_scheduled_cancellation(
         order_id=payment["id"], amount=int(float(plan["price_monthly"]))
     )
     await client.post("/api/v1/payments/webhooks/momo", json=ipn_payload)
-    await client.post("/api/v1/subscriptions/cancel", headers=headers)
+    await client.post("/api/v1/subscriptions/me/cancel", headers=headers)
 
     me_resp = await client.get("/api/v1/subscriptions/me", headers=headers)
     subscription_id = me_resp.json()["data"]["id"]

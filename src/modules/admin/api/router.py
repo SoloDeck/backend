@@ -151,10 +151,10 @@ async def reinstate_user(
 @router.delete("/users/{user_id}/sessions", status_code=204)
 async def revoke_user_sessions(
     user_id: uuid.UUID,
-    _: AdminUser,
+    admin: AdminUser,
     db: DBSession,
 ) -> Response:
-    await AdminService(db=db).revoke_user_sessions(user_id)
+    await AdminService(db=db).revoke_user_sessions(user_id, admin_id=uuid.UUID(admin.sub))
     return Response(status_code=204)
 
 

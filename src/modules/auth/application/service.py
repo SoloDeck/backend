@@ -179,16 +179,39 @@ class AuthService:
             raise AuthenticationError("Invalid token type")
 
         if await self.repo.is_token_blacklisted(claims["jti"]):
-            raise AuthenticationError("Refresh token has been revoked")
+            raise AuthenticationError(
+                "Refresh token has already been used or revoked"
+            )
 
         user_id = uuid.UUID(claims["sub"])
         user = await self.repo.get_user_by_id(user_id)
         if user is None or user.status != "active":
             raise AuthenticationError("User not found or suspended")
+        if user.sessions_revoked_at is not None and claims["iat"] < user.sessions_revoked_at.timestamp():
+            raise AuthenticationError("Session has been revoked")
+
+        # Single-use: this refresh token is consumed the moment it mints a new pair —
+        # blacklist it by its own jti so replaying it (e.g. a stolen/leaked token used
+        # after the legitimate client already refreshed) is rejected, not honored.
+        await self.repo.add_token_blacklist(
+            TokenBlacklistModel(
+                jti=claims["jti"],
+                user_id=user_id,
+                expires_at=datetime.fromtimestamp(claims["exp"], tz=UTC),
+                blacklisted_at=datetime.now(UTC),
+            )
+        )
+        await self.repo.flush()
 
         return await self._issue_tokens(user_id=user.id, email=user.email, role=user.role)
 
-    async def logout(self, user_id: uuid.UUID, jti: str, expires_at: datetime) -> None:
+    async def logout(
+        self,
+        user_id: uuid.UUID,
+        jti: str,
+        expires_at: datetime,
+        refresh_token: str | None = None,
+    ) -> None:
         entry = TokenBlacklistModel(
             jti=jti,
             user_id=user_id,
@@ -196,6 +219,29 @@ class AuthService:
             blacklisted_at=datetime.now(UTC),
         )
         await self.repo.add_token_blacklist(entry)
+
+        # Blacklisting only the access token leaves the refresh token valid for up
+        # to 30 more days — anyone still holding it (cached mobile app, captured
+        # token) could mint new access tokens after the user thinks they've logged
+        # out. Optional: older/other clients that don't send one still just get the
+        # access-token blacklist, same as before.
+        if refresh_token:
+            try:
+                claims = jwt.decode(
+                    refresh_token, settings.jwt_secret_key, algorithms=[settings.jwt_algorithm]
+                )
+            except JWTError:
+                claims = None
+            if claims is not None and claims.get("type") == "refresh":
+                await self.repo.add_token_blacklist(
+                    TokenBlacklistModel(
+                        jti=claims["jti"],
+                        user_id=user_id,
+                        expires_at=datetime.fromtimestamp(claims["exp"], tz=UTC),
+                        blacklisted_at=datetime.now(UTC),
+                    )
+                )
+
         await self.repo.flush()
 
     @staticmethod
@@ -361,5 +407,10 @@ class AuthService:
         user = await self.repo.get_user_by_id(reset_token.user_id)
         if user is not None:
             user.hashed_password = hash_password(payload.new_password)
+            # A password reset is the exact moment a still-valid stolen session (from
+            # whatever compromised the password in the first place) should die — reuses
+            # the same cutoff get_current_user()/refresh() already check for admin
+            # suspend/revoke, so every other active token stops working immediately.
+            user.sessions_revoked_at = now
 
         await self.repo.flush()

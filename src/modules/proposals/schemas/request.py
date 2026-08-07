@@ -1,17 +1,36 @@
 import uuid
 from decimal import Decimal
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
 
-class ProposalRequest(BaseModel):
+class CreateProposalRequest(BaseModel):
+    """status is deliberately NOT accepted here — every proposal starts as draft.
+    Previously this schema let the caller set status directly (default "draft" but
+    settable to anything), so a client could create a proposal already "sent" or
+    "accepted" and skip every rule transition_status() enforces (pricing must be
+    set, payment milestones must sum to 100%, share_token generation, superseding
+    an existing sent proposal, etc). Status now only ever changes via /send or
+    PATCH .../status."""
+
     deal_id: uuid.UUID
-    content: dict
-    status: str = "draft"
+    content: dict = Field(default_factory=dict)
+
+
+class UpdateProposalRequest(BaseModel):
+    content: dict | None = None
 
 
 class ProposalStatusRequest(BaseModel):
     status: str = Field(..., description="Target status: sent, accepted, rejected, expired")
+
+
+class ProposalRespondRequest(BaseModel):
+    """Client's accept/reject decision, submitted via the public share link."""
+
+    decision: Literal["accepted", "rejected"]
+    note: str | None = None
 
 
 class AiProposalRequest(BaseModel):

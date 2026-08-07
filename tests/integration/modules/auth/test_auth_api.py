@@ -172,6 +172,50 @@ class TestLogoutEndpoint:
         assert me_resp_after.status_code == 401
         assert me_resp_after.json()["error"]["code"] == "UNAUTHORIZED"
 
+    async def test_without_refresh_token_leaves_refresh_token_usable(
+        self, client: AsyncClient
+    ) -> None:
+        tokens = await _register(client)
+        access_token = tokens["data"]["access_token"]
+        refresh_token = tokens["data"]["refresh_token"]
+        headers = {"Authorization": f"Bearer {access_token}"}
+
+        logout_resp = await client.post("/api/v1/auth/logout", headers=headers)
+        assert logout_resp.status_code == 200
+
+        refresh_resp = await client.post(
+            "/api/v1/auth/refresh", json={"refresh_token": refresh_token}
+        )
+        assert refresh_resp.status_code == 200
+
+    async def test_with_refresh_token_also_blacklists_it(self, client: AsyncClient) -> None:
+        tokens = await _register(client)
+        access_token = tokens["data"]["access_token"]
+        refresh_token = tokens["data"]["refresh_token"]
+        headers = {"Authorization": f"Bearer {access_token}"}
+
+        logout_resp = await client.post(
+            "/api/v1/auth/logout", headers=headers, json={"refresh_token": refresh_token}
+        )
+        assert logout_resp.status_code == 200
+
+        refresh_resp = await client.post(
+            "/api/v1/auth/refresh", json={"refresh_token": refresh_token}
+        )
+        assert refresh_resp.status_code == 401
+
+    async def test_garbage_refresh_token_does_not_break_logout(
+        self, client: AsyncClient
+    ) -> None:
+        tokens = await _register(client)
+        access_token = tokens["data"]["access_token"]
+        headers = {"Authorization": f"Bearer {access_token}"}
+
+        resp = await client.post(
+            "/api/v1/auth/logout", headers=headers, json={"refresh_token": "not-a-real-jwt"}
+        )
+        assert resp.status_code == 200
+
 
 # ---------------------------------------------------------------------------
 # POST /auth/refresh
@@ -189,6 +233,34 @@ class TestRefreshEndpoint:
         body = resp.json()
         assert "access_token" in body["data"]
         assert "refresh_token" in body["data"]
+
+    async def test_replaying_a_consumed_refresh_token_returns_401(
+        self, client: AsyncClient
+    ) -> None:
+        tokens = await _register(client)
+        refresh_token = tokens["data"]["refresh_token"]
+
+        first = await client.post("/api/v1/auth/refresh", json={"refresh_token": refresh_token})
+        assert first.status_code == 200
+
+        replay = await client.post("/api/v1/auth/refresh", json={"refresh_token": refresh_token})
+        assert replay.status_code == 401
+        assert replay.json()["error"]["code"] == "UNAUTHORIZED"
+
+    async def test_new_refresh_token_from_rotation_still_works_once(
+        self, client: AsyncClient
+    ) -> None:
+        tokens = await _register(client)
+        first = await client.post(
+            "/api/v1/auth/refresh",
+            json={"refresh_token": tokens["data"]["refresh_token"]},
+        )
+        rotated_refresh_token = first.json()["data"]["refresh_token"]
+
+        second = await client.post(
+            "/api/v1/auth/refresh", json={"refresh_token": rotated_refresh_token}
+        )
+        assert second.status_code == 200
 
     async def test_blacklisted_refresh_token_returns_401(
         self, client: AsyncClient, db_session: AsyncSession

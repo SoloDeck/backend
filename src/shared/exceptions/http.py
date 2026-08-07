@@ -13,6 +13,7 @@ from src.shared.exceptions.domain import (
     DomainError,
     EmailDeliveryError,
     EntitlementError,
+    ExpiredError,
     ForbiddenError,
     NotFoundError,
     RateLimitError,
@@ -84,6 +85,10 @@ def setup_exception_handlers(app: FastAPI) -> None:
     @app.exception_handler(AlreadyExistsError)
     async def already_exists(_: Request, exc: AlreadyExistsError) -> JSONResponse:
         return _err(409, ErrorCode.CONFLICT, exc.message)
+
+    @app.exception_handler(ExpiredError)
+    async def expired(_: Request, exc: ExpiredError) -> JSONResponse:
+        return _err(410, ErrorCode.EXPIRED, exc.message)
 
     @app.exception_handler(ForbiddenError)
     async def forbidden(_: Request, exc: ForbiddenError) -> JSONResponse:

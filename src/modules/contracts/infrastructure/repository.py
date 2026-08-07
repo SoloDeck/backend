@@ -29,6 +29,11 @@ class ContractsRepository:
             )
         )
 
+    async def get_public_by_token(self, share_token: str):
+        return await self.db.scalar(
+            select(ContractModel).where(ContractModel.share_token == share_token)
+        )
+
     async def get_proposal(self, proposal_id: uuid.UUID):
         return await self.db.scalar(select(ProposalModel).where(ProposalModel.id == proposal_id))
 
@@ -137,6 +142,30 @@ class ContractsRepository:
             .order_by(ContractPaymentMilestoneModel.sort_order)
         )
         return list(result.scalars().all())
+
+    async def get_milestone(self, milestone_id: uuid.UUID, contract_id: uuid.UUID):
+        return await self.db.scalar(
+            select(ContractPaymentMilestoneModel).where(
+                ContractPaymentMilestoneModel.id == milestone_id,
+                ContractPaymentMilestoneModel.contract_id == contract_id,
+            )
+        )
+
+    async def create_milestone(self, **values) -> ContractPaymentMilestoneModel:
+        milestone = ContractPaymentMilestoneModel(**values)
+        self.db.add(milestone)
+        await self.db.flush()
+        await self.db.refresh(milestone)
+        return milestone
+
+    async def save_milestone(self, milestone: ContractPaymentMilestoneModel):
+        await self.db.flush()
+        await self.db.refresh(milestone)
+        return milestone
+
+    async def delete_milestone(self, milestone: ContractPaymentMilestoneModel) -> None:
+        await self.db.delete(milestone)
+        await self.db.flush()
 
     async def get_subscription(self, user_id: uuid.UUID):
         return await self.db.scalar(

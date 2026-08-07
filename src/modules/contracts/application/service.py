@@ -1,8 +1,9 @@
 """Contracts application service."""
 
+import secrets
 import uuid
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -12,15 +13,25 @@ from src.modules.contracts.domain.value_objects.contract_status import (
     ContractStatus,
 )
 from src.modules.contracts.infrastructure.repository import ContractsRepository
-from src.modules.contracts.schemas.request import ContractRequest
+from src.modules.contracts.schemas.request import (
+    CreateContractRequest,
+    CreatePaymentMilestoneRequest,
+    UpdateContractRequest,
+    UpdatePaymentMilestoneRequest,
+)
 from src.modules.subscriptions.application.ai_usage import AiUsageService
 from src.shared.exceptions.domain import (
     BusinessRuleError,
     EntitlementError,
+    ExpiredError,
     InvalidStateTransitionError,
     NotFoundError,
     ValidationError,
 )
+
+# Client-facing share link validity window — see proposals/application/service.py's
+# matching constant for the reasoning; kept in sync at the same value.
+SHARE_LINK_VALID_DAYS = 30
 
 
 @dataclass
@@ -38,9 +49,9 @@ class ContractsService:
             raise NotFoundError(f"Contract {contract_id} not found")
         return contract
 
-    async def create(self, user_id: uuid.UUID, payload: ContractRequest):  # type: ignore[return]
+    async def create(self, user_id: uuid.UUID, payload: CreateContractRequest):  # type: ignore[return]
         proposal = await self.repo.get_proposal(payload.proposal_id)
-        if proposal is None:
+        if proposal is None or proposal.owner_user_id != user_id:
             raise NotFoundError(f"Proposal {payload.proposal_id} not found")
         if proposal.status != "accepted":
             raise BusinessRuleError(
@@ -48,9 +59,13 @@ class ContractsService:
                 f"(current status: '{proposal.status}')"
             )
 
-        version_number = await self.repo.count_by_deal(payload.deal_id) + 1
+        deal = await self.repo.get_deal(proposal.deal_id)
+        if deal is None:
+            raise NotFoundError(f"Deal {proposal.deal_id} not found")
 
-        client = await self.repo.get_client(payload.client_id)
+        version_number = await self.repo.count_by_deal(deal.id) + 1
+
+        client = await self.repo.get_client(deal.client_id)
         client_snapshot: dict = {}
         if client is not None:
             client_snapshot = {
@@ -61,14 +76,16 @@ class ContractsService:
             }
 
         return await self.repo.create(
-            deal_id=payload.deal_id,
+            deal_id=deal.id,
             proposal_id=payload.proposal_id,
-            client_id=payload.client_id,
+            client_id=deal.client_id,
             owner_user_id=user_id,
             version_number=version_number,
             status="draft",
             content=payload.content,
             client_snapshot=client_snapshot,
+            effective_date=payload.effective_date,
+            end_date=payload.end_date,
         )
 
     async def list_all(
@@ -86,16 +103,84 @@ class ContractsService:
     async def get_one(self, user_id: uuid.UUID, contract_id: uuid.UUID):  # type: ignore[return]
         return await self._get_contract(user_id, contract_id)
 
-    async def update(self, user_id: uuid.UUID, contract_id: uuid.UUID, payload: ContractRequest):  # type: ignore[return]
+    async def update(self, user_id: uuid.UUID, contract_id: uuid.UUID, payload: UpdateContractRequest):  # type: ignore[return]
         contract = await self._get_contract(user_id, contract_id)
         if contract.status != "draft":
             raise BusinessRuleError(
                 f"Contract content can only be edited in draft status "
                 f"(current status: '{contract.status}')"
             )
-        if payload.content:
+        if payload.content is not None:
             contract.content = payload.content
+        if payload.effective_date is not None:
+            contract.effective_date = payload.effective_date
+        if payload.end_date is not None:
+            contract.end_date = payload.end_date
         return await self.repo.save(contract)
+
+    async def list_milestones(self, user_id: uuid.UUID, contract_id: uuid.UUID) -> list:
+        await self._get_contract(user_id, contract_id)
+        return await self.repo.get_milestones(contract_id)
+
+    async def add_milestone(
+        self, user_id: uuid.UUID, contract_id: uuid.UUID, payload: CreatePaymentMilestoneRequest
+    ):  # type: ignore[return]
+        contract = await self._get_contract(user_id, contract_id)
+        if contract.status != ContractStatus.DRAFT:
+            raise BusinessRuleError(
+                f"Milestones can only be added while the contract is in draft status "
+                f"(current status: '{contract.status}')"
+            )
+        return await self.repo.create_milestone(
+            contract_id=contract_id,
+            description=payload.description,
+            amount=payload.amount,
+            due_date=payload.due_date,
+            sort_order=payload.sort_order,
+        )
+
+    async def _get_milestone(self, user_id: uuid.UUID, contract_id: uuid.UUID, milestone_id: uuid.UUID):  # type: ignore[return]
+        await self._get_contract(user_id, contract_id)
+        milestone = await self.repo.get_milestone(milestone_id, contract_id)
+        if milestone is None:
+            raise NotFoundError(f"Milestone {milestone_id} not found")
+        return milestone
+
+    async def update_milestone(
+        self,
+        user_id: uuid.UUID,
+        contract_id: uuid.UUID,
+        milestone_id: uuid.UUID,
+        payload: UpdatePaymentMilestoneRequest,
+    ):  # type: ignore[return]
+        contract = await self._get_contract(user_id, contract_id)
+        if contract.status != ContractStatus.DRAFT:
+            raise BusinessRuleError(
+                f"Milestones can only be edited while the contract is in draft status "
+                f"(current status: '{contract.status}')"
+            )
+        milestone = await self._get_milestone(user_id, contract_id, milestone_id)
+        if payload.description is not None:
+            milestone.description = payload.description
+        if payload.amount is not None:
+            milestone.amount = payload.amount
+        if payload.due_date is not None:
+            milestone.due_date = payload.due_date
+        if payload.sort_order is not None:
+            milestone.sort_order = payload.sort_order
+        return await self.repo.save_milestone(milestone)
+
+    async def delete_milestone(
+        self, user_id: uuid.UUID, contract_id: uuid.UUID, milestone_id: uuid.UUID
+    ) -> None:
+        contract = await self._get_contract(user_id, contract_id)
+        if contract.status != ContractStatus.DRAFT:
+            raise BusinessRuleError(
+                f"Milestones can only be deleted while the contract is in draft status "
+                f"(current status: '{contract.status}')"
+            )
+        milestone = await self._get_milestone(user_id, contract_id, milestone_id)
+        await self.repo.delete_milestone(milestone)
 
     async def transition_status(
         self, user_id: uuid.UUID, contract_id: uuid.UUID, target_status: str
@@ -133,40 +218,49 @@ class ContractsService:
                 contract.signed_by_freelancer_at = now
             if contract.signed_by_client_at is None:
                 contract.signed_by_client_at = now
-
-            # SINH TASK "Thu tiền:" NGAY TẠI ĐÂY — lúc ký, không đợi deal vào "active".
-            #
-            # Đợt đầu của mọi báo giá đều ghi "Khi ký hợp đồng / trước khi bắt đầu". Trước đây
-            # task nhắc thu tiền chỉ sinh khi deal chuyển "active" (bấm "Bắt đầu triển khai"),
-            # tức MỘT NHỊP SAU thời điểm phải thu: freelancer đã bắt tay làm rồi hệ thống mới
-            # nhắc đi đòi cọc. Ngược đời, và đúng cái rủi ro SoloDesk sinh ra để ngăn.  #Huynh
-            #
-            # Idempotent (create_many_for_entity bỏ qua title đã có) nên khối tương tự bên
-            # `DealsService.transition_stage` VẪN GIỮ: hợp đồng ký từ trước ngày sửa này vẫn
-            # được vá khi deal vào active, mà chuyển active sau đó không nhân đôi task.
-            #
-            # Import CỤC BỘ trong hàm, y như deals đang làm — tránh vòng import giữa các module.
-            from src.modules.projects.application.service import ProjectService
-            from src.modules.proposals.application.service import (
-                payment_task_payloads_for_deal,
-            )
-            from src.modules.tasks.application.service import TaskService
-
-            deal = await self.repo.get_deal(contract.deal_id)
-            project = await ProjectService(db=self.db).get_or_create_for_deal(
-                contract.deal_id, user_id, name=deal.title if deal else None
-            )
-            payloads = await payment_task_payloads_for_deal(self.db, contract.deal_id, user_id)
-            if payloads:
-                await TaskService(self.db).create_many_for_entity(
-                    "project", project.id, user_id, payloads
-                )
-        elif target == ContractStatus.PENDING_SIGNATURES or target in TERMINAL_CONTRACT_STATUSES:
+            await self._apply_active_side_effects(contract, user_id)
+        elif target == ContractStatus.PENDING_SIGNATURES:
+            contract.share_token = secrets.token_urlsafe(32)
+            contract.share_expires_at = now + timedelta(days=SHARE_LINK_VALID_DAYS)
+        elif target in TERMINAL_CONTRACT_STATUSES:
             pass
 
         return await self.repo.save(contract)
 
-    async def amend(self, user_id: uuid.UUID, contract_id: uuid.UUID, payload: ContractRequest):  # type: ignore[return]
+    async def _apply_active_side_effects(self, contract, user_id: uuid.UUID) -> None:
+        """Project creation + payment tasks — must run once a contract has both signatures.
+
+        SINH TASK "Thu tiền:" NGAY TẠI ĐÂY — lúc ký, không đợi deal vào "active".
+        Đợt đầu của mọi báo giá đều ghi "Khi ký hợp đồng / trước khi bắt đầu". Trước đây
+        task nhắc thu tiền chỉ sinh khi deal chuyển "active" (bấm "Bắt đầu triển khai"),
+        tức MỘT NHỊP SAU thời điểm phải thu: freelancer đã bắt tay làm rồi hệ thống mới
+        nhắc đi đòi cọc. Ngược đời, và đúng cái rủi ro SoloDesk sinh ra để ngăn.  #Huynh
+
+        Idempotent (create_many_for_entity bỏ qua title đã có) nên khối tương tự bên
+        `DealsService.transition_stage` VẪN GIỮ: hợp đồng ký từ trước ngày sửa này vẫn
+        được vá khi deal vào active, mà chuyển active sau đó không nhân đôi task — vì vậy
+        an toàn khi được gọi từ nhiều nơi (freelancer tự đánh dấu, khách ký qua link công
+        khai) mà không nhân đôi project/task.
+
+        Import CỤC BỘ trong hàm, y như deals đang làm — tránh vòng import giữa các module.
+        """
+        from src.modules.projects.application.service import ProjectService
+        from src.modules.proposals.application.service import (
+            payment_task_payloads_for_deal,
+        )
+        from src.modules.tasks.application.service import TaskService
+
+        deal = await self.repo.get_deal(contract.deal_id)
+        project = await ProjectService(db=self.db).get_or_create_for_deal(
+            contract.deal_id, user_id, name=deal.title if deal else None
+        )
+        payloads = await payment_task_payloads_for_deal(self.db, contract.deal_id, user_id)
+        if payloads:
+            await TaskService(self.db).create_many_for_entity(
+                "project", project.id, user_id, payloads
+            )
+
+    async def amend(self, user_id: uuid.UUID, contract_id: uuid.UUID, payload: UpdateContractRequest):  # type: ignore[return]
         contract = await self._get_contract(user_id, contract_id)
         if contract.status != ContractStatus.ACTIVE:
             raise BusinessRuleError(
@@ -182,9 +276,13 @@ class ContractsService:
             owner_user_id=user_id,
             version_number=new_version,
             status=ContractStatus.DRAFT,
-            content=payload.content if payload.content else contract.content,
+            content=payload.content if payload.content is not None else contract.content,
             client_snapshot=contract.client_snapshot,
             parent_contract_id=contract.id,
+            effective_date=(
+                payload.effective_date if payload.effective_date is not None else contract.effective_date
+            ),
+            end_date=payload.end_date if payload.end_date is not None else contract.end_date,
         )
         contract.status = ContractStatus.ARCHIVED
         await self.repo.save(contract)
@@ -291,10 +389,49 @@ class ContractsService:
         contract.signed_by_freelancer_at = now
         if contract.signed_by_client_at is not None:
             contract.status = ContractStatus.ACTIVE
+            await self._apply_active_side_effects(contract, user_id)
         return await self.repo.save(contract)
 
     async def terminate(self, user_id: uuid.UUID, contract_id: uuid.UUID):  # type: ignore[return]
         return await self.transition_status(user_id, contract_id, "terminated")
+
+    async def _get_by_share_token(self, share_token: str):  # type: ignore[return]
+        contract = await self.repo.get_public_by_token(share_token)
+        if contract is None:
+            raise NotFoundError("Contract not found or link is invalid")
+        return contract
+
+    async def get_public_view(self, share_token: str):  # type: ignore[return]
+        """Client-facing read view. 410s once the share link has expired."""
+        contract = await self._get_by_share_token(share_token)
+        if contract.share_expires_at is not None and datetime.now(UTC) > contract.share_expires_at:
+            raise ExpiredError("This share link has expired")
+        return contract
+
+    async def sign_via_share_token(self, share_token: str, signer_name: str):  # type: ignore[return]
+        """Client signs via the public link — no authenticated user_id.
+
+        If the freelancer already signed via /contracts/{id}/sign, this is the second
+        signature and the contract goes active immediately (same as the reverse order).
+        """
+        contract = await self._get_by_share_token(share_token)
+        expired = (
+            contract.share_expires_at is not None and datetime.now(UTC) > contract.share_expires_at
+        )
+        if expired or contract.status != ContractStatus.PENDING_SIGNATURES:
+            raise BusinessRuleError(
+                "This contract is not awaiting signature, or its share link has expired"
+            )
+
+        now = datetime.now(UTC)
+        contract.signed_by_client_at = now
+        content = dict(contract.content or {})
+        content["client_signature"] = {"signer_name": signer_name, "signed_at": now.isoformat()}
+        contract.content = content
+        if contract.signed_by_freelancer_at is not None:
+            contract.status = ContractStatus.ACTIVE
+            await self._apply_active_side_effects(contract, contract.owner_user_id)
+        return await self.repo.save(contract)
 
     async def _build_document(self, user_id: uuid.UUID, contract_id: uuid.UUID):
         """Dựng ContractDocument — DÙNG CHUNG cho HTML preview và (sau này) PDF.

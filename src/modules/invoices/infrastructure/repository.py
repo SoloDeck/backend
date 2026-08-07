@@ -1,7 +1,8 @@
 import uuid
 from dataclasses import dataclass
+from datetime import date
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.infrastructure.database.models import (
@@ -13,6 +14,14 @@ from src.infrastructure.database.models import (
     InvoicePaymentRecordModel,
     UserModel,
 )
+from src.modules.invoices.domain.value_objects.invoice_status import TERMINAL_INVOICE_STATUSES
+
+_INVOICE_SORT_COLS = {
+    "issue_date": InvoiceModel.issue_date,
+    "due_date": InvoiceModel.due_date,
+    "total": InvoiceModel.total,
+    "created_at": InvoiceModel.created_at,
+}
 
 
 @dataclass
@@ -90,15 +99,55 @@ class InvoicesRepository:
         await self.db.flush()
 
     async def list_all(
-        self, owner_user_id: uuid.UUID, status: str | None = None, invoice_number: str | None = None
-    ) -> list:
+        self,
+        owner_user_id: uuid.UUID,
+        status: str | None = None,
+        invoice_number: str | None = None,
+        from_issue_date: date | None = None,
+        to_issue_date: date | None = None,
+        from_due_date: date | None = None,
+        to_due_date: date | None = None,
+        overdue_only: bool = False,
+        sort_by: str = "issue_date",
+        sort_order: str = "desc",
+        page: int = 1,
+        page_size: int = 20,
+    ) -> tuple[list, int]:
         conditions = [InvoiceModel.owner_user_id == owner_user_id]
         if status is not None:
             conditions.append(InvoiceModel.status == status)
         if invoice_number is not None:
             conditions.append(InvoiceModel.invoice_number.ilike(f"%{invoice_number}%"))
-        result = await self.db.execute(select(InvoiceModel).where(*conditions))
-        return list(result.scalars().all())
+        if from_issue_date is not None:
+            conditions.append(InvoiceModel.issue_date >= from_issue_date)
+        if to_issue_date is not None:
+            conditions.append(InvoiceModel.issue_date <= to_issue_date)
+        if from_due_date is not None:
+            conditions.append(InvoiceModel.due_date >= from_due_date)
+        if to_due_date is not None:
+            conditions.append(InvoiceModel.due_date <= to_due_date)
+        if overdue_only:
+            conditions.append(InvoiceModel.due_date < date.today())
+            conditions.append(InvoiceModel.status.notin_(TERMINAL_INVOICE_STATUSES))
+            conditions.append(InvoiceModel.amount_paid < InvoiceModel.total)
+
+        total = (
+            await self.db.scalar(
+                select(func.count()).select_from(InvoiceModel).where(*conditions)
+            )
+            or 0
+        )
+
+        sort_col = _INVOICE_SORT_COLS.get(sort_by, InvoiceModel.issue_date)
+        ordered = sort_col.desc() if sort_order == "desc" else sort_col.asc()
+        result = await self.db.execute(
+            select(InvoiceModel)
+            .where(*conditions)
+            .order_by(ordered)
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+        )
+        return list(result.scalars().all()), total
 
     async def get_owner(self, owner_user_id: uuid.UUID):
         """Hồ sơ freelancer — cần tên + email để ký thư, và thông tin ngân hàng để dựng QR."""

@@ -9,6 +9,10 @@ from pydantic import BaseModel, field_validator
 _ALLOWED_CUSTOM_RETURN_URLS = frozenset({"solodesk://payment-result"})
 
 
+class ChangePlanRequest(BaseModel):
+    plan_id: uuid.UUID
+
+
 class CreateSubscriptionCheckoutRequest(BaseModel):
     plan_id: uuid.UUID
     provider: Literal["momo"]

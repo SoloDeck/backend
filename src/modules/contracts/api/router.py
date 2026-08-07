@@ -4,21 +4,26 @@ import uuid
 from io import BytesIO
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.infrastructure.database.session import get_db_session
 from src.modules.contracts.application.service import ContractsService
+from src.modules.contracts.domain.value_objects.contract_status import ContractStatus
 from src.modules.contracts.schemas.request import (
-    ContractRequest,
     ContractStatusRequest,
     ContractTerminateRequest,
+    CreateContractRequest,
+    CreatePaymentMilestoneRequest,
+    UpdateContractRequest,
+    UpdatePaymentMilestoneRequest,
 )
 from src.modules.contracts.schemas.response import (
     ContractExportResponse,
     ContractResponse,
+    PaymentMilestoneResponse,
     TermTemplateOption,
 )
 from src.shared.dependencies.ai import AIFacadeDep
@@ -42,9 +47,9 @@ class ContractPreviewResponse(BaseModel):
 async def list_contracts(
     user_id: CurrentUserId,
     db: DBSession,
-    status: str | None = Query(
+    status: ContractStatus | None = Query(
         default=None,
-        description="Filter by status: draft, pending_signatures, active, completed, terminated, expired",
+        description="Filter by status: draft, pending_signatures, active, completed, terminated, expired, archived",
     ),
     deal_id: uuid.UUID | None = Query(default=None, description="Filter by deal"),
     page: int = Query(default=1, ge=1),
@@ -63,7 +68,7 @@ async def list_contracts(
 
 @router.post("", response_model=ApiResponse[ContractResponse], status_code=201)
 async def create_contract(
-    payload: ContractRequest,
+    payload: CreateContractRequest,
     user_id: CurrentUserId,
     db: DBSession,
 ) -> ApiResponse[ContractResponse]:
@@ -135,7 +140,7 @@ async def download_contract_pdf(
 @router.patch("/{contract_id}", response_model=ApiResponse[ContractResponse])
 async def update_contract(
     contract_id: uuid.UUID,
-    payload: ContractRequest,
+    payload: UpdateContractRequest,
     user_id: CurrentUserId,
     db: DBSession,
 ) -> ApiResponse[ContractResponse]:
@@ -160,7 +165,7 @@ async def ai_generate_contract_content(
 @router.post("/{contract_id}/amend", response_model=ApiResponse[ContractResponse], status_code=201)
 async def amend_contract(
     contract_id: uuid.UUID,
-    payload: ContractRequest,
+    payload: UpdateContractRequest,
     user_id: CurrentUserId,
     db: DBSession,
 ) -> ApiResponse[ContractResponse]:
@@ -208,6 +213,60 @@ async def transition_contract_status(
 ) -> ApiResponse[ContractResponse]:
     contract = await ContractsService(db=db).transition_status(user_id, contract_id, payload.status)
     return ApiResponse.ok(ContractResponse.model_validate(contract))
+
+
+@router.get(
+    "/{contract_id}/milestones", response_model=ApiResponse[list[PaymentMilestoneResponse]]
+)
+async def list_milestones(
+    contract_id: uuid.UUID,
+    user_id: CurrentUserId,
+    db: DBSession,
+) -> ApiResponse[list[PaymentMilestoneResponse]]:
+    milestones = await ContractsService(db=db).list_milestones(user_id, contract_id)
+    return ApiResponse.ok([PaymentMilestoneResponse.model_validate(m) for m in milestones])
+
+
+@router.post(
+    "/{contract_id}/milestones",
+    response_model=ApiResponse[PaymentMilestoneResponse],
+    status_code=201,
+)
+async def add_milestone(
+    contract_id: uuid.UUID,
+    payload: CreatePaymentMilestoneRequest,
+    user_id: CurrentUserId,
+    db: DBSession,
+) -> ApiResponse[PaymentMilestoneResponse]:
+    milestone = await ContractsService(db=db).add_milestone(user_id, contract_id, payload)
+    return ApiResponse.created(PaymentMilestoneResponse.model_validate(milestone))
+
+
+@router.patch(
+    "/{contract_id}/milestones/{milestone_id}",
+    response_model=ApiResponse[PaymentMilestoneResponse],
+)
+async def update_milestone(
+    contract_id: uuid.UUID,
+    milestone_id: uuid.UUID,
+    payload: UpdatePaymentMilestoneRequest,
+    user_id: CurrentUserId,
+    db: DBSession,
+) -> ApiResponse[PaymentMilestoneResponse]:
+    milestone = await ContractsService(db=db).update_milestone(
+        user_id, contract_id, milestone_id, payload
+    )
+    return ApiResponse.ok(PaymentMilestoneResponse.model_validate(milestone))
+
+
+@router.delete("/{contract_id}/milestones/{milestone_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_milestone(
+    contract_id: uuid.UUID,
+    milestone_id: uuid.UUID,
+    user_id: CurrentUserId,
+    db: DBSession,
+) -> None:
+    await ContractsService(db=db).delete_milestone(user_id, contract_id, milestone_id)
 
 
 @router.get("/{contract_id}/export", response_model=ApiResponse[ContractExportResponse])

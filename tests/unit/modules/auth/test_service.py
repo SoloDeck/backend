@@ -291,6 +291,10 @@ class TestPasswordReset:
 
         assert token_model.used_at is not None
         assert user.hashed_password is not None
+        # A password reset must kill any already-issued session (e.g. an attacker's,
+        # if that's what prompted the reset) — same cutoff mechanism as admin
+        # suspend/revoke_user_sessions.
+        assert user.sessions_revoked_at is not None
         db.flush.assert_called_once()
 
     async def test_confirm_reset_invalid_token_raises_error(self) -> None:

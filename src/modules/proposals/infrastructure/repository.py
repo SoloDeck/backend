@@ -28,6 +28,11 @@ class ProposalsRepository:
             )
         )
 
+    async def get_public_by_token(self, share_token: str):
+        return await self.db.scalar(
+            select(ProposalModel).where(ProposalModel.share_token == share_token)
+        )
+
     async def count_by_deal(self, deal_id: uuid.UUID) -> int:
         return (
             await self.db.scalar(

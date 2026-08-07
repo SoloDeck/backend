@@ -170,3 +170,15 @@ class DealAttachmentResponse(BaseModel):
             ai_readable=bool(m.extracted_text),
             created_at=m.created_at,
         )
+
+
+class DealActivityEntryResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    deal_id: uuid.UUID
+    entry_type: str
+    description: str
+    previous_stage: str | None
+    new_stage: str | None
+    created_at: datetime

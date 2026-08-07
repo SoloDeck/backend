@@ -13,6 +13,7 @@ from src.modules.auth.application.service import AuthService
 from src.modules.auth.schemas.request import (
     GoogleAuthRequest,
     LoginRequest,
+    LogoutRequest,
     PasswordResetConfirmRequest,
     PasswordResetRequestBody,
     RefreshRequest,
@@ -93,12 +94,14 @@ async def refresh(
 async def logout(
     current_user: CurrentUser,
     db: DBSession,
+    payload: LogoutRequest | None = None,
 ) -> ApiResponse[MessageResponse]:
     expires_at = datetime.now(UTC) + timedelta(minutes=settings.jwt_access_token_expire_minutes)
     await AuthService(db=db).logout(
         user_id=uuid.UUID(current_user.sub),
         jti=current_user.jti,
         expires_at=expires_at,
+        refresh_token=payload.refresh_token if payload else None,
     )
     return ApiResponse.ok(MessageResponse(detail="Logged out successfully"))
 

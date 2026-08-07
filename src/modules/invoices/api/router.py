@@ -1,7 +1,8 @@
 """Invoices API api."""
 
 import uuid
-from typing import Annotated
+from datetime import date
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Query, status
 from pydantic import BaseModel
@@ -9,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.infrastructure.database.session import get_db_session
 from src.modules.invoices.application.service import InvoicesService
+from src.modules.invoices.domain.value_objects.invoice_status import InvoiceStatus
 from src.modules.invoices.schemas.request import (
     InvoiceRequest,
     InvoiceSendRequest,
@@ -17,7 +19,7 @@ from src.modules.invoices.schemas.request import (
 )
 from src.modules.invoices.schemas.response import InvoiceResponse, PaymentRecordResponse
 from src.shared.dependencies.auth import CurrentUserId
-from src.shared.responses.response import ApiResponse
+from src.shared.responses.response import ApiResponse, PaginatedResponse
 
 router = APIRouter()
 
@@ -38,21 +40,52 @@ async def create_invoice(
     return ApiResponse.created(InvoiceResponse.model_validate(invoice))
 
 
-@router.get("", response_model=ApiResponse[list[InvoiceResponse]])
+@router.get("", response_model=PaginatedResponse[InvoiceResponse])
 async def list_invoices(
     user_id: CurrentUserId,
     db: DBSession,
-    status: str | None = Query(
-        default=None, description="Filter by status: draft, sent, paid, overdue, cancelled"
+    status: InvoiceStatus | None = Query(
+        default=None,
+        description="Filter by status: draft, sent, partially_paid, paid, overdue, void",
     ),
     invoice_number: str | None = Query(
         default=None, description="Search by invoice number (partial match)"
     ),
-) -> ApiResponse[list[InvoiceResponse]]:
-    invoices = await InvoicesService(db=db).list_all(
-        user_id, status=status, invoice_number=invoice_number
+    from_issue_date: date | None = Query(default=None),
+    to_issue_date: date | None = Query(default=None),
+    from_due_date: date | None = Query(default=None),
+    to_due_date: date | None = Query(default=None),
+    overdue_only: bool = Query(
+        default=False,
+        description="Only invoices past due_date with an outstanding balance",
+    ),
+    sort_by: Literal["issue_date", "due_date", "total", "created_at"] = Query(
+        default="issue_date"
+    ),
+    sort_order: Literal["asc", "desc"] = Query(default="desc"),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
+) -> PaginatedResponse[InvoiceResponse]:
+    invoices, total = await InvoicesService(db=db).list_all(
+        user_id,
+        status=status,
+        invoice_number=invoice_number,
+        from_issue_date=from_issue_date,
+        to_issue_date=to_issue_date,
+        from_due_date=from_due_date,
+        to_due_date=to_due_date,
+        overdue_only=overdue_only,
+        sort_by=sort_by,
+        sort_order=sort_order,
+        page=page,
+        page_size=page_size,
     )
-    return ApiResponse.ok([InvoiceResponse.model_validate(i) for i in invoices])
+    return PaginatedResponse.ok(
+        [InvoiceResponse.model_validate(i) for i in invoices],
+        total=total,
+        page=page,
+        page_size=page_size,
+    )
 
 
 @router.get("/{invoice_id}", response_model=ApiResponse[InvoiceResponse])
