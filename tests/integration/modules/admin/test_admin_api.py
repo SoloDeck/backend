@@ -2,7 +2,9 @@
 
 import uuid
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 
+import pytest
 from httpx import AsyncClient
 from sqlalchemy import insert, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,7 +13,16 @@ from src.infrastructure.database.models import (
     AiCostRecordModel,
     FeatureFlagModel,
     SubscriptionModel,
+    SubscriptionPaymentModel,
+    SystemTemplateModel,
     UserModel,
+)
+from src.main import app
+from src.shared.dependencies.ai import get_ai_facade
+from tests.conftest import grant_ai_plan
+from tests.integration.modules.proposals.test_generate_from_deal import (
+    _make_deal,
+    _PermissiveAIFacade,
 )
 
 # ---------------------------------------------------------------------------
@@ -978,6 +989,212 @@ class TestAdminUpdatePlan:
 
 
 # ---------------------------------------------------------------------------
+# DELETE /admin/plans/{plan_id}
+# ---------------------------------------------------------------------------
+
+
+class TestAdminDeletePlan:
+    async def test_delete_unused_plan_returns_200(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        headers = await _admin_headers(client, db_session)
+        plan_id = (
+            await client.post("/api/v1/admin/plans", json=_plan_payload(), headers=headers)
+        ).json()["data"]["id"]
+
+        resp = await client.delete(f"/api/v1/admin/plans/{plan_id}", headers=headers)
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["data"]["detail"] == "Plan deleted"
+
+    async def test_deleted_plan_is_gone(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        headers = await _admin_headers(client, db_session)
+        plan = (
+            await client.post("/api/v1/admin/plans", json=_plan_payload(), headers=headers)
+        ).json()["data"]
+
+        await client.delete(f"/api/v1/admin/plans/{plan['id']}", headers=headers)
+
+        assert (
+            await client.get(f"/api/v1/admin/plans/{plan['id']}", headers=headers)
+        ).status_code == 404
+
+        listed = (await client.get("/api/v1/admin/plans", headers=headers)).json()["data"]
+        assert plan["id"] not in [p["id"] for p in listed]
+
+    async def test_plan_with_subscribers_returns_409(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        headers = await _admin_headers(client, db_session)
+        plan = (
+            await client.post("/api/v1/admin/plans", json=_plan_payload(), headers=headers)
+        ).json()["data"]
+
+        user_h = await _user_headers(client)
+        user_id = (await client.get("/api/v1/users/me", headers=user_h)).json()["data"]["id"]
+        await _create_subscription(db_session, user_id, plan["id"])
+
+        resp = await client.delete(f"/api/v1/admin/plans/{plan['id']}", headers=headers)
+        assert resp.status_code == 409
+
+        # Bị chặn thì gói phải còn nguyên — 409 mà vẫn xoá mất là tệ hơn cả xoá thẳng.
+        assert (
+            await client.get(f"/api/v1/admin/plans/{plan['id']}", headers=headers)
+        ).status_code == 200
+
+    async def test_deactivating_stays_available_as_the_soft_alternative(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """Gói còn người dùng: lối đi đúng là ngừng bán, không phải xoá."""
+        headers = await _admin_headers(client, db_session)
+        plan = (
+            await client.post("/api/v1/admin/plans", json=_plan_payload(), headers=headers)
+        ).json()["data"]
+
+        user_h = await _user_headers(client)
+        user_id = (await client.get("/api/v1/users/me", headers=user_h)).json()["data"]["id"]
+        await _create_subscription(db_session, user_id, plan["id"])
+
+        assert (
+            await client.delete(f"/api/v1/admin/plans/{plan['id']}", headers=headers)
+        ).status_code == 409
+
+        resp = await client.patch(
+            f"/api/v1/admin/plans/{plan['id']}",
+            json={"is_active": False},
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        assert resp.json()["data"]["is_active"] is False
+
+    async def test_cancelled_subscription_still_blocks_delete(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """Trạng thái thuê bao KHÔNG được tính đến — khoá ngoại vẫn là khoá ngoại.
+
+        Một thuê bao `cancelled` vẫn là một hàng còn trỏ vào gói; xoá gói vẫn vỡ DB.
+        Ghim hành vi này lại vì đọc lướt rất dễ tưởng "đã huỷ thì xoá được".
+        """
+        headers = await _admin_headers(client, db_session)
+        plan = (
+            await client.post("/api/v1/admin/plans", json=_plan_payload(), headers=headers)
+        ).json()["data"]
+
+        user_h = await _user_headers(client)
+        user_id = (await client.get("/api/v1/users/me", headers=user_h)).json()["data"]["id"]
+        await _create_subscription(db_session, user_id, plan["id"], status="cancelled")
+
+        resp = await client.delete(f"/api/v1/admin/plans/{plan['id']}", headers=headers)
+        assert resp.status_code == 409
+
+    async def test_payment_record_blocks_delete_of_an_upgraded_away_plan(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """Gói CŨ sau khi user nâng cấp: hết thuê bao nhưng còn lịch sử thanh toán.
+
+        Đây là tình huống duy nhất mà chốt chặn giao dịch thực sự lên tiếng — và cũng là
+        tình huống thật: `subscription_payments.subscription_id` là FK NOT NULL nên một
+        giao dịch không thể sống lâu hơn thuê bao của nó; chỉ khi thuê bao đã chuyển sang
+        gói khác thì gói cũ mới còn 0 thuê bao mà vẫn còn giao dịch trỏ vào.
+
+        Không có chốt này, xoá gói cũ sẽ vỡ khoá ngoại và xoá luôn dấu vết ai đã trả tiền
+        cho nó. Unit test chỉ mock được lời gọi; test này mới chứng minh câu đếm trỏ đúng
+        bảng `subscription_payments` và đúng cột `plan_id`.
+        """
+        headers = await _admin_headers(client, db_session)
+        old_plan = (
+            await client.post("/api/v1/admin/plans", json=_plan_payload(), headers=headers)
+        ).json()["data"]
+        new_plan = (
+            await client.post("/api/v1/admin/plans", json=_plan_payload(), headers=headers)
+        ).json()["data"]
+
+        user_h = await _user_headers(client)
+        user_id = (await client.get("/api/v1/users/me", headers=user_h)).json()["data"]["id"]
+        await _create_subscription(db_session, user_id, new_plan["id"])
+        sub_id = (
+            await client.get(
+                f"/api/v1/admin/subscriptions?plan_slug={new_plan['slug']}", headers=headers
+            )
+        ).json()["data"]["data"][0]["id"]
+
+        # Giao dịch cũ vẫn ghi gói CŨ, trong khi thuê bao đã sang gói MỚI.
+        await db_session.execute(
+            insert(SubscriptionPaymentModel).values(
+                user_id=uuid.UUID(user_id),
+                subscription_id=uuid.UUID(sub_id),
+                plan_id=uuid.UUID(old_plan["id"]),
+                provider="momo",
+                status="succeeded",
+                amount=Decimal("199000"),
+                currency="VND",
+                expires_at=datetime.now(UTC) + timedelta(days=1),
+            )
+        )
+        await db_session.flush()
+
+        resp = await client.delete(f"/api/v1/admin/plans/{old_plan['id']}", headers=headers)
+        assert resp.status_code == 409
+        assert "giao dịch" in resp.json()["error"]["message"]
+
+        assert (
+            await client.get(f"/api/v1/admin/plans/{old_plan['id']}", headers=headers)
+        ).status_code == 200
+
+    async def test_deleting_twice_returns_404(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        headers = await _admin_headers(client, db_session)
+        plan = (
+            await client.post("/api/v1/admin/plans", json=_plan_payload(), headers=headers)
+        ).json()["data"]
+
+        first = await client.delete(f"/api/v1/admin/plans/{plan['id']}", headers=headers)
+        assert first.status_code == 200
+        second = await client.delete(f"/api/v1/admin/plans/{plan['id']}", headers=headers)
+        assert second.status_code == 404
+
+    async def test_malformed_uuid_returns_422(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        headers = await _admin_headers(client, db_session)
+        resp = await client.delete("/api/v1/admin/plans/not-a-uuid", headers=headers)
+        assert resp.status_code == 422
+
+    async def test_delete_writes_audit_log(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        headers = await _admin_headers(client, db_session)
+        plan = (
+            await client.post("/api/v1/admin/plans", json=_plan_payload(), headers=headers)
+        ).json()["data"]
+
+        await client.delete(f"/api/v1/admin/plans/{plan['id']}", headers=headers)
+
+        logs = (
+            await client.get("/api/v1/admin/audit-logs?event_type=plan.deleted", headers=headers)
+        ).json()["data"]["data"]
+        assert any(entry["target_id"] == plan["id"] for entry in logs)
+
+    async def test_delete_nonexistent_plan_returns_404(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        headers = await _admin_headers(client, db_session)
+        resp = await client.delete(f"/api/v1/admin/plans/{uuid.uuid4()}", headers=headers)
+        assert resp.status_code == 404
+
+    async def test_non_admin_returns_403(self, client: AsyncClient) -> None:
+        headers = await _user_headers(client)
+        resp = await client.delete(f"/api/v1/admin/plans/{uuid.uuid4()}", headers=headers)
+        assert resp.status_code == 403
+
+    async def test_unauthenticated_returns_401(self, client: AsyncClient) -> None:
+        resp = await client.delete(f"/api/v1/admin/plans/{uuid.uuid4()}")
+        assert resp.status_code == 401
+
+
+# ---------------------------------------------------------------------------
 # GET /admin/subscriptions
 # ---------------------------------------------------------------------------
 
@@ -1503,6 +1720,218 @@ class TestAdminUpdateTemplate:
             headers=headers,
         )
         assert resp.status_code == 403
+
+
+# ---------------------------------------------------------------------------
+# DELETE /admin/templates/{template_id}
+# ---------------------------------------------------------------------------
+
+
+class TestAdminDeleteTemplate:
+    async def _create_template(self, client: AsyncClient, headers: dict, **overrides) -> dict:
+        resp = await client.post(
+            "/api/v1/admin/templates",
+            json={
+                "name": f"Template {uuid.uuid4().hex[:6]}",
+                "template_type": "proposal",
+                "content": {"blocks": []},
+                "is_active": False,
+                **overrides,
+            },
+            headers=headers,
+        )
+        assert resp.status_code == 201, resp.text
+        return resp.json()["data"]
+
+    async def test_delete_template_returns_200(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        headers = await _admin_headers(client, db_session)
+        template = await self._create_template(client, headers)
+
+        resp = await client.delete(f"/api/v1/admin/templates/{template['id']}", headers=headers)
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["data"]["detail"] == "Template deleted"
+
+    async def test_deleted_template_is_gone_from_list(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        headers = await _admin_headers(client, db_session)
+        template = await self._create_template(client, headers)
+
+        await client.delete(f"/api/v1/admin/templates/{template['id']}", headers=headers)
+
+        listed = (await client.get("/api/v1/admin/templates", headers=headers)).json()["data"]
+        assert template["id"] not in [t["id"] for t in listed]
+
+    async def test_deleting_twice_returns_404(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        headers = await _admin_headers(client, db_session)
+        template = await self._create_template(client, headers)
+
+        first = await client.delete(f"/api/v1/admin/templates/{template['id']}", headers=headers)
+        assert first.status_code == 200
+        second = await client.delete(f"/api/v1/admin/templates/{template['id']}", headers=headers)
+        assert second.status_code == 404
+
+    async def test_template_with_derived_children_returns_409(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        headers, admin_id = await _admin_headers_with_id(client, db_session)
+        parent = await self._create_template(client, headers, name="Parent Template")
+
+        # `parent_template_id` chưa có đường đi qua API — chèn thẳng mẫu con vào DB để
+        # dựng đúng tình huống khoá ngoại mà endpoint phải chặn.
+        await db_session.execute(
+            insert(SystemTemplateModel).values(
+                template_type="proposal",
+                name="Derived Template",
+                content={"blocks": []},
+                parent_template_id=uuid.UUID(parent["id"]),
+                created_by_admin_id=uuid.UUID(admin_id),
+            )
+        )
+        await db_session.flush()
+
+        resp = await client.delete(f"/api/v1/admin/templates/{parent['id']}", headers=headers)
+        assert resp.status_code == 409
+
+        listed = (await client.get("/api/v1/admin/templates", headers=headers)).json()["data"]
+        assert parent["id"] in [t["id"] for t in listed]
+
+    async def test_delete_writes_audit_log(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        headers = await _admin_headers(client, db_session)
+        template = await self._create_template(client, headers, name="Audited Template")
+
+        await client.delete(f"/api/v1/admin/templates/{template['id']}", headers=headers)
+
+        logs = (
+            await client.get(
+                "/api/v1/admin/audit-logs?event_type=template.deleted", headers=headers
+            )
+        ).json()["data"]["data"]
+        assert any(entry["target_id"] == template["id"] for entry in logs)
+
+    async def test_deleting_the_child_unblocks_the_parent(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """409 phải là tình huống gỡ được, không phải ngõ cụt."""
+        headers, admin_id = await _admin_headers_with_id(client, db_session)
+        parent = await self._create_template(client, headers, name="Parent")
+
+        child_id = uuid.uuid4()
+        await db_session.execute(
+            insert(SystemTemplateModel).values(
+                id=child_id,
+                template_type="proposal",
+                name="Child",
+                content={"blocks": []},
+                parent_template_id=uuid.UUID(parent["id"]),
+                created_by_admin_id=uuid.UUID(admin_id),
+            )
+        )
+        await db_session.flush()
+
+        assert (
+            await client.delete(f"/api/v1/admin/templates/{parent['id']}", headers=headers)
+        ).status_code == 409
+
+        assert (
+            await client.delete(f"/api/v1/admin/templates/{child_id}", headers=headers)
+        ).status_code == 200
+        assert (
+            await client.delete(f"/api/v1/admin/templates/{parent['id']}", headers=headers)
+        ).status_code == 200
+
+    async def test_delete_active_template_succeeds(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """Mẫu đang bật (freelancer đang chọn được) vẫn xoá thẳng — không phải chỉ mẫu nháp."""
+        headers = await _admin_headers(client, db_session)
+        template = await self._create_template(client, headers, is_active=True)
+
+        resp = await client.delete(f"/api/v1/admin/templates/{template['id']}", headers=headers)
+        assert resp.status_code == 200, resp.text
+
+    async def test_malformed_uuid_returns_422(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        headers = await _admin_headers(client, db_session)
+        resp = await client.delete("/api/v1/admin/templates/not-a-uuid", headers=headers)
+        assert resp.status_code == 422
+
+    async def test_delete_nonexistent_template_returns_404(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        headers = await _admin_headers(client, db_session)
+        resp = await client.delete(f"/api/v1/admin/templates/{uuid.uuid4()}", headers=headers)
+        assert resp.status_code == 404
+
+    async def test_non_admin_returns_403(self, client: AsyncClient) -> None:
+        headers = await _user_headers(client)
+        resp = await client.delete(f"/api/v1/admin/templates/{uuid.uuid4()}", headers=headers)
+        assert resp.status_code == 403
+
+    async def test_unauthenticated_returns_401(self, client: AsyncClient) -> None:
+        resp = await client.delete(f"/api/v1/admin/templates/{uuid.uuid4()}")
+        assert resp.status_code == 401
+
+
+class TestDeletedTemplateDoesNotBreakGeneratedDocuments:
+    """Kiểm chứng lời hứa trung tâm của endpoint xoá mẫu.
+
+    Cả thiết kế (xoá cứng thay vì xoá mềm) đứng trên đúng một khẳng định: nội dung mẫu
+    được SAO CHÉP vào `proposals.content` lúc sinh, không có cột nào trỏ ngược lại bảng
+    mẫu. Nếu khẳng định đó sai thì xoá một mẫu sẽ làm hỏng báo giá của khách hàng — nên
+    nó phải được chứng minh bằng đường đi thật, không phải bằng đọc lược đồ.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _permissive_ai(self):
+        app.dependency_overrides[get_ai_facade] = lambda: _PermissiveAIFacade()
+        yield
+        app.dependency_overrides.pop(get_ai_facade, None)
+
+    async def test_proposal_survives_deletion_of_its_source_template(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        admin_h = await _admin_headers(client, db_session)
+        template = (
+            await client.post(
+                "/api/v1/admin/templates",
+                json={
+                    "name": "Mẫu báo giá chuẩn",
+                    "template_type": "proposal",
+                    "content": {"body": "Điều khoản chuẩn: đặt cọc 50%."},
+                    "is_active": True,
+                },
+                headers=admin_h,
+            )
+        ).json()["data"]
+
+        user_h = await _user_headers(client)
+        user_id = (await client.get("/api/v1/users/me", headers=user_h)).json()["data"]["id"]
+        await grant_ai_plan(db_session, uuid.UUID(user_id))
+        deal_id = await _make_deal(client, user_h)
+
+        gen = await client.post(
+            f"/api/v1/proposals/generate-from-deal/{deal_id}?template_id={template['id']}",
+            headers=user_h,
+        )
+        assert gen.status_code == 201, gen.text
+        proposal = gen.json()["data"]
+
+        deleted = await client.delete(
+            f"/api/v1/admin/templates/{template['id']}", headers=admin_h
+        )
+        assert deleted.status_code == 200, deleted.text
+
+        after = await client.get(f"/api/v1/proposals/{proposal['id']}", headers=user_h)
+        assert after.status_code == 200, after.text
+        assert after.json()["data"]["content"] == proposal["content"]
 
 
 # ---------------------------------------------------------------------------

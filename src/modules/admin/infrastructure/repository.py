@@ -18,6 +18,7 @@ from src.infrastructure.database.models import (
     PlanModel,
     RefreshTokenModel,
     SubscriptionModel,
+    SubscriptionPaymentModel,
     SystemTemplateModel,
     TokenBlacklistModel,
     UserModel,
@@ -193,6 +194,24 @@ class AdminRepository:
         await self.db.flush()
         await self.db.refresh(plan)
         return plan
+
+    async def count_subscriptions_for_plan(self, plan_id: uuid.UUID) -> int:
+        return await self.db.scalar(
+            select(func.count(SubscriptionModel.id)).where(
+                SubscriptionModel.plan_id == plan_id
+            )
+        ) or 0
+
+    async def count_payments_for_plan(self, plan_id: uuid.UUID) -> int:
+        return await self.db.scalar(
+            select(func.count(SubscriptionPaymentModel.id)).where(
+                SubscriptionPaymentModel.plan_id == plan_id
+            )
+        ) or 0
+
+    async def delete_plan(self, plan: PlanModel) -> None:
+        await self.db.delete(plan)
+        await self.db.flush()
 
     # -------------------------------------------------------------------------
     # Subscriptions
@@ -410,6 +429,17 @@ class AdminRepository:
         return await self.db.scalar(
             select(SystemTemplateModel).where(SystemTemplateModel.id == template_id)
         )
+
+    async def count_child_templates(self, template_id: uuid.UUID) -> int:
+        return await self.db.scalar(
+            select(func.count(SystemTemplateModel.id)).where(
+                SystemTemplateModel.parent_template_id == template_id
+            )
+        ) or 0
+
+    async def delete_template(self, template: SystemTemplateModel) -> None:
+        await self.db.delete(template)
+        await self.db.flush()
 
     # -------------------------------------------------------------------------
     # Feature Flags

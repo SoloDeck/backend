@@ -21,6 +21,7 @@ from src.modules.admin.schemas.request import (
 )
 from src.shared.exceptions.domain import (
     AlreadyExistsError,
+    BusinessRuleError,
     NotFoundError,
     ValidationError,
 )
@@ -230,6 +231,48 @@ class AdminService:
             description=f"Admin sửa gói '{plan.name}': {', '.join(sorted(fields))}",
         )
         return plan
+
+    async def delete_plan(
+        self, plan_id: uuid.UUID, *, admin_id: uuid.UUID | None = None
+    ) -> None:
+        """Xoá hẳn một gói cước, chỉ khi không còn gì trỏ vào nó.
+
+        `subscriptions.plan_id` và `subscription_payments.plan_id` đều NOT NULL, nên xoá
+        một gói còn người dùng sẽ vỡ khoá ngoại ở tầng DB — trả về 500 trống trong khi
+        nguyên nhân thật là một quy tắc nghiệp vụ rõ ràng. Chặn ở đây để admin nhận đúng
+        409 kèm số thuê bao đang vướng, và biết việc cần làm là chuyển họ sang gói khác
+        (hoặc chỉ cần `is_active=false` nếu mục tiêu chỉ là ngừng bán).  #Huynh
+        """
+        plan = await self.repo.get_plan(plan_id)
+        if plan is None:
+            raise NotFoundError(f"Plan {plan_id} not found")
+
+        subscription_count = await self.repo.count_subscriptions_for_plan(plan_id)
+        if subscription_count:
+            raise BusinessRuleError(
+                f"Không xoá được gói '{plan.name}': còn {subscription_count} thuê bao đang "
+                "dùng. Hãy chuyển họ sang gói khác, hoặc đặt is_active=false để ngừng bán."
+            )
+
+        payment_count = await self.repo.count_payments_for_plan(plan_id)
+        if payment_count:
+            raise BusinessRuleError(
+                f"Không xoá được gói '{plan.name}': còn {payment_count} giao dịch thanh toán "
+                "tham chiếu tới gói. Hãy đặt is_active=false để ngừng bán."
+            )
+
+        # Đọc tên/slug TRƯỚC khi xoá — sau `delete()` + `flush()` mọi truy cập thuộc tính
+        # đều là instance đã bị tách khỏi phiên.
+        name, slug = plan.name, plan.slug
+        await self.repo.delete_plan(plan)
+
+        await self.repo.create_audit_log(
+            event_type="plan.deleted",
+            actor_user_id=admin_id,
+            target_type="plan",
+            target_id=plan_id,
+            description=f"Admin xoá gói '{name}' ({slug})",
+        )
 
     # -------------------------------------------------------------------------
     # Subscriptions
@@ -458,6 +501,40 @@ class AdminService:
         if payload.plan_tier_required is not None:
             template.plan_tier_required = payload.plan_tier_required
         return await self.repo.save(template)
+
+    async def delete_template(
+        self, template_id: uuid.UUID, *, admin_id: uuid.UUID | None = None
+    ) -> None:
+        """Xoá hẳn một mẫu hệ thống khỏi thư viện.
+
+        An toàn với đề xuất/hợp đồng đã tạo: lúc sinh tài liệu, nội dung mẫu được COPY vào
+        `proposals.content` / `contracts.content`, không có cột nào trỏ ngược về bảng mẫu.
+        Ràng buộc duy nhất là `system_templates.parent_template_id` (mẫu con phái sinh) —
+        còn mẫu con thì chặn, vì xoá cha sẽ vỡ khoá ngoại.  #Huynh
+        """
+        template = await self.repo.get_template(template_id)
+        if template is None:
+            raise NotFoundError(f"Template {template_id} not found")
+
+        child_count = await self.repo.count_child_templates(template_id)
+        if child_count:
+            raise BusinessRuleError(
+                f"Không xoá được mẫu '{template.name}': còn {child_count} mẫu phái sinh từ nó. "
+                "Hãy xoá các mẫu con trước, hoặc đặt is_active=false để ẩn mẫu này."
+            )
+
+        name = template.name
+        await self.repo.delete_template(template)
+
+        # Mẫu là tài sản dùng chung của cả nền tảng và xoá là không hoàn tác được — ghi
+        # nhật ký để luôn truy được ai đã xoá cái gì, cùng lối với các thao tác gói cước.
+        await self.repo.create_audit_log(
+            event_type="template.deleted",
+            actor_user_id=admin_id,
+            target_type="template",
+            target_id=template_id,
+            description=f"Admin xoá mẫu '{name}'",
+        )
 
     @staticmethod
     def _clean_profession(profession: str | None) -> str | None:
