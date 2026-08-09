@@ -1416,9 +1416,9 @@ class AiJobModel(UUIDMixin, TimestampMixin, Base):
     )
 
 class AIProviderConfigurationModel(Base):
-    # Chỉ có MỘT bản ghi trong bảng này, lưu nhà cung cấp LLM đang được toàn hệ
-    # thống sử dụng. Admin không thêm/xoá cấu hình mà chỉ cập nhật bản ghi này
-    # (Groq ↔ Gemini ↔ OpenAI ↔ ...).  #Trung
+    # Chỉ có MỘT bản ghi trong bảng này, lưu provider và model LLM
+    # đang được toàn hệ thống sử dụng. Admin không thêm/xoá cấu hình
+    # mà chỉ cập nhật bản ghi này.
     __tablename__ = "ai_provider_configuration"
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -1427,15 +1427,21 @@ class AIProviderConfigurationModel(Base):
         default=uuid.uuid4,
     )
 
-    # Nhà cung cấp AI hiện tại của toàn bộ ứng dụng. Model cụ thể của từng nhà
-    # cung cấp được hard-code trong codebase để giảm độ phức tạp khi kiểm thử và
-    # triển khai.
+    # Nhà cung cấp AI hiện tại của toàn bộ ứng dụng.
+    # Ví dụ: groq, gemini, ollama.
     llm_provider: Mapped[str] = mapped_column(
         String(20),
         nullable=False,
     )
 
-    # Tự động cập nhật mỗi lần admin đổi nhà cung cấp AI.
+    # Model cụ thể đang được sử dụng bởi provider.
+    # Ví dụ: llama-3.3-70b-versatile, gemini-2.5-flash, llama3.2:3b.
+    llm_model: Mapped[str] = mapped_column(
+        String(100),
+        nullable=False,
+    )
+
+    # Tự động cập nhật mỗi lần admin đổi provider hoặc model.
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
@@ -1443,8 +1449,8 @@ class AIProviderConfigurationModel(Base):
         onupdate=func.now(),
     )
 
-    # Admin thực hiện lần thay đổi gần nhất. Dùng SET NULL để vẫn giữ lịch sử cấu
-    # hình nếu tài khoản admin bị xoá sau này.
+    # Admin thực hiện lần thay đổi gần nhất.
+    # Dùng SET NULL để vẫn giữ cấu hình nếu tài khoản admin bị xoá sau này.
     updated_by: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("users.id", ondelete="SET NULL"),
