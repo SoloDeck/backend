@@ -76,3 +76,4 @@ class AdminUpdateLLMProviderRequest(BaseModel):
         "gemini",
         "openai",
     ]
+    llm_model: str
