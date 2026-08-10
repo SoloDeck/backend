@@ -67,6 +67,10 @@ class FreelancerProfileUpdateRequest(BaseModel):
     portfolio_url: str | None = None
     # Slug nghề chuẩn hoá; validate qua seam của intake_form (None = bỏ chọn, vẫn hợp lệ).
     profession: str | None = None
+    # Mức giá theo giờ. Cũng có ở `UpdateProfessionalProfileRequest` — cố ý nhận thêm ở đây
+    # để màn Cài đặt lưu xong hồ sơ trong hai lệnh như cũ; thêm lệnh thứ ba cho một con số
+    # là thêm một đường hỏng nửa chừng. `skills`/`portfolio_url` vốn đã nằm ở cả hai.  #Huynh
+    default_hourly_rate: Decimal | None = Field(default=None, ge=0)
 
     # --- Diện mạo trang công khai ---
     cover_url: str | None = Field(default=None, max_length=_IMAGE_MAX_CHARS)

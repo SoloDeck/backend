@@ -182,6 +182,7 @@ class IntakeFormService:
                 description=None,
                 freelancer_name=freelancer_name,
                 fields=fields,
+                is_active=True,
             )
 
         db_fields = await self.repo.get_visible_fields(config.id)
@@ -189,6 +190,7 @@ class IntakeFormService:
             title=config.title,
             description=config.description,
             freelancer_name=freelancer_name,
+            is_active=config.is_active,
             fields=[
                 PublicIntakeFormFieldResponse(
                     field_key=f.field_key,
@@ -236,6 +238,15 @@ class IntakeFormService:
         if config is None:
             required_keys = {"name", "inquiry_text"}
         else:
+            # Công tắc "Biểu mẫu đang hoạt động" phải chặn được THẬT. Trước đây `is_active`
+            # đi vòng qua PUT /intake-form rồi nằm im — không hàm nào phía công khai đọc nó,
+            # nên freelancer tắt đi mà khách vẫn gửi được như thường, trái hẳn dòng mô tả
+            # ngay dưới công tắc. Chặn ở đây chứ không chỉ ẩn form trên giao diện: ai gọi
+            # thẳng API vẫn phải bị từ chối.  #Huynh
+            if not config.is_active:
+                raise ValidationError(
+                    "Freelancer hiện không nhận yêu cầu mới qua biểu mẫu này."
+                )
             fields = await self.repo.get_visible_fields(config.id)
             required_keys = {f.field_key for f in fields if f.is_required}
 

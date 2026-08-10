@@ -287,3 +287,57 @@ async def test_profile_cannot_be_fetched_by_user_id(client: AsyncClient):
     resp = await client.get(f"/api/v1/intake/{user_id}/profile")
 
     assert resp.status_code == 404
+
+
+async def test_tat_cong_tac_thi_khach_khong_gui_duoc_nhung_van_xem_duoc_ho_so(
+    client: AsyncClient,
+):
+    """Công tắc "Biểu mẫu đang hoạt động" phải chặn được THẬT.
+
+    Trước đây `is_active` đi vòng qua `PUT /intake-form` rồi nằm im — không hàm nào phía công
+    khai đọc nó, nên freelancer tắt đi mà khách vẫn gửi được như thường. Trang vẫn phải hiện
+    hồ sơ (link đã phát cho khách không được thành trang lỗi), chỉ là không nhận yêu cầu nữa.
+    """
+    headers = await _auth(client)
+    slug = f"tam-ngung-{uuid.uuid4().hex[:6]}"
+    assert (
+        await client.patch(
+            "/api/v1/users/me/freelancer-profile", headers=headers, json={"profile_slug": slug}
+        )
+    ).status_code == 200
+
+    saved = await client.put(
+        "/api/v1/intake-form",
+        headers=headers,
+        json={
+            "title": "Gửi yêu cầu dự án",
+            "description": None,
+            "is_active": False,
+            "fields": [
+                {
+                    "field_key": "name",
+                    "label": "Họ tên",
+                    "placeholder": None,
+                    "field_type": "text",
+                    "is_required": True,
+                    "is_visible": True,
+                    "sort_order": 1,
+                }
+            ],
+        },
+    )
+    assert saved.status_code == 200, saved.text
+
+    # Hồ sơ vẫn mở được, và cấu hình công khai nói rõ đang tắt để giao diện thay chỗ biểu mẫu.
+    assert (await client.get(f"/api/v1/intake/{slug}/profile")).status_code == 200
+    config = await client.get(f"/api/v1/intake/{slug}/config")
+    assert config.status_code == 200, config.text
+    assert config.json()["data"]["is_active"] is False
+
+    # Gọi thẳng API cũng không lách được.
+    with patch("src.workers.ai_jobs.tasks.qualify_deal_async_by_id.delay"):
+        blocked = await client.post(
+            f"/api/v1/intake/{slug}",
+            json={"name": "Khách Cố Gửi", "inquiry_text": "Cho mình hỏi."},
+        )
+    assert blocked.status_code == 422, blocked.text

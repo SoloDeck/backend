@@ -38,6 +38,10 @@ class PublicIntakeFormConfigResponse(BaseModel):
     description: str | None
     freelancer_name: str
     fields: list[PublicIntakeFormFieldResponse]
+    # Freelancer còn nhận yêu cầu mới không. Trang công khai vẫn hiện hồ sơ khi tắt — link đã
+    # phát cho khách không được biến thành trang lỗi — nhưng thay chỗ biểu mẫu bằng một câu
+    # nói rõ, thay vì để khách điền xong mới ăn lỗi.
+    is_active: bool = True
 
 
 class PublicProfileResponse(BaseModel):
