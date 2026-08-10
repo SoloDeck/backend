@@ -29,11 +29,34 @@ _RESERVED_SLUGS = frozenset(
 )
 
 
+def _safe_image_url(v: str | None) -> str | None:
+    """Chỉ nhận dữ liệu ảnh hoặc link https — chặn javascript: và các lược đồ lạ.
+
+    Giá trị này đi thẳng vào thuộc tính src của thẻ img trên trang ai cũng mở được. Dùng
+    chung cho `avatar_url` lẫn `cover_url`: hai trường hiện cạnh nhau trên cùng một trang,
+    để mỗi trường một luật là kiểu gì cũng có ngày lệch.  #Huynh
+    """
+    if v is None or not v.strip():
+        return None
+    v = v.strip()
+    if not (v.startswith("data:image/") or v.startswith("https://")):
+        raise ValueError("Ảnh phải là dữ liệu ảnh hoặc đường dẫn https")
+    return v
+
+
 class UpdateUserRequest(BaseModel):
     full_name: str | None = None
     phone: str | None = None
-    avatar_url: str | None = None
+    # Cùng chốt chặn như `FreelancerProfileUpdateRequest`: đường này cũng ghi avatar (màn
+    # onboarding dùng nó), mà trước đây không có cả giới hạn độ dài lẫn kiểm lược đồ — tức
+    # là đúng kịch bản nhét chuỗi 50MB mà chú thích ở đầu file viết ra để phòng.  #Huynh
+    avatar_url: str | None = Field(default=None, max_length=_IMAGE_MAX_CHARS)
     bio: str | None = None
+
+    @field_validator("avatar_url")
+    @classmethod
+    def _safe_avatar_url(cls, v: str | None) -> str | None:
+        return _safe_image_url(v)
 
 
 class FreelancerProfileUpdateRequest(BaseModel):
@@ -88,19 +111,10 @@ class FreelancerProfileUpdateRequest(BaseModel):
             raise ValueError("Màu chủ đạo phải là mã hex, ví dụ #5B3DF5")
         return v.lower()
 
-    @field_validator("cover_url")
+    @field_validator("avatar_url", "cover_url")
     @classmethod
-    def _safe_cover_url(cls, v: str | None) -> str | None:
-        """Chỉ nhận dữ liệu ảnh hoặc link https — chặn javascript: và các lược đồ lạ.
-
-        Giá trị này đi thẳng vào thuộc tính src của thẻ img trên trang ai cũng mở được.
-        """
-        if v is None or not v.strip():
-            return None
-        v = v.strip()
-        if not (v.startswith("data:image/") or v.startswith("https://")):
-            raise ValueError("Ảnh bìa phải là dữ liệu ảnh hoặc đường dẫn https")
-        return v
+    def _safe_image_urls(cls, v: str | None) -> str | None:
+        return _safe_image_url(v)
 
     @field_validator("profile_slug")
     @classmethod
