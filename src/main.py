@@ -30,7 +30,6 @@ from src.modules.clients.api.router import router as clients_router
 from src.modules.contracts.api.router import router as contracts_router
 from src.modules.deals.api.public_router import router as public_intake_router
 from src.modules.deals.api.router import router as deals_router
-from src.modules.freelancers.api.router import router as freelancers_router
 from src.modules.intake_form.api.public_router import router as public_intake_form_router
 from src.modules.intake_form.api.router import router as intake_form_router
 from src.modules.invoices.api.public_router import router as public_invoices_router
@@ -230,8 +229,6 @@ app.include_router(analytics_router, prefix=f"{API_V1}/analytics", tags=["Analyt
 app.include_router(public_intake_form_router, prefix=f"{API_V1}/intake", tags=["Public"])
 app.include_router(public_intake_router, prefix=f"{API_V1}/intake", tags=["Public"])
 app.include_router(intake_form_router, prefix=f"{API_V1}/intake-form", tags=["Intake Form"])
-app.include_router(freelancers_router, prefix=f"{API_V1}/public/freelancers", tags=["Public"])
-app.include_router(projects_router, prefix=f"{API_V1}/projects", tags=["Projects"])
 app.include_router(admin_router, prefix=f"{API_V1}/admin", tags=["Admin"])
 app.include_router(zalo_router, prefix=f"{API_V1}/zalo", tags=["Zalo"])
 app.include_router(lead_qualifier_router, prefix=f"{API_V1}/ai")

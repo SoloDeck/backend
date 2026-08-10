@@ -63,7 +63,7 @@ async def delete_me(
 @router.patch(
     "/me/freelancer-profile",
     response_model=ApiResponse[UserResponse],
-    summary="Update public freelancer directory profile",
+    summary="Update freelancer profile",
 )
 async def update_freelancer_profile(
     payload: FreelancerProfileUpdateRequest,

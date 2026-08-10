@@ -227,10 +227,26 @@ class UserModel(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     portfolio_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     business_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
-    # Public freelancer directory
+    # Headline hiện trên trang chia sẻ công khai (/intake/{share_token}/profile).
+    #
+    # Hai cột `service_categories` và `is_listed` từng nằm ở đây để phục vụ danh bạ tìm
+    # freelancer. Danh bạ đã bỏ (SoloDesk là CRM riêng của từng người, không phải sàn), nên
+    # code thôi map chúng. Cột vẫn còn trong DB: drop cột trong khi container API cũ vẫn
+    # đang chạy sẽ làm mọi truy vấn bảng users nổ UndefinedColumn suốt lúc deploy, nên việc
+    # drop nằm ở một migration riêng chạy sau khi bản này lên xong.  #Huynh
     professional_title: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    service_categories: Mapped[list[str] | None] = mapped_column(ARRAY(Text), nullable=True)
-    is_listed: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+    # Diện mạo trang công khai, do freelancer tự chọn.
+    #
+    # `cover_url` chứa data URL base64 (cùng đường với avatar_url) chứ không phải link S3:
+    # lớp MinIO có sẵn nhưng dựng URL từ hostname nội bộ Docker nên trình duyệt khách không
+    # mở được. `brand_color` là mã hex; frontend ghi đè biến CSS --primary bằng nó nên cả
+    # trang đổi màu theo, không phải sửa từng chỗ.  #Huynh
+    cover_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    brand_color: Mapped[str | None] = mapped_column(String(9), nullable=True)
+    # Địa chỉ riêng dạng /{slug} thay cho link token 43 ký tự. UNIQUE vì là định danh công
+    # khai. 32 ký tự là cố ý: token dài hơn thế nên slug không bao giờ đụng token, nhờ vậy
+    # MỘT truy vấn tra được cả hai (xem intake_form/infrastructure/repository.py).
+    profile_slug: Mapped[str | None] = mapped_column(String(32), nullable=True, unique=True)
     # Nghề chuẩn hoá — slug trong src/modules/intake_form/professions.py. Dùng làm ngữ cảnh cho
     # lead qualifier (chủ deal làm nghề gì). Khác professional_title (headline tự do): đây là MỘT
     # trong N nghề cố định. Nullable = freelancer chưa chọn.  #Huynh

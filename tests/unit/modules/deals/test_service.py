@@ -273,7 +273,7 @@ async def test_create_public_intake_creates_client_deal_and_intake() -> None:
     intake = IntakeStub(id=uuid.uuid4(), client_id=client_id)
     deal = DealStub(id=uuid.uuid4(), stage="new_lead", client_id=client_id)
     repo = AsyncMock()
-    repo.get_owner_by_intake_token.return_value = owner
+    repo.get_owner_by_public_link.return_value = owner
     repo.create_client.return_value = DealStub(id=client_id, stage="prospect")
     repo.create.return_value = deal
     repo.create_intake.return_value = intake
@@ -336,7 +336,7 @@ async def test_thu_bao_deal_moi_gui_NGAY_va_neu_so_tep_khach_khai() -> None:
     client_id = uuid.uuid4()
     deal = DealStub(id=uuid.uuid4(), stage="new_lead", client_id=client_id)
     repo = AsyncMock()
-    repo.get_owner_by_intake_token.return_value = owner
+    repo.get_owner_by_public_link.return_value = owner
     repo.create_client.return_value = DealStub(id=client_id, stage="prospect")
     repo.create.return_value = deal
     repo.create_intake.return_value = IntakeStub(id=uuid.uuid4(), client_id=client_id)
@@ -379,7 +379,7 @@ class TestPublicIntakeAttachment:
 
     async def test_token_sai_thi_khong_nhan(self) -> None:
         repo = AsyncMock()
-        repo.get_owner_by_intake_token.return_value = None
+        repo.get_owner_by_public_link.return_value = None
 
         with pytest.raises(NotFoundError):
             await self._service(repo).add_public_intake_attachment(
@@ -393,7 +393,7 @@ class TestPublicIntakeAttachment:
     async def test_phieu_khong_thuoc_chu_link_thi_khong_nhan(self) -> None:
         # Chốt quan trọng nhất: có link hợp lệ KHÔNG có nghĩa được ghi vào phiếu bất kỳ.
         repo = AsyncMock()
-        repo.get_owner_by_intake_token.return_value = OwnerStub(id=uuid.uuid4())
+        repo.get_owner_by_public_link.return_value = OwnerStub(id=uuid.uuid4())
         repo.get_intake_by_id.return_value = None
 
         with pytest.raises(NotFoundError):
@@ -409,7 +409,7 @@ class TestPublicIntakeAttachment:
         from datetime import UTC, datetime, timedelta
 
         repo = AsyncMock()
-        repo.get_owner_by_intake_token.return_value = OwnerStub(id=uuid.uuid4())
+        repo.get_owner_by_public_link.return_value = OwnerStub(id=uuid.uuid4())
         repo.get_intake_by_id.return_value = SimpleNamespace(
             deal_id=uuid.uuid4(),
             submitted_at=datetime.now(UTC) - timedelta(hours=2),
@@ -431,7 +431,7 @@ class TestPublicIntakeAttachment:
         from datetime import UTC, datetime
 
         repo = AsyncMock()
-        repo.get_owner_by_intake_token.return_value = OwnerStub(id=uuid.uuid4())
+        repo.get_owner_by_public_link.return_value = OwnerStub(id=uuid.uuid4())
         repo.get_intake_by_id.return_value = SimpleNamespace(
             deal_id=uuid.uuid4(), submitted_at=datetime.now(UTC), created_at=None
         )
@@ -458,7 +458,7 @@ class TestPublicIntakeAttachment:
         from datetime import UTC, datetime
 
         repo = AsyncMock()
-        repo.get_owner_by_intake_token.return_value = owner
+        repo.get_owner_by_public_link.return_value = owner
         repo.get_intake_by_id.return_value = SimpleNamespace(
             deal_id=deal_id, submitted_at=datetime.now(UTC), created_at=None
         )
@@ -488,7 +488,7 @@ class TestPublicIntakeAttachment:
 
 async def test_create_public_intake_rejects_unknown_token() -> None:
     repo = AsyncMock()
-    repo.get_owner_by_intake_token.return_value = None
+    repo.get_owner_by_public_link.return_value = None
     service = DealsService(db=AsyncMock(), repo=repo, usage=AsyncMock())
 
     with pytest.raises(NotFoundError):

@@ -61,8 +61,9 @@ def build_user_fields(obj: Any) -> dict[str, Any]:
         "bio": obj.bio,
         "profession": obj.profession,
         "professional_title": obj.professional_title,
-        "service_categories": obj.service_categories or [],
-        "is_listed": obj.is_listed,
+        "cover_url": obj.cover_url,
+        "brand_color": obj.brand_color,
+        "profile_slug": obj.profile_slug,
         "intake_share_token": obj.intake_share_token,
         # CHỈ trả có/không, tuyệt đối không trả hash ra ngoài.
         "has_password": obj.hashed_password is not None,
@@ -87,12 +88,13 @@ class UserResponse(BaseModel):
     avatar_url: str | None
     bio: str | None
     profession: str | None = None
-    # Ba trường của danh bạ công khai. Thiếu chúng thì FE không đọc lại được trạng thái
-    # của chính mình — công tắc "hiện công khai" sẽ luôn hiển thị sai sau khi tải lại
-    # trang, và nhóm dịch vụ đã chọn cũng không hiện ra được.  #Huynh
+    # Headline hiện trên trang chia sẻ; FE cần đọc lại được để form Cài đặt hồ sơ hiển thị
+    # đúng giá trị đang lưu sau khi tải lại trang. Ba trường diện mạo bên dưới cũng vậy —
+    # thiếu chúng thì bấm F5 xong ảnh bìa và màu đã chọn biến mất khỏi màn cấu hình.
     professional_title: str | None = None
-    service_categories: list[str] = []
-    is_listed: bool = False
+    cover_url: str | None = None
+    brand_color: str | None = None
+    profile_slug: str | None = None
     intake_share_token: str | None
     # Tài khoản này đã có mật khẩu chưa.
     #

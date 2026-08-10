@@ -3,6 +3,7 @@ from dataclasses import dataclass
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.config.settings import settings
 from src.modules.intake_form.infrastructure.repository import IntakeFormRepository
 from src.modules.intake_form.schemas.request import IntakeFormUpdateRequest
 from src.modules.intake_form.schemas.response import (
@@ -10,6 +11,7 @@ from src.modules.intake_form.schemas.response import (
     IntakeFormResponse,
     PublicIntakeFormConfigResponse,
     PublicIntakeFormFieldResponse,
+    PublicProfileResponse,
 )
 from src.shared.exceptions.domain import NotFoundError, ValidationError
 
@@ -96,8 +98,16 @@ class IntakeFormService:
     async def get_form_config(self, owner_user_id: uuid.UUID) -> IntakeFormResponse:
         user = await self.repo.get_user(owner_user_id)
         share_url = None
-        if user and user.intake_share_token:
-            share_url = f"https://solodesk.vn/bieu-mau/{user.intake_share_token}"
+        if user:
+            # Miền lấy từ cấu hình, KHÔNG ghi cứng: chỗ này từng là "https://solodesk.vn"
+            # trong khi nhóm chỉ sở hữu solodesk.space — link trả về trỏ vào miền của người
+            # khác. Ưu tiên tên đường dẫn riêng nếu freelancer đã đặt; chưa đặt thì dùng
+            # link token, vốn không dò được.  #Huynh
+            base = settings.frontend_url.rstrip("/")
+            if user.profile_slug:
+                share_url = f"{base}/{user.profile_slug}"
+            elif user.intake_share_token:
+                share_url = f"{base}/ho-so/{user.intake_share_token}"
 
         config = await self.repo.get_by_owner(owner_user_id)
         if config is None:
@@ -151,7 +161,9 @@ class IntakeFormService:
             raise NotFoundError("Intake form not found or link is invalid")
 
         config = await self.repo.get_by_owner(user.id)
-        freelancer_name = user.full_name or user.email or "Freelancer"
+        # KHÔNG rơi về email: `full_name` là NOT NULL nên nhánh đó chỉ kích hoạt khi tên
+        # rỗng — tức là nó chỉ tồn tại để rò email chủ tài khoản ra trang ai cũng mở được.
+        freelancer_name = user.full_name or "Freelancer"
 
         if config is None:
             fields = [
@@ -187,6 +199,31 @@ class IntakeFormService:
                 )
                 for f in db_fields
             ],
+        )
+
+    async def get_public_profile(self, share_token: str) -> PublicProfileResponse:
+        """Hồ sơ freelancer cho trang chia sẻ, tra bằng share_token.
+
+        KHÔNG lọc theo cờ "hiện công khai" như danh bạ cũ làm: chính freelancer là người
+        phát tán link này, gửi link ra tức là đã đồng ý cho xem. Còn ai không phát link thì
+        trang của họ không tồn tại với thế giới bên ngoài — không có chỗ nào liệt kê ra.
+
+        Câu lỗi dùng CHUNG cho token sai lẫn token không tồn tại: phân biệt hai trường hợp
+        là biến endpoint thành máy dò xem token nào có thật.  #Huynh
+        """
+        user = await self.repo.get_user_by_token(share_token)
+        if user is None:
+            raise NotFoundError("Profile not found or link is invalid")
+
+        return PublicProfileResponse(
+            full_name=user.full_name or "Freelancer",
+            professional_title=user.professional_title,
+            bio=user.bio,
+            avatar_url=user.avatar_url,
+            cover_url=user.cover_url,
+            brand_color=user.brand_color,
+            skills=user.skills or [],
+            portfolio_url=user.portfolio_url,
         )
 
     async def validate_submission(self, share_token: str, payload) -> None:
