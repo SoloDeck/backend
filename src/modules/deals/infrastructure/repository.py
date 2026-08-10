@@ -2,7 +2,7 @@ import uuid
 from dataclasses import dataclass
 from decimal import Decimal
 
-from sqlalchemy import func, select, update
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.infrastructure.database.models import (
@@ -51,10 +51,24 @@ class DealsRepository:
             )
         )
 
-    async def get_owner_by_intake_token(self, share_token: str):
+    async def get_owner_by_public_link(self, share_token: str):
+        """Chủ trang công khai, tra bằng token chia sẻ HOẶC tên đường dẫn riêng.
+
+        Tên hàm cố ý KHÔNG gọi là "by_intake_token": bản cũ tên như vậy nên người đọc
+        chỗ gọi không có lý do gì nghi nó nhận thứ khác ngoài token — và đó chính là lý
+        do khách vào bằng `/{slug}` xem được trang, điền xong bấm Gửi thì ăn 404.
+
+        Vị từ này TRÙNG với `IntakeFormRepository.get_user_by_token`; hai chỗ phải sửa
+        cùng nhau. Không gộp thành một hàm dùng chung vì AGENTS.md cấm module này gọi
+        repository của module kia khi chưa có ADR. Test khoá:
+        `test_slug_hoat_dong_tren_ca_ba_endpoint_cong_khai`.  #Huynh
+        """
         return await self.db.scalar(
             select(UserModel).where(
-                UserModel.intake_share_token == share_token,
+                or_(
+                    UserModel.intake_share_token == share_token,
+                    UserModel.profile_slug == share_token,
+                ),
                 UserModel.status == "active",
                 UserModel.deleted_at.is_(None),
             )

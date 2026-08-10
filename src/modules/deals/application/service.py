@@ -143,17 +143,24 @@ class DealsService:
         """Capture a lead submitted through the owner's public intake link.
 
         No authentication: the owner is resolved solely from the hard-to-guess
-        `share_token`. Creates a minimal prospect Client, a `new_lead` Deal (so it
-        surfaces in the owner's pipeline / GET /deals) and a DealIntake holding the
-        raw inquiry for later AI qualification (Package 3 — no scoring here).
+        `share_token` — or from the owner's vanity `profile_slug`, since the public
+        page is reachable both ways. Creates a minimal prospect Client, a `new_lead`
+        Deal (so it surfaces in the owner's pipeline / GET /deals) and a DealIntake
+        holding the raw inquiry for later AI qualification (Package 3 — no scoring here).
         """
         # Throttle by the raw token first so both valid and invalid links are
         # rate-limited (basic abuse guard) before any DB work.
         _public_intake_limiter.check(share_token)
 
-        owner = await self.repo.get_owner_by_intake_token(share_token)
+        owner = await self.repo.get_owner_by_public_link(share_token)
         if owner is None:
             raise NotFoundError("Intake form not found or link is invalid")
+
+        # Đếm thêm một lượt theo chủ sở hữu: cùng một freelancer mở được bằng token LẪN
+        # slug, đếm theo chuỗi thô thôi thì mỗi lối vào một rổ riêng, trần spam tăng gấp
+        # đôi. Lượt gửi thật tiêu một suất ở cả hai rổ nên người dùng bình thường không
+        # thấy khác gì.  #Huynh
+        _public_intake_limiter.check(f"owner:{owner.id}")
 
         # Deduplicate: reuse an existing client when both name and phone match.
         client = None
@@ -253,9 +260,13 @@ class DealsService:
         """
         _public_attach_limiter.check(share_token)
 
-        owner = await self.repo.get_owner_by_intake_token(share_token)
+        owner = await self.repo.get_owner_by_public_link(share_token)
         if owner is None:
             raise NotFoundError("Intake form not found or link is invalid")
+
+        # Gộp rổ đếm theo chủ sở hữu, cùng lý do như lúc gửi form: token và slug là hai
+        # lối vào của cùng một người.
+        _public_attach_limiter.check(f"owner:{owner.id}")
 
         intake = await self.repo.get_intake_by_id(intake_id, owner.id)
         if intake is None or intake.deal_id is None:
