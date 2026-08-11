@@ -19,6 +19,8 @@ def get_momo_client() -> PaymentGateway:
         lang=settings.momo_lang,
         redirect_url=settings.momo_redirect_url,
         timeout_seconds=settings.momo_timeout_seconds,
+        min_amount=settings.momo_min_amount,
+        max_amount=settings.momo_max_amount,
     )
 
 
