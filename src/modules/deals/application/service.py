@@ -76,6 +76,13 @@ _EXPECTED_QUALIFICATION_KEYS = frozenset(
     }
 )
 
+# Hai tiêu đề này là GIAO KÈO giữa mã nguồn và prompt: `ai/lead_qualifier/prompts/system.txt`
+# gọi tên chúng NGUYÊN VĂN để ra luật chấm điểm. Sửa chữ ở một phía mà quên phía kia thì luật
+# trỏ vào một khối không tồn tại — AI không hề báo lỗi, nó chỉ lặng lẽ chấm sai. Có test khoá
+# hai phía lại với nhau (`test_tieu_de_khoi_khop_voi_prompt`).  #Huynh
+SCORED_BLOCK_HEADING = "## YÊU CẦU DỰ ÁN — DÙNG ĐỂ CHẤM ĐIỂM"
+EXCLUDED_BLOCK_HEADING = "## KHÔNG PHẢI LỜI KHÁCH — CẤM DÙNG ĐỂ CHẤM ĐIỂM"
+
 
 @dataclass
 class DealsService:
@@ -136,17 +143,24 @@ class DealsService:
         """Capture a lead submitted through the owner's public intake link.
 
         No authentication: the owner is resolved solely from the hard-to-guess
-        `share_token`. Creates a minimal prospect Client, a `new_lead` Deal (so it
-        surfaces in the owner's pipeline / GET /deals) and a DealIntake holding the
-        raw inquiry for later AI qualification (Package 3 — no scoring here).
+        `share_token` — or from the owner's vanity `profile_slug`, since the public
+        page is reachable both ways. Creates a minimal prospect Client, a `new_lead`
+        Deal (so it surfaces in the owner's pipeline / GET /deals) and a DealIntake
+        holding the raw inquiry for later AI qualification (Package 3 — no scoring here).
         """
         # Throttle by the raw token first so both valid and invalid links are
         # rate-limited (basic abuse guard) before any DB work.
         _public_intake_limiter.check(share_token)
 
-        owner = await self.repo.get_owner_by_intake_token(share_token)
+        owner = await self.repo.get_owner_by_public_link(share_token)
         if owner is None:
             raise NotFoundError("Intake form not found or link is invalid")
+
+        # Đếm thêm một lượt theo chủ sở hữu: cùng một freelancer mở được bằng token LẪN
+        # slug, đếm theo chuỗi thô thôi thì mỗi lối vào một rổ riêng, trần spam tăng gấp
+        # đôi. Lượt gửi thật tiêu một suất ở cả hai rổ nên người dùng bình thường không
+        # thấy khác gì.  #Huynh
+        _public_intake_limiter.check(f"owner:{owner.id}")
 
         # Deduplicate: reuse an existing client when both name and phone match.
         client = None
@@ -246,9 +260,13 @@ class DealsService:
         """
         _public_attach_limiter.check(share_token)
 
-        owner = await self.repo.get_owner_by_intake_token(share_token)
+        owner = await self.repo.get_owner_by_public_link(share_token)
         if owner is None:
             raise NotFoundError("Intake form not found or link is invalid")
+
+        # Gộp rổ đếm theo chủ sở hữu, cùng lý do như lúc gửi form: token và slug là hai
+        # lối vào của cùng một người.
+        _public_attach_limiter.check(f"owner:{owner.id}")
 
         intake = await self.repo.get_intake_by_id(intake_id, owner.id)
         if intake is None or intake.deal_id is None:
@@ -694,6 +712,104 @@ class DealsService:
         await self._get_deal(user_id, deal_id)  # 404 nếu deal không phải của người này
         return await self.repo.list_lead_scores(deal_id, user_id)
 
+    async def save_latest_qualification(self, user_id: uuid.UUID, deal_id: uuid.UUID):
+        """Chốt bản chấm mới nhất — đây là thứ tab "Tài liệu" hiển thị.
+
+        Hai tab có vai trò khác nhau và trước đây không tài nào phân biệt được:
+
+        * **Lịch sử** — MỌI lần bấm "Đánh giá", kể cả chấm thử rồi bỏ. Nguồn: mọi dòng
+          `lead_scores`.
+        * **Tài liệu** — CHỈ bản freelancer đã chủ động bấm "Lưu & chuyển sang Đã đánh giá".
+          Nguồn: những dòng có `saved_at`.
+
+        Không có mốc chốt riêng thì mỗi lần chấm nghịch lại đẻ thêm một "tài liệu", và tài
+        liệu mất nghĩa. Trước đây nút Lưu chỉ đổi giai đoạn deal, không đánh dấu gì cả — nên
+        giao diện báo "đã lưu vào tab Tài liệu" mà sang đó chẳng thấy gì.
+
+        Chốt bản MỚI NHẤT chứ không nhận id từ ngoài: bảng đánh giá luôn hiển thị đúng lần
+        chấm vừa xong, nên "chốt cái tôi đang xem" và "chốt bản mới nhất" là một. Nhận id từ
+        client thì lại phải kiểm id đó có thuộc deal này không — thêm một cửa để sai.
+
+        Bấm lưu nhiều lần thì mỗi lần là một mốc riêng; KHÔNG xoá dấu chốt của bản cũ. Người
+        dùng chấm lại rồi chốt lại là có hai bản đã chốt thật, giống báo giá có nhiều phiên
+        bản.  #Huynh
+        """
+        await self._get_deal(user_id, deal_id)  # 404 nếu deal không phải của người này
+
+        latest = await self.repo.get_latest_lead_score(deal_id, user_id)
+        if latest is None:
+            raise NotFoundError("Deal chưa có bản đánh giá nào để lưu")
+
+        latest.saved_at = datetime.now(UTC)
+        return await self.repo.save(latest)
+
+    async def _build_inquiry_context(self, deal_model, user_id: uuid.UUID) -> str:
+        """Dựng ngữ cảnh gửi cho lead qualifier — HAI khối, và ranh giới nằm ĐÚNG chỗ.
+
+        Bản trước chia "FREELANCER TỰ NHẬP" / "KHÁCH HÀNG NÓI GÌ", rồi xếp `deals.notes` vào
+        khối đầu dưới nhãn "Ghi chú nội bộ". Nhãn đó SAI với chính sản phẩm: ô ấy trên giao
+        diện tên là "Nội dung yêu cầu", màn hình chi tiết deal render nó thành "TỔNG QUAN DỰ
+        ÁN", bảng dự án đọc nó làm `description`. Ghi chú riêng tư của freelancer nằm ở
+        `clients.notes` — một cột KHÁC hẳn.
+
+        Hậu quả đo được trên deal thật: cùng MỘT bản brief, gửi bằng file PDF thì chấm ngon,
+        copy dán vào ô "Nội dung yêu cầu" thì chấm 12/100 — scope 12 "chỉ có tên dự án" dù
+        chữ dán vào liệt kê 5 hạng mục, budget 0 dù có "Ngân sách: 700 triệu", timeline 0 dù
+        có "Thời gian build: 5 tháng". Chữ không hề mất; nó chỉ bị dán nhãn sai.
+
+        Người dùng gõ hay khách gõ thì YÊU CẦU vẫn là yêu cầu đó. Chính prompt đã viết ra
+        nguyên tắc ấy ở tiêu chí `detail`: "đo YÊU CẦU được ghi lại kỹ tới đâu, KHÔNG đo ai
+        là người gõ ra nó" — giờ áp cho cả 5 tiêu chí.
+
+        Ranh giới THẬT chỉ có một: ô "Giá trị dự kiến" là con số FREELANCER TỰ ĐOÁN để ước
+        doanh thu, khách chưa hề nói gì. Trước đây nó nằm lẫn trong danh sách phẳng dưới dạng
+        "Estimated value: 200000 VND" và AI chấm 20/25 "khách cung cấp giá trị cụ thể". Nên
+        khối 2 giờ chứa ĐÚNG một ô đó, và vắng mặt hẳn khi ô đó trống.  #Huynh
+        """
+        intake = await self.repo.get_intake_for_deal(deal_model.id, deal_model.client_id, user_id)
+        attachments = await self.repo.list_attachments_with_text(deal_model.id, user_id)
+
+        client_budget = getattr(intake, "estimated_budget", None) if intake else None
+        client_timeline = getattr(intake, "desired_timeline", None) if intake else None
+
+        # KHỐI 1 — mọi đường vào đều đổ về đây: gõ tay, biểu mẫu, hay file khách gửi kèm.
+        requirement: list[str] = [f"- Tên dự án: {deal_model.title}"]
+        if deal_model.source:
+            requirement.append(f"- Nguồn deal: {deal_model.source}")
+        if deal_model.project_type:
+            requirement.append(f"- Loại dự án: {deal_model.project_type}")
+        if deal_model.service_category:
+            requirement.append(f"- Nhóm dịch vụ: {deal_model.service_category}")
+        if deal_model.notes:
+            # Nhãn TRÙNG KHÍT với chữ trên giao diện. Freelancer hỏi "AI có đọc ô Nội dung
+            # yêu cầu của tôi không?" thì câu trả lời phải là có, đúng theo nghĩa đen.
+            requirement.append(f"- Nội dung yêu cầu: {deal_model.notes}")
+        if intake is not None and intake.inquiry_text:
+            requirement.append(f"- Nội dung yêu cầu khách gửi qua biểu mẫu: {intake.inquiry_text}")
+        for att in attachments:
+            requirement.append(f"- Nội dung file khách gửi kèm ({att.filename}):")
+            requirement.append(att.extracted_text or "")
+        if client_budget:
+            requirement.append(f"- Ngân sách khách nêu: {client_budget}")
+        if client_timeline:
+            requirement.append(f"- Thời gian khách muốn: {client_timeline}")
+        if deal_model.desired_timeline:
+            requirement.append(f"- Thời hạn ghi nhận được: {deal_model.desired_timeline}")
+
+        # KHỐI 2 — ĐÚNG một ô, và ô này bị cấm chấm. Trống thì không in khối nào cả: một tiêu
+        # đề rỗng chỉ tổ mời model đi tìm xem "khối kia" nằm ở đâu.
+        excluded: list[str] = []
+        if deal_model.estimated_value:
+            excluded.append(
+                f"- Giá trị dự kiến (FREELANCER TỰ ƯỚC, KHÔNG PHẢI KHÁCH BÁO): "
+                f"{deal_model.estimated_value} {deal_model.currency}"
+            )
+
+        blocks: list[str] = [SCORED_BLOCK_HEADING, *requirement]
+        if excluded:
+            blocks += ["", EXCLUDED_BLOCK_HEADING, *excluded]
+        return "\n".join(blocks)
+
     async def qualify_deal(
         self,
         user_id: uuid.UUID,
@@ -704,66 +820,5 @@ class DealsService:
         if not self.ai_facade:
             raise RuntimeError("AIFacade not initialized")
 
-        # Tách bạch AI NÓI GÌ và FREELANCER TỰ NHẬP GÌ.
-        #
-        # Trước đây tất cả gộp thành một danh sách phẳng, trong đó có dòng
-        # "Estimated value: 200000 VND" — mà đó là ô "Giá trị dự kiến" do FREELANCER tự
-        # điền lúc tạo deal, KHÔNG PHẢI khách báo giá. AI đọc thấy con số thì tưởng khách
-        # đã nêu ngân sách và chấm 20/25 "khách cung cấp giá trị cụ thể", trong khi khách
-        # chưa hề nói gì về tiền. Nhãn dữ liệu mập mờ thì AI có giỏi mấy cũng chấm sai.
-        #
-        # Giờ chia hai khối rõ ràng, và prompt bắt buộc chỉ chấm ngân sách/thời gian dựa
-        # trên khối "KHÁCH HÀNG NÓI GÌ".  #Huynh
-        intake = await self.repo.get_intake_for_deal(deal_model.id, deal_model.client_id, user_id)
-
-        own: list[str] = [f"- Tên dự án: {deal_model.title}"]
-        if deal_model.source:
-            own.append(f"- Nguồn deal: {deal_model.source}")
-        if deal_model.project_type:
-            own.append(f"- Loại dự án: {deal_model.project_type}")
-        if deal_model.service_category:
-            own.append(f"- Nhóm dịch vụ: {deal_model.service_category}")
-        if deal_model.notes:
-            own.append(f"- Ghi chú nội bộ: {deal_model.notes}")
-        if deal_model.estimated_value:
-            own.append(
-                f"- Giá trị dự kiến (FREELANCER TỰ ƯỚC, KHÔNG PHẢI KHÁCH BÁO): "
-                f"{deal_model.estimated_value} {deal_model.currency}"
-            )
-
-        said: list[str] = []
-        client_budget = getattr(intake, "estimated_budget", None) if intake else None
-        client_timeline = getattr(intake, "desired_timeline", None) if intake else None
-        if intake is not None and intake.inquiry_text:
-            said.append(f"- Nguyên văn yêu cầu: {intake.inquiry_text}")
-
-        # Chữ bóc từ file khách gửi kèm (brief dự án PDF).
-        #
-        # Đây là mảnh còn thiếu quan trọng nhất: deal tạo TAY luôn mất trọn 25 điểm ngân
-        # sách vì luật chấm điểm chỉ tính những gì KHÁCH nói — mà khách thì "chưa nói gì"
-        # (ô "Giá trị dự kiến" là freelancer tự nhập). Nên deal tự tạo gần như luôn COLD.
-        #
-        # Nhưng khách GỬI HẲN MỘT FILE BRIEF thì đó CHÍNH LÀ LỜI KHÁCH. Đưa vào đây, AI
-        # đọc được yêu cầu thật, ngân sách thật, deadline thật.  #Huynh
-        attachments = await self.repo.list_attachments_with_text(deal_model.id, user_id)
-        for att in attachments:
-            said.append(f"- Nội dung file khách gửi ({att.filename}):")
-            said.append(att.extracted_text or "")
-        if client_budget:
-            said.append(f"- Ngân sách khách nêu: {client_budget}")
-        if client_timeline:
-            said.append(f"- Thời gian khách muốn: {client_timeline}")
-        if deal_model.desired_timeline:
-            said.append(f"- Thời hạn ghi nhận được: {deal_model.desired_timeline}")
-
-        inquiry_context = "\n".join(
-            [
-                "## THÔNG TIN FREELANCER TỰ NHẬP (không phải lời khách)",
-                *own,
-                "",
-                "## KHÁCH HÀNG NÓI GÌ",
-                *(said or ["- (Khách chưa cung cấp thông tin nào)"]),
-            ]
-        )
-
+        inquiry_context = await self._build_inquiry_context(deal_model, user_id)
         return await self._run_ai_qualification(deal_model, inquiry_context)

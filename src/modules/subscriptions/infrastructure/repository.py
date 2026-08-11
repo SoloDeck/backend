@@ -30,7 +30,20 @@ class SubscriptionsRepository:
         return await self.db.scalar(select(PlanModel).where(PlanModel.id == plan_id))
 
     async def get_free_plan(self):
-        return await self.db.scalar(select(PlanModel).where(PlanModel.name == "Free"))
+        """Gói miễn phí — tra theo MÃ (`slug`), không theo TÊN.
+
+        Bản cũ tra ``name == "Free"``. `auth/infrastructure/repository.py` đã sửa đúng
+        chuyện này rồi và ghi rõ lý do, nhưng bản ở đây bị bỏ sót — mà đây mới là bản
+        `expire_lapsed_subscriptions` gọi.
+
+        Hậu quả của chỗ sót: admin đổi tên gói thành "Miễn phí" qua màn quản trị là job
+        hạ gói **ngừng hoạt động trong im lặng** — `get_free_plan()` trả None, hàm gọi
+        `return 0` và không log gì. Người hết hạn gói trả phí giữ nguyên quyền lợi trả
+        phí vĩnh viễn, không ai biết cho tới lúc đối soát doanh thu.
+
+        Tên để hiển thị (đổi thoải mái), mã là khoá code.  #Huynh
+        """
+        return await self.db.scalar(select(PlanModel).where(PlanModel.slug == "free"))
 
     async def list_lapsed_subscriptions(self, *, free_plan_id: uuid.UUID, now: datetime):
         """Paid subscriptions whose current billing period has already ended.

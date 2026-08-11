@@ -1,9 +1,17 @@
 import uuid
 from datetime import datetime
 from decimal import Decimal
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, EmailStr, Field
+
+# Ràng buộc HÌNH DẠNG, khớp đúng cột `subscription_plans.price_monthly NUMERIC(10, 2)`
+# (infrastructure/database/models.py). Không có nó thì `price_monthly: -5` hay
+# `99999999999` đi thẳng xuống Postgres và nổ thành 500 trần, thay vì 422 nói được sai gì.
+#
+# Ràng buộc NGHIỆP VỤ (khoảng tiền MoMo nhận) KHÔNG nằm ở đây — nó đọc từ Settings nên
+# không đặt được vào `Field()`, và nó thuộc về tầng service. Xem `AdminService`.
+PlanPrice = Annotated[Decimal, Field(ge=0, le=Decimal("99999999.99"), decimal_places=2)]
 
 
 class AdminUpdateUserRequest(BaseModel):
@@ -15,27 +23,32 @@ class AdminUpdateUserRequest(BaseModel):
 
 
 class AdminPlanRequest(BaseModel):
-    name: str
-    slug: str
-    price_monthly: Decimal
-    currency: str = "USD"
+    name: str = Field(min_length=1, max_length=100)
+    slug: str = Field(min_length=1, max_length=50)
+    price_monthly: PlanPrice
+    # SoloDesk bán cho freelancer Việt và thu qua MoMo — MoMo chỉ thanh toán VND.
+    #
+    # Trước đây field này là `str = "USD"`: giao diện quản trị hardcode "VND" nên tạo qua
+    # UI thì không sao, nhưng tạo qua API mà quên truyền là ra một gói USD KHÔNG BAO GIỜ
+    # mua được — chết mãi tận `_to_whole_vnd`, cách chỗ gây lỗi bốn tầng.  #Huynh
+    currency: Literal["VND"] = "VND"
     can_use_ai: bool = False
     can_export_pdf: bool = False
-    max_clients: int | None = None
-    max_deals: int | None = None
-    max_ai_generations_per_month: int = 0
+    max_clients: int | None = Field(default=None, ge=0)
+    max_deals: int | None = Field(default=None, ge=0)
+    max_ai_generations_per_month: int = Field(default=0, ge=0)
 
 
 class AdminUpdatePlanRequest(BaseModel):
-    name: str | None = None
-    slug: str | None = None
-    price_monthly: Decimal | None = None
-    currency: str | None = None
+    name: str | None = Field(default=None, min_length=1, max_length=100)
+    slug: str | None = Field(default=None, min_length=1, max_length=50)
+    price_monthly: PlanPrice | None = None
+    currency: Literal["VND"] | None = None
     can_use_ai: bool | None = None
     can_export_pdf: bool | None = None
-    max_clients: int | None = None
-    max_deals: int | None = None
-    max_ai_generations_per_month: int | None = None
+    max_clients: int | None = Field(default=None, ge=0)
+    max_deals: int | None = Field(default=None, ge=0)
+    max_ai_generations_per_month: int | None = Field(default=None, ge=0)
     is_active: bool | None = None
 
 

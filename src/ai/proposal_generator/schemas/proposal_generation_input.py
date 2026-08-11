@@ -6,14 +6,19 @@ class ProposalGenerationInput(BaseModel):
 
     Chia làm HAI nhóm và KHÔNG được lẫn lộn:
 
-    * **Khách hàng nói gì** — ``client_inquiry``, ``client_budget``, ``client_timeline``.
-      Là lời khách, lấy từ Biểu mẫu tiếp nhận (bảng ``deal_intakes``).
-    * **Freelancer tự nhập** — ``project_description`` (ghi chú nội bộ),
+    * **Yêu cầu dự án đã ghi nhận** — ``client_inquiry``, ``client_budget``,
+      ``client_timeline``, ``project_description``, ``estimated_scope``. Khách gõ qua biểu
+      mẫu hay freelancer chép lại từ điện thoại/Zalo đều là YÊU CẦU, dùng để soạn báo giá.
+    * **Freelancer tự chọn trong phần mềm** — ``pricing_tier``, ``urgency``,
       ``freelancer_estimated_value`` (ô "Giá trị dự kiến" lúc tạo deal).
 
     Vì sao phải tách: "Giá trị dự kiến" là con số FREELANCER tự ước, KHÔNG phải khách
     báo. Trước đây nó được đưa vào AI dưới nhãn ``Budget`` chung chung nên model tưởng
     khách đã chốt ngân sách. Nhãn dữ liệu mập mờ thì AI giỏi mấy cũng suy sai.  #Huynh
+
+    ⚠️ ``project_description`` TỪNG bị xếp nhầm sang nhóm hai dưới nhãn "Ghi chú nội bộ".
+    Nó chính là ``deals.notes`` — ô "Nội dung yêu cầu" trên giao diện — nên khách ghi
+    "Thời gian build: 5 tháng" thì báo giá vẫn ghi "hai bên thống nhất sau".  #Huynh
     """
 
     client_name: str

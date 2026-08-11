@@ -2,7 +2,7 @@ import uuid
 from dataclasses import dataclass
 from decimal import Decimal
 
-from sqlalchemy import func, select, update
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.infrastructure.database.models import (
@@ -51,10 +51,24 @@ class DealsRepository:
             )
         )
 
-    async def get_owner_by_intake_token(self, share_token: str):
+    async def get_owner_by_public_link(self, share_token: str):
+        """Chủ trang công khai, tra bằng token chia sẻ HOẶC tên đường dẫn riêng.
+
+        Tên hàm cố ý KHÔNG gọi là "by_intake_token": bản cũ tên như vậy nên người đọc
+        chỗ gọi không có lý do gì nghi nó nhận thứ khác ngoài token — và đó chính là lý
+        do khách vào bằng `/{slug}` xem được trang, điền xong bấm Gửi thì ăn 404.
+
+        Vị từ này TRÙNG với `IntakeFormRepository.get_user_by_token`; hai chỗ phải sửa
+        cùng nhau. Không gộp thành một hàm dùng chung vì AGENTS.md cấm module này gọi
+        repository của module kia khi chưa có ADR. Test khoá:
+        `test_slug_hoat_dong_tren_ca_ba_endpoint_cong_khai`.  #Huynh
+        """
         return await self.db.scalar(
             select(UserModel).where(
-                UserModel.intake_share_token == share_token,
+                or_(
+                    UserModel.intake_share_token == share_token,
+                    UserModel.profile_slug == share_token,
+                ),
                 UserModel.status == "active",
                 UserModel.deleted_at.is_(None),
             )
@@ -422,3 +436,21 @@ class DealsRepository:
             .order_by(LeadScoreModel.generated_at.desc())
         )
         return list(rows)
+
+    async def get_latest_lead_score(self, deal_id: uuid.UUID, owner_user_id: uuid.UUID):
+        """Bản chấm mới nhất của deal, hoặc None nếu chưa chấm lần nào.
+
+        Cùng phép JOIN lọc chủ sở hữu như `list_lead_scores` — `lead_scores` không có cột
+        `owner_user_id`, lọc thiếu là ai biết id deal người khác cũng chốt được bản chấm
+        của họ.  #Huynh
+        """
+        return await self.db.scalar(
+            select(LeadScoreModel)
+            .join(DealModel, DealModel.id == LeadScoreModel.deal_id)
+            .where(
+                LeadScoreModel.deal_id == deal_id,
+                DealModel.owner_user_id == owner_user_id,
+            )
+            .order_by(LeadScoreModel.generated_at.desc())
+            .limit(1)
+        )

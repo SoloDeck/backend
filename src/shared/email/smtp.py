@@ -6,6 +6,7 @@ does not block the event loop.
 
 import asyncio
 import smtplib
+import socket
 from email.mime.image import MIMEImage
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
@@ -15,8 +16,75 @@ from functools import partial
 import structlog
 
 from src.config.settings import settings
+from src.shared.exceptions.domain import EmailDeliveryError
 
 logger = structlog.get_logger(__name__)
+
+# Câu hiện cho NGƯỜI DÙNG. Cố ý không nêu host, cổng hay tài khoản — người dùng cuối không
+# làm gì được với thông tin đó, còn kẻ dò thì có. Chi tiết thật nằm ở log.
+#
+# Điều duy nhất ba câu này phải làm cho bằng được: nói đúng việc người đọc NÊN LÀM TIẾP.
+# Câu cũ gộp tất cả thành "thử lại sau ít phút" — với lỗi `auth` thì đó là lời khuyên sai,
+# vì thử lại một nghìn lần cũng vậy.  #Huynh
+_MSG_AUTH = (
+    "Hộp thư hệ thống đang bị từ chối đăng nhập nên chưa gửi được email. "
+    "Đây là lỗi cấu hình phía chúng tôi — thử lại cũng chưa gửi được, "
+    "vui lòng báo quản trị viên."
+)
+_MSG_QUOTA = (
+    "Hộp thư hệ thống đã chạm giới hạn gửi trong ngày. Vui lòng thử lại sau vài giờ."
+)
+_MSG_CONNECT = "Không kết nối được tới máy chủ thư. Vui lòng thử lại sau ít phút."
+_MSG_UNKNOWN = "Chưa gửi được email do lỗi hệ thống thư. Vui lòng thử lại sau ít phút."
+
+# Gmail báo quá hạn mức bằng `550 5.4.5 Daily user sending limit exceeded`, nhưng gói nó
+# vào lớp ngoại lệ nào thì tuỳ bước gửi hỏng (DATA / RCPT / MAIL FROM). Nên nhận diện bằng
+# NỘI DUNG câu trả lời của máy chủ, không bằng lớp ngoại lệ.
+_QUOTA_MARKERS = (
+    "5.4.5",
+    "daily user sending limit",
+    "sending limit exceeded",
+    "quota",
+    "rate limit",
+    "too many messages",
+)
+
+
+def _server_reply_text(exc: BaseException) -> str:
+    """Gom mọi mẩu văn bản máy chủ thư trả về trong một ngoại lệ smtplib."""
+    parts = [str(exc)]
+    raw = getattr(exc, "smtp_error", None)
+    if isinstance(raw, bytes | bytearray):
+        parts.append(bytes(raw).decode("utf-8", "replace"))
+    elif raw:
+        parts.append(str(raw))
+    # SMTPRecipientsRefused gói lý do theo từng người nhận, không có `smtp_error`.
+    recipients = getattr(exc, "recipients", None)
+    if isinstance(recipients, dict):
+        parts.extend(str(value) for value in recipients.values())
+    return " ".join(parts).lower()
+
+
+def classify_send_failure(exc: BaseException) -> tuple[str, str]:
+    """Ngoại lệ thô của `smtplib` → ``(reason, câu cho người dùng)``.
+
+    THỨ TỰ Ở ĐÂY LÀ BẮT BUỘC: `smtplib.SMTPException` **kế thừa `OSError`**, nên nếu xét
+    nhánh mạng trước thì mọi lỗi SMTP — kể cả sai mật khẩu — đều bị gán nhầm thành "không
+    kết nối được", và người dùng lại nhận đúng một lời khuyên vô nghĩa.  #Huynh
+    """
+    if isinstance(exc, smtplib.SMTPAuthenticationError):
+        return "auth", _MSG_AUTH
+    if isinstance(exc, smtplib.SMTPException):
+        if any(marker in _server_reply_text(exc) for marker in _QUOTA_MARKERS):
+            return "quota", _MSG_QUOTA
+        if isinstance(exc, smtplib.SMTPConnectError | smtplib.SMTPServerDisconnected):
+            return "connect", _MSG_CONNECT
+        return "unknown", _MSG_UNKNOWN
+    # TimeoutError phủ luôn `socket.timeout` (bí danh từ Python 3.10), ConnectionRefusedError
+    # là con của OSError — đây là nhánh "chưa nói chuyện được với máy chủ thư".
+    if isinstance(exc, TimeoutError | socket.gaierror | OSError):
+        return "connect", _MSG_CONNECT
+    return "unknown", _MSG_UNKNOWN
 
 
 def _send_sync(
@@ -75,7 +143,13 @@ def _send_sync(
         msg.attach(image)
 
     smtp_cls = smtplib.SMTP_SSL if settings.smtp_tls else smtplib.SMTP
-    with smtp_cls(settings.smtp_host, settings.smtp_port) as server:
+    # `timeout` PHẢI truyền: không có nó, một máy chủ thư im lặng treo lệnh này tới timeout
+    # TCP của hệ điều hành (cỡ 2 phút) và giữ luôn một thread trong pool — trong khi trình
+    # duyệt đã bỏ cuộc từ giây thứ 15 và người dùng chỉ thấy một câu lỗi vô nghĩa.
+    # Xem `settings.smtp_timeout_seconds` để biết vì sao là 10 giây.  #Huynh
+    with smtp_cls(
+        settings.smtp_host, settings.smtp_port, timeout=settings.smtp_timeout_seconds
+    ) as server:
         if settings.smtp_starttls:
             server.ehlo()
             server.starttls()
@@ -102,6 +176,10 @@ async def send_email(
 
     `inline_images` là `{tên: bytes PNG}` để nhúng bằng `<img src="cid:tên">` — dùng cho mã
     QR chuyển khoản trong thư nhắc thanh toán.
+
+    Gửi hỏng thì ném `EmailDeliveryError` đã PHÂN LOẠI, không phải ngoại lệ thô của
+    `smtplib`. Chỗ gọi (và qua đó là màn hình) nhờ vậy nói được *vì sao* hỏng thay vì chỉ
+    "có lỗi xảy ra" — xem `classify_send_failure`.
     """
     loop = asyncio.get_event_loop()
     try:
@@ -120,5 +198,15 @@ async def send_email(
         )
         logger.info("email.sent", to=to, subject=subject, reply_to=reply_to)
     except Exception as exc:
-        logger.error("email.send_failed", to=to, subject=subject, error=str(exc))
-        raise
+        reason, message = classify_send_failure(exc)
+        # Log giữ NGUYÊN VĂN lỗi máy chủ thư trả về — đây là chỗ duy nhất còn đủ chi tiết
+        # để truy nguyên. `reason` cho phép lọc log theo nhóm mà không phải đọc từng dòng.
+        logger.error(
+            "email.send_failed",
+            to=to,
+            subject=subject,
+            reason=reason,
+            error_type=type(exc).__name__,
+            error=str(exc),
+        )
+        raise EmailDeliveryError(message, reason=reason) from exc

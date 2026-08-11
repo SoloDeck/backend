@@ -205,6 +205,17 @@ async def update_plan(
     return ApiResponse.ok(AdminPlanResponse.model_validate(plan))
 
 
+@router.delete("/plans/{plan_id}", status_code=204)
+async def delete_plan(
+    plan_id: uuid.UUID,
+    admin: AdminUser,
+    db: DBSession,
+) -> None:
+    """Xoá hẳn một gói chưa từng được dùng. Gói đã có người dùng → 409, kèm lý do và
+    hướng dẫn ngừng bán thay vì xoá."""
+    await AdminService(db=db).delete_plan(plan_id, admin_id=uuid.UUID(admin.sub))
+
+
 # ---------------------------------------------------------------------------
 # Subscriptions
 # ---------------------------------------------------------------------------

@@ -1,7 +1,7 @@
 import uuid
 from dataclasses import dataclass
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.infrastructure.database.models import (
@@ -16,9 +16,26 @@ class IntakeFormRepository:
     db: AsyncSession
 
     async def get_user_by_token(self, share_token: str):
+        """Tra freelancer bằng token chia sẻ HOẶC tên đường dẫn riêng.
+
+        Một truy vấn cho cả hai là an toàn vì hai không gian giá trị không giao nhau: token
+        do `secrets.token_urlsafe` sinh ra dài 43+ ký tự, còn slug bị chặn tối đa 32. Nhờ
+        vậy endpoint công khai nhận được slug mà không phải thêm endpoint hay tham số nào.
+
+        Vị từ này chỉ phục vụ `/profile` và `/config`. Đường GỬI form (`POST /intake/{v}`)
+        và đính kèm đi qua `DealsRepository.get_owner_by_public_link` — cùng vị từ, chép
+        sang vì AGENTS.md cấm gọi chéo repository giữa hai module. Sửa chỗ này thì phải
+        sửa cả chỗ kia; test khoá: `test_slug_hoat_dong_tren_ca_ba_endpoint_cong_khai`.
+
+        (Bản đầu của docstring này khẳng định cả ba endpoint dùng chung truy vấn ở đây —
+        sai ngay lúc viết, và khách gửi form qua slug ăn 404 suốt vì thế.)  #Huynh
+        """
         return await self.db.scalar(
             select(UserModel).where(
-                UserModel.intake_share_token == share_token,
+                or_(
+                    UserModel.intake_share_token == share_token,
+                    UserModel.profile_slug == share_token,
+                ),
                 UserModel.status == "active",
                 UserModel.deleted_at.is_(None),
             )

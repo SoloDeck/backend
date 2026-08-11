@@ -6,7 +6,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 import structlog
 
-from src.modules.deals.application.service import DealsService
+from src.ai.shared.prompt import load_prompt
+from src.modules.deals.application.service import (
+    EXCLUDED_BLOCK_HEADING,
+    SCORED_BLOCK_HEADING,
+    DealsService,
+)
 from src.modules.deals.schemas.request import DealRequest, DealStageRequest, PublicIntakeRequest
 from src.shared.exceptions.domain import (
     BusinessRuleError,
@@ -268,7 +273,7 @@ async def test_create_public_intake_creates_client_deal_and_intake() -> None:
     intake = IntakeStub(id=uuid.uuid4(), client_id=client_id)
     deal = DealStub(id=uuid.uuid4(), stage="new_lead", client_id=client_id)
     repo = AsyncMock()
-    repo.get_owner_by_intake_token.return_value = owner
+    repo.get_owner_by_public_link.return_value = owner
     repo.create_client.return_value = DealStub(id=client_id, stage="prospect")
     repo.create.return_value = deal
     repo.create_intake.return_value = intake
@@ -331,7 +336,7 @@ async def test_thu_bao_deal_moi_gui_NGAY_va_neu_so_tep_khach_khai() -> None:
     client_id = uuid.uuid4()
     deal = DealStub(id=uuid.uuid4(), stage="new_lead", client_id=client_id)
     repo = AsyncMock()
-    repo.get_owner_by_intake_token.return_value = owner
+    repo.get_owner_by_public_link.return_value = owner
     repo.create_client.return_value = DealStub(id=client_id, stage="prospect")
     repo.create.return_value = deal
     repo.create_intake.return_value = IntakeStub(id=uuid.uuid4(), client_id=client_id)
@@ -374,7 +379,7 @@ class TestPublicIntakeAttachment:
 
     async def test_token_sai_thi_khong_nhan(self) -> None:
         repo = AsyncMock()
-        repo.get_owner_by_intake_token.return_value = None
+        repo.get_owner_by_public_link.return_value = None
 
         with pytest.raises(NotFoundError):
             await self._service(repo).add_public_intake_attachment(
@@ -388,7 +393,7 @@ class TestPublicIntakeAttachment:
     async def test_phieu_khong_thuoc_chu_link_thi_khong_nhan(self) -> None:
         # Chốt quan trọng nhất: có link hợp lệ KHÔNG có nghĩa được ghi vào phiếu bất kỳ.
         repo = AsyncMock()
-        repo.get_owner_by_intake_token.return_value = OwnerStub(id=uuid.uuid4())
+        repo.get_owner_by_public_link.return_value = OwnerStub(id=uuid.uuid4())
         repo.get_intake_by_id.return_value = None
 
         with pytest.raises(NotFoundError):
@@ -404,7 +409,7 @@ class TestPublicIntakeAttachment:
         from datetime import UTC, datetime, timedelta
 
         repo = AsyncMock()
-        repo.get_owner_by_intake_token.return_value = OwnerStub(id=uuid.uuid4())
+        repo.get_owner_by_public_link.return_value = OwnerStub(id=uuid.uuid4())
         repo.get_intake_by_id.return_value = SimpleNamespace(
             deal_id=uuid.uuid4(),
             submitted_at=datetime.now(UTC) - timedelta(hours=2),
@@ -426,7 +431,7 @@ class TestPublicIntakeAttachment:
         from datetime import UTC, datetime
 
         repo = AsyncMock()
-        repo.get_owner_by_intake_token.return_value = OwnerStub(id=uuid.uuid4())
+        repo.get_owner_by_public_link.return_value = OwnerStub(id=uuid.uuid4())
         repo.get_intake_by_id.return_value = SimpleNamespace(
             deal_id=uuid.uuid4(), submitted_at=datetime.now(UTC), created_at=None
         )
@@ -453,7 +458,7 @@ class TestPublicIntakeAttachment:
         from datetime import UTC, datetime
 
         repo = AsyncMock()
-        repo.get_owner_by_intake_token.return_value = owner
+        repo.get_owner_by_public_link.return_value = owner
         repo.get_intake_by_id.return_value = SimpleNamespace(
             deal_id=deal_id, submitted_at=datetime.now(UTC), created_at=None
         )
@@ -483,7 +488,7 @@ class TestPublicIntakeAttachment:
 
 async def test_create_public_intake_rejects_unknown_token() -> None:
     repo = AsyncMock()
-    repo.get_owner_by_intake_token.return_value = None
+    repo.get_owner_by_public_link.return_value = None
     service = DealsService(db=AsyncMock(), repo=repo, usage=AsyncMock())
 
     with pytest.raises(NotFoundError):
@@ -577,16 +582,38 @@ class DealModelStub:
     deleted_at: object | None = None
 
 
-def _make_qualify_service(ai_result: dict):
+@dataclass
+class AttachmentStub:
+    """File khách gửi kèm ĐÃ bóc được chữ — chỉ loại này mới đưa cho AI đọc."""
+
+    filename: str
+    extracted_text: str | None
+
+
+def _make_qualify_service(
+    ai_result: dict,
+    *,
+    # Giữ NGUYÊN mặc định cũ để 8 chỗ gọi sẵn có không đổi hành vi.
+    intake_text: str | None = "I need a website built.",
+    attachments: list | None = None,
+    **deal_fields,
+):
     client_id = uuid.uuid4()
     deal_id = uuid.uuid4()
     owner_id = uuid.uuid4()
-    intake = IntakeStub(id=uuid.uuid4(), client_id=client_id)
-    deal_model = DealModelStub(id=deal_id, owner_user_id=owner_id, client_id=client_id)
+    intake = IntakeStub(id=uuid.uuid4(), client_id=client_id, inquiry_text=intake_text)
+    deal_model = DealModelStub(
+        id=deal_id, owner_user_id=owner_id, client_id=client_id, **deal_fields
+    )
 
     repo = AsyncMock()
     repo.get_by_id.return_value = deal_model
+    # Service tra phiếu theo DEAL (`get_intake_for_deal`), không theo client. Chỉ mock
+    # `get_intake_by_client_id` thì `intake` chỉ là MagicMock tự sinh, và mọi assert về nội
+    # dung prompt đều vô nghĩa vì f-string in ra "<MagicMock id=...>".  #Huynh
+    repo.get_intake_for_deal.return_value = intake
     repo.get_intake_by_client_id.return_value = intake
+    repo.list_attachments_with_text.return_value = attachments or []
     repo.create_lead_score.return_value = None
     repo.save.return_value = deal_model
 
@@ -719,3 +746,178 @@ async def test_qualify_deal_incomplete_ai_output_logs_missing_keys() -> None:
     assert warnings[0]["log_level"] == "warning"
     assert warnings[0]["deal_id"] == str(deal_model.id)
     assert warnings[0]["missing_keys"] == ["detected_signals", "price_range_min"]
+
+
+# ---------------------------------------------------------------------------
+# qualify_deal — ngữ cảnh gửi cho AI (thuần chuỗi, KHÔNG gọi LLM)
+# ---------------------------------------------------------------------------
+
+
+class TestInquiryContext:
+    """Dán chữ vào ô "Nội dung yêu cầu" phải nằm CÙNG khối với brief khách gửi kèm.
+
+    Bug thật, đo trên bản đang chạy: cùng một bản brief, gửi bằng file PDF thì chấm ngon,
+    copy dán vào ô "Nội dung yêu cầu" thì chấm 12/100 — budget 0 dù có "Ngân sách: 700
+    triệu", timeline 0 dù có "Thời gian build: 5 tháng". Chữ KHÔNG mất (deals.notes có 306
+    ký tự trong DB), nó chỉ bị dán nhãn "Ghi chú nội bộ" dưới tiêu đề "không phải lời khách"
+    — mà prompt ra luật không chấm khối đó.
+
+    Trước đây KHÔNG có test nào chạm vào `inquiry_context`, nên một lỗi dán nhãn đi thẳng ra
+    sản phẩm mà không ai chặn được.  #Huynh
+    """
+
+    @staticmethod
+    async def _context(*, intake_text=None, attachments=None, **deal_fields) -> str:
+        service, _, deal_model = _make_qualify_service(
+            _AI_RESULT, intake_text=intake_text, attachments=attachments, **deal_fields
+        )
+        return await service._build_inquiry_context(deal_model, deal_model.owner_user_id)
+
+    async def test_noi_dung_yeu_cau_nam_trong_khoi_cham_diem(self) -> None:
+        ctx = await self._context(notes="Ngân sách: 700 triệu. Thời gian build: 5 tháng.")
+
+        assert ctx.startswith(SCORED_BLOCK_HEADING)
+        scored = ctx.partition(EXCLUDED_BLOCK_HEADING)[0]
+        assert "- Nội dung yêu cầu: Ngân sách: 700 triệu. Thời gian build: 5 tháng." in scored
+
+    async def test_khong_con_dan_nhan_ghi_chu_noi_bo(self) -> None:
+        """Đúng hai chuỗi này làm AI bỏ qua chữ người dùng dán vào — cấm chúng quay lại."""
+        ctx = await self._context(
+            notes="5 hạng mục: đăng nhập, giỏ hàng, thanh toán, CMS, báo cáo"
+        )
+
+        assert "Ghi chú nội bộ" not in ctx
+        assert "FREELANCER TỰ NHẬP" not in ctx
+        assert "5 hạng mục" in ctx
+
+    async def test_dan_chu_va_gui_file_ra_cung_mot_khoi(self) -> None:
+        """Yêu cầu của người dùng: thích dùng đường nào cũng được, điểm phải như nhau."""
+        brief = "Ngân sách: 700 triệu. Thời gian build: 5 tháng. Hạng mục: A, B, C, D, E."
+
+        dan = await self._context(notes=brief)
+        gui_file = await self._context(
+            attachments=[AttachmentStub(filename="brief.pdf", extracted_text=brief)]
+        )
+
+        for ctx in (dan, gui_file):
+            assert brief in ctx.partition(EXCLUDED_BLOCK_HEADING)[0]
+            assert ctx.index(SCORED_BLOCK_HEADING) < ctx.index(brief)
+
+    async def test_gia_tri_du_kien_chi_nam_trong_khoi_cam(self) -> None:
+        """Hồi quy bug GỐC: "Estimated value: 200000 VND" từng bị chấm 20/25 ngân sách."""
+        ctx = await self._context(notes="Khách chưa nói gì về tiền.", estimated_value=200000)
+
+        scored, sep, excluded = ctx.partition(EXCLUDED_BLOCK_HEADING)
+        assert sep == EXCLUDED_BLOCK_HEADING
+        assert "200000" not in scored
+        assert "Giá trị dự kiến" not in scored
+        assert "200000" in excluded
+
+    async def test_khong_co_gia_tri_du_kien_thi_khong_in_khoi_cam(self) -> None:
+        """Tiêu đề rỗng chỉ tổ mời model đi tìm xem "khối kia" nằm ở đâu."""
+        ctx = await self._context(notes="Làm web bán hàng")
+
+        assert EXCLUDED_BLOCK_HEADING not in ctx
+
+    async def test_nguon_deal_van_o_khoi_cham_diem(self) -> None:
+        """Tiêu chí `context` cho điểm "kênh khách đến" — đẩy `source` sang khối cấm là tự trừ."""
+        ctx = await self._context(source="referral", estimated_value=200000)
+
+        assert "- Nguồn deal: referral" in ctx.partition(EXCLUDED_BLOCK_HEADING)[0]
+
+    async def test_chi_co_ten_du_an_thi_khoi_cham_diem_chi_mot_dong(self) -> None:
+        """Luật "chỉ có tên dự án -> scope tối đa 12" phải còn nhận ra được tình huống đó."""
+        ctx = await self._context()
+
+        assert ctx.splitlines() == [SCORED_BLOCK_HEADING, "- Tên dự án: Test Deal"]
+
+    async def test_chuoi_ghep_duoc_truyen_thang_xuong_ai(self) -> None:
+        """Khoá luôn phần đấu dây: dựng đúng mà gọi sai tham số thì cũng vô nghĩa."""
+        service, _, deal_model = _make_qualify_service(
+            _AI_RESULT, intake_text=None, notes="Ngân sách: 700 triệu"
+        )
+
+        await service.qualify_deal(deal_model.owner_user_id, deal_model.id)
+
+        sent = service.ai_facade.qualify_lead.await_args.kwargs["inquiry_text"]
+        assert sent.startswith(SCORED_BLOCK_HEADING)
+        assert "Ngân sách: 700 triệu" in sent
+
+    async def test_tieu_de_khoi_khop_voi_prompt(self) -> None:
+        """Mã nguồn và prompt phải gọi hai khối bằng ĐÚNG một tên.
+
+        Đây là chỗ duy nhất phát hiện được việc sửa tiêu đề ở một phía: AI không báo lỗi khi
+        luật trỏ vào một khối không tồn tại, nó chỉ lặng lẽ chấm sai.  #Huynh
+        """
+        prompt = load_prompt("lead_qualifier")
+
+        assert SCORED_BLOCK_HEADING in prompt
+        assert EXCLUDED_BLOCK_HEADING in prompt
+
+
+# ---------------------------------------------------------------------------
+# save_latest_qualification — bản đánh giá ĐÃ CHỐT (tab "Tài liệu")
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class LeadScoreStub:
+    id: uuid.UUID
+    score: int = 100
+    saved_at: object | None = None
+
+
+class TestSaveLatestQualification:
+    """Tab "Lịch sử" kể MỌI lần chấm; tab "Tài liệu" chỉ kể bản đã bấm "Lưu".
+
+    Trước đây hai thứ đó không phân biệt được: mỗi lần chấm ghi một dòng `lead_scores` giống
+    hệt nhau, còn nút Lưu chỉ đổi giai đoạn deal. Nên giao diện báo "đã lưu vào tab Tài liệu"
+    mà sang đó chẳng thấy gì — người dùng tưởng mất kết quả.  #Huynh
+    """
+
+    @staticmethod
+    def _service(latest, deal=None):  # type: ignore[no-untyped-def]
+        repo = AsyncMock()
+        repo.get_by_id.return_value = deal or DealStub(id=uuid.uuid4(), stage="new_lead")
+        repo.get_latest_lead_score.return_value = latest
+        repo.save.side_effect = lambda o: o
+        return DealsService(db=AsyncMock(), repo=repo, usage=AsyncMock()), repo
+
+    async def test_dong_dau_saved_at_len_ban_moi_nhat(self) -> None:
+        row = LeadScoreStub(id=uuid.uuid4())
+        service, _ = self._service(row)
+
+        result = await service.save_latest_qualification(uuid.uuid4(), uuid.uuid4())
+
+        assert result.saved_at is not None, "chưa đóng dấu thì tab Tài liệu không thấy gì"
+        assert result is row
+
+    async def test_chua_cham_lan_nao_thi_404(self) -> None:
+        """Không có gì để chốt — nói thẳng, đừng lặng lẽ tạo một bản rỗng."""
+        service, _ = self._service(None)
+
+        with pytest.raises(NotFoundError):
+            await service.save_latest_qualification(uuid.uuid4(), uuid.uuid4())
+
+    async def test_deal_khong_phai_cua_minh_thi_404_truoc_khi_doc_ban_cham(self) -> None:
+        """Chốt chặn quyền sở hữu phải chạy TRƯỚC, không thì biết id deal là chốt được hộ."""
+        repo = AsyncMock()
+        repo.get_by_id.return_value = None
+        service = DealsService(db=AsyncMock(), repo=repo, usage=AsyncMock())
+
+        with pytest.raises(NotFoundError):
+            await service.save_latest_qualification(uuid.uuid4(), uuid.uuid4())
+
+        repo.get_latest_lead_score.assert_not_awaited()
+
+    async def test_luu_lai_lan_nua_khong_xoa_dau_cua_ban_cu(self) -> None:
+        """Chấm lại rồi chốt lại là có HAI bản đã chốt thật, giống báo giá nhiều phiên bản."""
+        cu = LeadScoreStub(id=uuid.uuid4(), saved_at="2026-08-01T00:00:00Z")
+        moi = LeadScoreStub(id=uuid.uuid4())
+        service, repo = self._service(moi)
+
+        await service.save_latest_qualification(uuid.uuid4(), uuid.uuid4())
+
+        assert cu.saved_at == "2026-08-01T00:00:00Z", "dấu chốt cũ phải còn nguyên"
+        assert moi.saved_at is not None
+        assert repo.save.await_count == 1, "chỉ ghi ĐÚNG bản vừa chốt"
