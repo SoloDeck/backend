@@ -27,12 +27,18 @@ def upgrade() -> None:
         ),
     )
 
+    # Backfill every provider, not just groq: a live configuration may already have been
+    # switched to gemini/ollama, and such a row left NULL breaks the ALTER ... NOT NULL
+    # below at migrate time — CI cannot catch it because the table is empty there.
     op.execute(
         """
         UPDATE ai_provider_configuration
-        SET llm_model = 'llama-3.3-70b-versatile'
-        WHERE llm_provider = 'groq'
-          AND llm_model IS NULL
+        SET llm_model = CASE llm_provider
+            WHEN 'gemini' THEN 'gemini-2.5-flash'
+            WHEN 'ollama' THEN 'qwen3:4b'
+            ELSE 'llama-3.3-70b-versatile'
+        END
+        WHERE llm_model IS NULL
         """
     )
 

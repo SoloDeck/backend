@@ -3,6 +3,7 @@
 import uuid
 from datetime import UTC, datetime, timedelta
 
+import pytest
 from httpx import AsyncClient
 from sqlalchemy import insert, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -1867,4 +1868,150 @@ class TestAdminPlatformMetrics:
 
     async def test_unauthenticated_returns_401(self, client: AsyncClient) -> None:
         resp = await client.get("/api/v1/admin/platform-metrics")
+        assert resp.status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# GET / PATCH /admin/ai-provider
+# ---------------------------------------------------------------------------
+
+
+class TestGetAiProviderEndpoint:
+    async def test_returns_provider_and_model(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        headers = await _admin_headers(client, db_session)
+        resp = await client.get("/api/v1/admin/ai-provider", headers=headers)
+
+        assert resp.status_code == 200, resp.text
+        data = resp.json()["data"]
+        assert data["llm_provider"]
+        assert data["llm_model"]
+
+    async def test_non_admin_returns_403(self, client: AsyncClient) -> None:
+        headers = await _user_headers(client)
+        resp = await client.get("/api/v1/admin/ai-provider", headers=headers)
+        assert resp.status_code == 403
+
+    async def test_unauthenticated_returns_401(self, client: AsyncClient) -> None:
+        resp = await client.get("/api/v1/admin/ai-provider")
+        assert resp.status_code == 401
+
+
+class TestUpdateAiProviderEndpoint:
+    @pytest.mark.parametrize(
+        ("provider", "model"),
+        [
+            ("groq", "llama-3.3-70b-versatile"),
+            ("groq", "llama-3.1-8b-instant"),
+            ("gemini", "gemini-2.5-flash"),
+            ("gemini", "gemini-3.5-flash-lite"),
+            ("ollama", "qwen3:4b"),
+        ],
+    )
+    async def test_switching_to_each_supported_pair_persists(
+        self, client: AsyncClient, db_session: AsyncSession, provider: str, model: str
+    ) -> None:
+        """Every supported pair can be selected, and reads back as what was just set.
+
+        `ollama` used to be blocked by the request schema's `Literal`, making it
+        unselectable even though every layer underneath supported it — this case
+        keeps that regression from coming back.
+        """
+        headers = await _admin_headers(client, db_session)
+
+        resp = await client.patch(
+            "/api/v1/admin/ai-provider",
+            json={"llm_provider": provider, "llm_model": model},
+            headers=headers,
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["data"] == {"llm_provider": provider, "llm_model": model}
+
+        again = await client.get("/api/v1/admin/ai-provider", headers=headers)
+        assert again.json()["data"] == {"llm_provider": provider, "llm_model": model}
+
+    @pytest.mark.parametrize(
+        ("provider", "model"),
+        [
+            ("groq", "gemini-2.5-flash"),
+            ("gemini", "llama-3.3-70b-versatile"),
+            ("ollama", "gemini-2.5-flash"),
+        ],
+    )
+    async def test_model_from_another_provider_returns_422(
+        self, client: AsyncClient, db_session: AsyncSession, provider: str, model: str
+    ) -> None:
+        headers = await _admin_headers(client, db_session)
+        resp = await client.patch(
+            "/api/v1/admin/ai-provider",
+            json={"llm_provider": provider, "llm_model": model},
+            headers=headers,
+        )
+        assert resp.status_code == 422, resp.text
+
+    @pytest.mark.parametrize("provider", ["openai", "anthropic", "GROQ"])
+    async def test_unsupported_provider_returns_422(
+        self, client: AsyncClient, db_session: AsyncSession, provider: str
+    ) -> None:
+        headers = await _admin_headers(client, db_session)
+        resp = await client.patch(
+            "/api/v1/admin/ai-provider",
+            json={"llm_provider": provider, "llm_model": "llama-3.3-70b-versatile"},
+            headers=headers,
+        )
+        assert resp.status_code == 422, resp.text
+
+    async def test_unknown_model_returns_422(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        headers = await _admin_headers(client, db_session)
+        resp = await client.patch(
+            "/api/v1/admin/ai-provider",
+            json={"llm_provider": "groq", "llm_model": "not-a-real-model"},
+            headers=headers,
+        )
+        assert resp.status_code == 422, resp.text
+
+    async def test_missing_llm_model_returns_422(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        headers = await _admin_headers(client, db_session)
+        resp = await client.patch(
+            "/api/v1/admin/ai-provider",
+            json={"llm_provider": "groq"},
+            headers=headers,
+        )
+        assert resp.status_code == 422, resp.text
+
+    async def test_writes_an_audit_log(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        headers = await _admin_headers(client, db_session)
+        await client.patch(
+            "/api/v1/admin/ai-provider",
+            json={"llm_provider": "gemini", "llm_model": "gemini-2.5-flash"},
+            headers=headers,
+        )
+
+        logs = await client.get("/api/v1/admin/audit-logs", headers=headers)
+        entries = logs.json()["data"]["data"]
+        updated = [e for e in entries if e["event_type"] == "ai_provider.updated"]
+        assert updated, entries
+        assert "gemini/gemini-2.5-flash" in updated[0]["description"]
+
+    async def test_non_admin_returns_403(self, client: AsyncClient) -> None:
+        headers = await _user_headers(client)
+        resp = await client.patch(
+            "/api/v1/admin/ai-provider",
+            json={"llm_provider": "groq", "llm_model": "llama-3.3-70b-versatile"},
+            headers=headers,
+        )
+        assert resp.status_code == 403
+
+    async def test_unauthenticated_returns_401(self, client: AsyncClient) -> None:
+        resp = await client.patch(
+            "/api/v1/admin/ai-provider",
+            json={"llm_provider": "groq", "llm_model": "llama-3.3-70b-versatile"},
+        )
         assert resp.status_code == 401

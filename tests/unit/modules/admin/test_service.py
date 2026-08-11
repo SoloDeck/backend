@@ -894,3 +894,142 @@ async def test_get_platform_metrics_returns_repo_result() -> None:
     service = AdminService(db=AsyncMock(), repo=repo)
 
     assert await service.get_platform_metrics() == metrics
+
+
+# ---------------------------------------------------------------------------
+# AI provider configuration
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class AIProviderConfigStub:
+    id: uuid.UUID = field(default_factory=uuid.uuid4)
+    llm_provider: str = "groq"
+    llm_model: str = "llama-3.3-70b-versatile"
+    updated_by: uuid.UUID | None = None
+
+
+def _ai_repo(configuration: AIProviderConfigStub | None) -> AsyncMock:
+    repo = _repo(get_ai_provider_configuration=configuration)
+    repo.update_ai_provider_configuration.side_effect = lambda obj: obj
+    return repo
+
+
+class TestGetAiProviderConfiguration:
+    async def test_returns_configuration(self) -> None:
+        configuration = AIProviderConfigStub()
+        service = AdminService(db=AsyncMock(), repo=_ai_repo(configuration))
+
+        assert await service.get_ai_provider_configuration() is configuration
+
+    async def test_missing_configuration_raises(self) -> None:
+        service = AdminService(db=AsyncMock(), repo=_ai_repo(None))
+
+        with pytest.raises(NotFoundError):
+            await service.get_ai_provider_configuration()
+
+
+class TestUpdateAiProviderConfiguration:
+    @pytest.mark.parametrize(
+        ("provider", "model"),
+        [
+            ("groq", "llama-3.3-70b-versatile"),
+            ("groq", "llama-3.1-8b-instant"),
+            ("gemini", "gemini-2.5-flash"),
+            ("gemini", "gemini-3.5-flash-lite"),
+            ("ollama", "qwen3:4b"),
+        ],
+    )
+    async def test_every_supported_pair_is_accepted(self, provider: str, model: str) -> None:
+        """Every pair in SUPPORTED_LLM_MODELS must be accepted — ollama included."""
+        configuration = AIProviderConfigStub()
+        repo = _ai_repo(configuration)
+        admin_id = uuid.uuid4()
+        service = AdminService(db=AsyncMock(), repo=repo)
+
+        result = await service.update_ai_provider_configuration(
+            llm_provider=provider, llm_model=model, admin_id=admin_id
+        )
+
+        assert result.llm_provider == provider
+        assert result.llm_model == model
+        assert result.updated_by == admin_id
+        repo.create_audit_log.assert_awaited_once()
+
+    async def test_audit_log_records_provider_and_model(self) -> None:
+        repo = _ai_repo(AIProviderConfigStub())
+        service = AdminService(db=AsyncMock(), repo=repo)
+
+        await service.update_ai_provider_configuration(
+            llm_provider="gemini", llm_model="gemini-2.5-flash", admin_id=uuid.uuid4()
+        )
+
+        kwargs = repo.create_audit_log.await_args.kwargs
+        assert kwargs["event_type"] == "ai_provider.updated"
+        assert "gemini/gemini-2.5-flash" in kwargs["description"]
+
+    async def test_unsupported_provider_raises(self) -> None:
+        repo = _ai_repo(AIProviderConfigStub())
+        service = AdminService(db=AsyncMock(), repo=repo)
+
+        with pytest.raises(ValidationError):
+            await service.update_ai_provider_configuration(
+                llm_provider="openai", llm_model="gpt-4o", admin_id=uuid.uuid4()
+            )
+
+        repo.update_ai_provider_configuration.assert_not_awaited()
+        repo.create_audit_log.assert_not_awaited()
+
+    @pytest.mark.parametrize(
+        ("provider", "model"),
+        [
+            ("groq", "gemini-2.5-flash"),
+            ("gemini", "llama-3.3-70b-versatile"),
+            ("ollama", "gemini-2.5-flash"),
+        ],
+    )
+    async def test_model_belonging_to_another_provider_raises(
+        self, provider: str, model: str
+    ) -> None:
+        repo = _ai_repo(AIProviderConfigStub())
+        service = AdminService(db=AsyncMock(), repo=repo)
+
+        with pytest.raises(ValidationError):
+            await service.update_ai_provider_configuration(
+                llm_provider=provider, llm_model=model, admin_id=uuid.uuid4()
+            )
+
+        repo.update_ai_provider_configuration.assert_not_awaited()
+
+    async def test_unknown_model_raises(self) -> None:
+        repo = _ai_repo(AIProviderConfigStub())
+        service = AdminService(db=AsyncMock(), repo=repo)
+
+        with pytest.raises(ValidationError):
+            await service.update_ai_provider_configuration(
+                llm_provider="groq", llm_model="not-a-real-model", admin_id=uuid.uuid4()
+            )
+
+    async def test_provider_and_model_are_normalised(self) -> None:
+        """The service lowercases the provider and strips padding off the model."""
+        configuration = AIProviderConfigStub()
+        service = AdminService(db=AsyncMock(), repo=_ai_repo(configuration))
+
+        result = await service.update_ai_provider_configuration(
+            llm_provider="  GROQ  ".strip(),
+            llm_model="  llama-3.1-8b-instant  ",
+            admin_id=uuid.uuid4(),
+        )
+
+        assert result.llm_provider == "groq"
+        assert result.llm_model == "llama-3.1-8b-instant"
+
+    async def test_missing_configuration_raises(self) -> None:
+        service = AdminService(db=AsyncMock(), repo=_ai_repo(None))
+
+        with pytest.raises(NotFoundError):
+            await service.update_ai_provider_configuration(
+                llm_provider="groq",
+                llm_model="llama-3.3-70b-versatile",
+                admin_id=uuid.uuid4(),
+            )

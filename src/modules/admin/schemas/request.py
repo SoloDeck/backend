@@ -84,9 +84,12 @@ class AdminUpdateFeatureFlagRequest(BaseModel):
 
 
 class AdminUpdateLLMProviderRequest(BaseModel):
+    # This list MUST stay in sync with `SUPPORTED_LLM_PROVIDERS`: it rejects the request
+    # before the service ever runs, so a provider missing here is unselectable even when
+    # every layer underneath already supports it.
     llm_provider: Literal[
         "groq",
         "gemini",
-        "openai",
+        "ollama",
     ]
     llm_model: str
