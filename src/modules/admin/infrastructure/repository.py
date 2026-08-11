@@ -18,6 +18,7 @@ from src.infrastructure.database.models import (
     PlanModel,
     RefreshTokenModel,
     SubscriptionModel,
+    SubscriptionPaymentModel,
     SystemTemplateModel,
     TokenBlacklistModel,
     UserModel,
@@ -193,6 +194,29 @@ class AdminRepository:
         await self.db.flush()
         await self.db.refresh(plan)
         return plan
+
+    async def count_plan_usage(self, plan_id: uuid.UUID) -> tuple[int, int]:
+        """(số người đang đăng ký gói, số giao dịch từng trỏ tới gói).
+
+        Đếm CẢ HAI vì chúng trả lời hai câu khác nhau: người đăng ký là quyền lợi đang
+        chạy, còn giao dịch là lịch sử tiền nong. Gói không còn ai dùng nhưng từng có
+        người trả tiền thì vẫn không được xoá — xoá là hoá đơn cũ mất chỗ trỏ về.
+        """
+        subscribers = await self.db.scalar(
+            select(func.count())
+            .select_from(SubscriptionModel)
+            .where(SubscriptionModel.plan_id == plan_id)
+        )
+        payments = await self.db.scalar(
+            select(func.count())
+            .select_from(SubscriptionPaymentModel)
+            .where(SubscriptionPaymentModel.plan_id == plan_id)
+        )
+        return int(subscribers or 0), int(payments or 0)
+
+    async def delete_plan(self, plan) -> None:
+        await self.db.delete(plan)
+        await self.db.flush()
 
     # -------------------------------------------------------------------------
     # Subscriptions

@@ -11,12 +11,14 @@ MoMo's raw-signature string format) via `_MomoSignedClient`.
 
 import hashlib
 import hmac
+import re
 import time
 import uuid
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
 import httpx
+import structlog
 
 from src.modules.subscriptions.application.payment_gateway import (
     CallbackResult,
@@ -24,12 +26,76 @@ from src.modules.subscriptions.application.payment_gateway import (
 )
 from src.shared.exceptions.domain import DomainError
 
+log = structlog.get_logger(__name__)
+
+# Hạn mức MoMo công bố cho MỘT giao dịch:
+# https://developers.momo.vn/v3/docs/payment/api/wallet/onetime/
+# Đây là BẢN SAO mặc định, phục vụ `MockMomoClient` (không đi qua DI) và test dựng
+# `MomoClient` trực tiếp. Đường chạy thật lấy số từ Settings — xem
+# `shared/dependencies/payments.py`. Hai chỗ phải khớp nhau.
+MOMO_MIN_AMOUNT_VND = 1_000
+MOMO_MAX_AMOUNT_VND = 50_000_000
+
+# MoMo giới hạn `orderInfo` 255 ký tự.
+_ORDER_INFO_MAX_LENGTH = 255
+
+# Hai ký tự phân tách của chuỗi ký — xem `_safe_order_info`.
+_ORDER_INFO_UNSAFE = re.compile(r"[&=]")
+
 
 class PaymentGatewayError(DomainError):
     """The provider rejected the request or could not be reached."""
 
     def __init__(self, message: str = "Payment provider request failed") -> None:
         super().__init__(message)
+
+
+def _vnd(amount: Decimal | int) -> str:
+    """Số tiền theo lối Việt: ``50000000`` → ``"50.000.000"``.
+
+    Chuỗi này đi thẳng ra toast đỏ trước mặt người dùng, nên định dạng theo lối Việt
+    chứ không để nguyên dấu phẩy kiểu Anh.
+    """
+    return f"{int(amount):,}".replace(",", ".")
+
+
+def _read_momo_payload(response: httpx.Response) -> dict[str, Any]:
+    """Thân JSON của MoMo — đọc CẢ KHI mã HTTP là 4xx/5xx.
+
+    Bản trước gọi ``raise_for_status()`` ngay trước ``response.json()``, nên với một 400
+    thì thân phản hồi — đúng chỗ MoMo ghi ``resultCode`` và ``message`` nói CHÍNH XÁC nó
+    chê gì — bị vứt đi không đọc lấy một lần. Thứ còn lại cho người dùng là
+    ``"Client error '400 ' for url ..."``: một câu vừa không nói được nguyên nhân, vừa
+    chỉ SAI hướng (nghe như hỏng mạng, trong khi mạng hoàn toàn bình thường).
+
+    MoMo có thể trả HTML thay vì JSON khi đi qua proxy/WAF. Không đọc được thì trả dict
+    rỗng để phía gọi lùi về báo theo mã HTTP, chứ đừng ném thêm một lỗi thứ hai đè lên
+    lỗi đang cần chẩn đoán.  #Huynh
+    """
+    try:
+        payload = response.json()
+    except ValueError:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _momo_rejection_message(response: httpx.Response, data: dict[str, Any]) -> str:
+    """Câu báo cho người dùng khi MoMo TỪ CHỐI — khác hẳn với khi không gọi tới được.
+
+    Ưu tiên nguyên văn ``message`` của MoMo: request gửi kèm ``lang=vi`` nên câu đó vốn
+    đã là tiếng Việt, và nó chính xác hơn mọi câu đoán hộ. Kèm ``resultCode`` để còn tra
+    được tài liệu.
+    """
+    detail = str(data.get("message") or "").strip()
+    result_code = data.get("resultCode")
+    if detail and result_code is not None:
+        return f"MoMo từ chối yêu cầu thanh toán: {detail} (mã {result_code})."
+    if detail:
+        return f"MoMo từ chối yêu cầu thanh toán: {detail}."
+    return (
+        f"MoMo từ chối yêu cầu thanh toán (HTTP {response.status_code}) và không kèm lý "
+        f"do đọc được. Bạn thử lại sau ít phút giúp mình nhé."
+    )
 
 
 def _is_success_code(result_code: Any) -> bool:
@@ -74,22 +140,60 @@ class _MomoSignedClient:
     partner_code: str
     access_key: str
     secret_key: str
+    # Ghi ở lớp cha để `MockMomoClient` (không có `__init__`) dùng chung; `MomoClient`
+    # nhận số từ Settings và ghi đè ở cấp instance.
+    min_amount: int = MOMO_MIN_AMOUNT_VND
+    max_amount: int = MOMO_MAX_AMOUNT_VND
 
     def _sign(self, raw_signature: str) -> str:
         return hmac.new(
             self.secret_key.encode(), raw_signature.encode(), hashlib.sha256
         ).hexdigest()
 
-    @staticmethod
-    def _to_whole_vnd(amount: Decimal, currency: str) -> int:
-        """MoMo's AIOv2 API only accepts whole-number VND amounts — no other
-        currency, no decimal subunits. Reject anything `int()` would otherwise
-        silently truncate or mischarge rather than assuming VND."""
+    def _to_whole_vnd(self, amount: Decimal, currency: str) -> int:
+        """MoMo chỉ nhận VND, số nguyên, VÀ nằm trong hạn mức nó công bố.
+
+        Hai kiểm tra đầu có sẵn: chúng chặn thứ mà ``int()`` sẽ âm thầm cắt cụt hoặc thu
+        sai. Kiểm tra hạn mức là phần mới, và nó là **chốt chặn cuối trước khi rời tiến
+        trình**: `AdminService` đã chặn giá gói ngay lúc ghi, nhưng DB đang chạy CÓ SẴN
+        những gói tạo trước bản vá này. Một gói 200đ trong dữ liệu cũ phải chết ở ĐÂY,
+        với câu nói rõ nó sai gì — chứ không được bắn lên MoMo để nhận về một cái HTTP
+        400 trần rồi hiện ra trước mặt người dùng thành lỗi mạng.  #Huynh
+        """
         if currency != "VND":
-            raise PaymentGatewayError(f"MoMo only supports VND, got '{currency}'")
+            raise PaymentGatewayError(
+                f"MoMo chỉ thanh toán được bằng VND, gói này đang để '{currency}'. "
+                f"Bạn liên hệ quản trị viên để chỉnh lại gói giúp mình nhé."
+            )
         if amount != amount.to_integral_value():
-            raise PaymentGatewayError(f"MoMo requires a whole-number amount, got {amount}")
-        return int(amount)
+            raise PaymentGatewayError(
+                f"MoMo chỉ nhận số tiền chẵn (không có phần lẻ), gói này là {amount}."
+            )
+        value = int(amount)
+        if not self.min_amount <= value <= self.max_amount:
+            raise PaymentGatewayError(
+                f"MoMo chỉ nhận số tiền từ {_vnd(self.min_amount)}đ đến "
+                f"{_vnd(self.max_amount)}đ cho một giao dịch — gói này đang để "
+                f"{_vnd(value)}đ nên không thanh toán được. Bạn liên hệ quản trị viên "
+                f"để chỉnh lại giá gói giúp mình nhé."
+            )
+        return value
+
+    @staticmethod
+    def _safe_order_info(order_info: str) -> str:
+        """``orderInfo`` đã an toàn để nội suy vào chuỗi ký.
+
+        Chuỗi ký của MoMo có dạng ``accessKey=...&amount=...&orderInfo=<đây>&partnerCode=...``.
+        Tên gói chứa ``&`` hoặc ``=`` (gói "A & B", "x=y") chèn thêm cặp khoá/giá trị giả
+        vào giữa chuỗi đó. Hai phía vẫn nội suy cùng một chuỗi nên chữ ký chưa chắc lệch,
+        nhưng MoMo khuyến nghị tránh ký tự đặc biệt trong ``orderInfo`` và ta không kiểm
+        soát được phía họ chuẩn hoá thế nào — mà triệu chứng nếu vỡ thì lại y hệt sự cố
+        đang vá: HTTP 400 trần, không nói được vì sao.
+
+        Thay bằng khoảng trắng chứ không xoá, để tên gói còn đọc được trên app MoMo.  #Huynh
+        """
+        cleaned = _ORDER_INFO_UNSAFE.sub(" ", order_info).strip()
+        return (cleaned or "SoloDesk plan upgrade")[:_ORDER_INFO_MAX_LENGTH]
 
     def _resolve_redirect_url(
         self, redirect_url: str | None, default: str | None, notify_url: str
@@ -193,6 +297,8 @@ class MomoClient(_MomoSignedClient):
         lang: str,
         redirect_url: str,
         timeout_seconds: float,
+        min_amount: int = MOMO_MIN_AMOUNT_VND,
+        max_amount: int = MOMO_MAX_AMOUNT_VND,
         transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
         self.partner_code = partner_code
@@ -205,6 +311,8 @@ class MomoClient(_MomoSignedClient):
         self.lang = lang
         self.redirect_url = redirect_url
         self.timeout_seconds = timeout_seconds
+        self.min_amount = min_amount
+        self.max_amount = max_amount
         # Test-only seam for injecting an `httpx.MockTransport` — None means
         # "use httpx's real network transport" (production behavior).
         self._transport = transport
@@ -221,6 +329,7 @@ class MomoClient(_MomoSignedClient):
     ) -> CreatePaymentResult:
         request_id = str(uuid.uuid4())
         amount_int = self._to_whole_vnd(amount, currency)
+        order_info = self._safe_order_info(order_info)
         redirect_url = self._resolve_redirect_url(redirect_url, self.redirect_url, notify_url)
         raw_signature = (
             f"accessKey={self.access_key}&amount={amount_int}&extraData="
@@ -244,20 +353,49 @@ class MomoClient(_MomoSignedClient):
             "signature": self._sign(raw_signature),
         }
 
+        # `raise_for_status()` KHÔNG còn nằm trong khối try. Ranh giới mới:
+        #   - trong try  = "không gọi tới được MoMo" (timeout, DNS, TLS, đứt kết nối)
+        #   - ngoài try  = "gọi tới được, MoMo có trả lời, và câu trả lời là TỪ CHỐI"
+        #
+        # Gộp hai chuyện đó vào một câu chính là gốc của cả sự cố này: `HTTPStatusError`
+        # là lớp con của `HTTPError`, nên một gói giá 200đ (dưới hạn mức MoMo) bị báo
+        # thành lỗi mạng — và không ai nghĩ tới việc đi xem lại giá gói.  #Huynh
         try:
             async with httpx.AsyncClient(
                 timeout=self.timeout_seconds, transport=self._transport
             ) as http_client:
                 response = await http_client.post(self.endpoint, json=request_body)
-                response.raise_for_status()
-                data = response.json()
         except httpx.HTTPError as exc:
-            raise PaymentGatewayError(f"Could not reach MoMo: {exc}") from exc
-
-        if data.get("resultCode") != 0:
-            raise PaymentGatewayError(
-                f"MoMo rejected the payment request: {data.get('message', 'unknown error')}"
+            log.warning(
+                "momo.create_payment_unreachable",
+                order_id=order_id,
+                error_type=type(exc).__name__,
+                error=str(exc),
             )
+            raise PaymentGatewayError(
+                "Không kết nối được tới MoMo lúc này. Bạn thử lại sau ít phút giúp mình nhé."
+            ) from exc
+
+        data = _read_momo_payload(response)
+
+        # Một điều kiện cho CẢ HAI kiểu từ chối: mã HTTP 4xx/5xx (sai định dạng, quá hạn
+        # mức, sai chữ ký) và HTTP 200 kèm `resultCode != 0` (từ chối nghiệp vụ). Trước
+        # đây chỉ nhánh sau được xử tử tế; nhánh trước bị `raise_for_status()` nuốt mất
+        # thân JSON trước khi kịp đọc.
+        #
+        # Dùng `_is_success_code` thay vì so `!= 0` như cũ: helper đó đã xử đúng ca MoMo
+        # trả `"0"` dạng chuỗi (xem docstring của nó), và ca thiếu hẳn `resultCode` vẫn
+        # ra False y như hành vi cũ.
+        if response.is_error or not _is_success_code(data.get("resultCode")):
+            log.warning(
+                "momo.create_payment_rejected",
+                order_id=order_id,
+                amount=amount_int,
+                status_code=response.status_code,
+                result_code=data.get("resultCode"),
+                momo_message=data.get("message"),
+            )
+            raise PaymentGatewayError(_momo_rejection_message(response, data))
 
         return CreatePaymentResult(
             pay_url=data.get("payUrl"),
@@ -299,6 +437,7 @@ class MockMomoClient(_MomoSignedClient):
     ) -> CreatePaymentResult:
         request_id = str(uuid.uuid4())
         amount_int = self._to_whole_vnd(amount, currency)
+        order_info = self._safe_order_info(order_info)
         redirect_url = self._resolve_redirect_url(redirect_url, self.redirect_url, notify_url)
         raw_signature = (
             f"accessKey={self.access_key}&amount={amount_int}&extraData="

@@ -127,6 +127,19 @@ class Settings(BaseSettings):
     # env var needs a real value (or to be unset) in every deployed environment.
     momo_redirect_url: str = "https://api.solodesk.space/api/v1/payments/webhooks/momo/result"
     momo_timeout_seconds: float = 15.0
+    # Khoảng số tiền MoMo nhận cho MỘT giao dịch (amount kiểu Long, 1.000đ–50tr):
+    # https://developers.momo.vn/v3/docs/payment/api/wallet/onetime/
+    #
+    # Gửi ra ngoài khoảng này MoMo trả HTTP 400 — KHÔNG phải một từ chối nghiệp vụ có
+    # `resultCode` để đọc. Đó là lý do một gói giá 200đ từng hiện ra thành "Could not
+    # reach MoMo": lỗi 400 rơi vào nhánh bắt lỗi mạng của client.
+    #
+    # Để ở settings thay vì hằng số vì đây là hạn mức của MoMo theo hợp đồng merchant,
+    # không phải luật kinh doanh của SoloDesk — merchant thật có thể được nâng trần, và
+    # lúc đó chỉ cần sửa env. Mặc định phải khớp hằng cùng tên trong
+    # integrations/momo/client.py (bản đó phục vụ MockMomoClient và test).
+    momo_min_amount: int = 1_000
+    momo_max_amount: int = 50_000_000
 
     # -----------------------------------------------------------------------
     # Storage
