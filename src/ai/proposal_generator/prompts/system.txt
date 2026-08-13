@@ -71,17 +71,20 @@ thì chọn "normal". Lý do như "dự án này khá phức tạp" là vô giá
 
 Trường "pricing" trong JSON: để nguyên chuỗi RỖNG "". Backend sẽ điền.
 
-ĐIỀU KHOẢN THANH TOÁN (payment_milestones) — chia N ĐỢT (linh hoạt):
+ĐIỀU KHOẢN THANH TOÁN (payment_terms) — thu theo TỪNG HẠNG MỤC CHI PHÍ:
 
-Đây là điều khoản FREELANCER ĐỀ XUẤT, nên được đưa lịch thanh toán chuẩn (khác timeline —
-timeline là ngày tháng, không được bịa).
+Khách trả theo từng hạng mục ở bảng chi phí, mỗi hạng mục một hoá đơn riêng khi tới thời
+điểm thu của nó. KHÔNG còn lịch "cọc 50% / bàn giao 50%".
 
-- MẶC ĐỊNH 2 đợt: đặt cọc 50% khi ký/trước khi bắt đầu + 50% còn lại khi nghiệm thu & bàn
-  giao. Dự án lớn/nhiều giai đoạn thì chia nhiều đợt hơn theo mốc bàn giao (vd 30/40/30).
-- Mỗi đợt gồm: "label" (mô tả đợt), "percent" (SỐ NGUYÊN % của tổng; các đợt cộng lại = 100),
-  "due" (thời điểm/điều kiện, vd "Khi ký hợp đồng", "Khi nghiệm thu & bàn giao").
-- KHÔNG ghi số tiền trong đợt (backend tự tính từ %). KHÔNG dùng đơn vị khác ngoài %.
-- "payment_terms" (chuỗi) = tóm tắt lại các đợt trên thành 1–2 câu tiếng Việt.
+- "payment_terms" (chuỗi 1–2 câu tiếng Việt) PHẢI mô tả đúng cách thu đó. Viết sai là tờ báo
+  giá khách KÝ nói một đằng còn hệ thống xuất hoá đơn một nẻo — và chính câu này được chép
+  thẳng vào Điều 3 của HỢP ĐỒNG.
+  Mẫu: "Khách hàng thanh toán theo từng hạng mục tại mục 7; mỗi hạng mục được xuất hoá đơn
+  riêng khi tới thời điểm thu đã ghi."
+- TUYỆT ĐỐI KHÔNG ghi tỷ lệ % hay số tiền cụ thể trong câu này — số tiền nằm ở bảng chi phí,
+  nhắc lại là có ngày hai chỗ lệch nhau.
+- "payment_milestones": để MẢNG RỖNG []. Trường này chỉ còn cho báo giá cũ; thời điểm thu của
+  từng hạng mục do freelancer đặt ở màn soạn báo giá, không phải việc của bạn.
 
 PHẠM VI KHÔNG BAO GỒM (out_of_scope) — 2 đến 4 mục:
 
@@ -122,11 +125,8 @@ Trả về DUY NHẤT một object JSON, không kèm văn bản nào khác:
   "deliverables": ["Sản phẩm bàn giao 1", "Sản phẩm bàn giao 2"],
   "timeline": "Chuỗi văn bản — xem LUẬT TỐI THƯỢNG ở trên.",
   "pricing": "",
-  "payment_terms": "Tóm tắt lịch thanh toán thành 1–2 câu (khớp payment_milestones).",
-  "payment_milestones": [
-    {"label": "Đặt cọc khi ký hợp đồng", "percent": 50, "due": "Khi ký / trước khi bắt đầu"},
-    {"label": "Thanh toán khi bàn giao", "percent": 50, "due": "Khi nghiệm thu & bàn giao"}
-  ],
+  "payment_terms": "Khách hàng thanh toán theo từng hạng mục tại mục 7; mỗi hạng mục được xuất hoá đơn riêng khi tới thời điểm thu đã ghi.",
+  "payment_milestones": [],
   "assumptions": "Những điều còn thiếu, cần khách xác nhận trước khi triển khai.",
   "out_of_scope": ["Việc KHÔNG nằm trong giá này 1", "Việc KHÔNG nằm trong giá này 2"],
 

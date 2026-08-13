@@ -141,14 +141,14 @@ class ContractsService:
             # tức MỘT NHỊP SAU thời điểm phải thu: freelancer đã bắt tay làm rồi hệ thống mới
             # nhắc đi đòi cọc. Ngược đời, và đúng cái rủi ro SoloDesk sinh ra để ngăn.  #Huynh
             #
-            # Idempotent (create_many_for_entity bỏ qua title đã có) nên khối tương tự bên
+            # Idempotent (project đã có task thu tiền thì không sinh nữa) nên khối tương tự bên
             # `DealsService.transition_stage` VẪN GIỮ: hợp đồng ký từ trước ngày sửa này vẫn
             # được vá khi deal vào active, mà chuyển active sau đó không nhân đôi task.
             #
             # Import CỤC BỘ trong hàm, y như deals đang làm — tránh vòng import giữa các module.
             from src.modules.projects.application.service import ProjectService
             from src.modules.proposals.application.service import (
-                payment_task_payloads_for_deal,
+                billing_task_payloads_for_deal,
             )
             from src.modules.tasks.application.service import TaskService
 
@@ -156,9 +156,9 @@ class ContractsService:
             project = await ProjectService(db=self.db).get_or_create_for_deal(
                 contract.deal_id, user_id, name=deal.title if deal else None
             )
-            payloads = await payment_task_payloads_for_deal(self.db, contract.deal_id, user_id)
+            payloads = await billing_task_payloads_for_deal(self.db, contract.deal_id, user_id)
             if payloads:
-                await TaskService(self.db).create_many_for_entity(
+                await TaskService(self.db).create_billing_tasks_for_entity(
                     "project", project.id, user_id, payloads
                 )
         elif target == ContractStatus.PENDING_SIGNATURES or target in TERMINAL_CONTRACT_STATUSES:

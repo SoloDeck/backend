@@ -1,11 +1,16 @@
-"""Xuất hóa đơn cho một task "Thu tiền:".
+"""Xuất hóa đơn cho một task THU TIỀN (task có `billing_amount`).
 
-Đặt ở module riêng chứ không nhét vào `TaskService`: việc này cần đọc báo giá đã chốt, bộ
-tính tiền của analytics và service hóa đơn — kéo cả ba vào `TaskService` là biến một service
-CRUD thành nút giao của nửa hệ thống.
+Đặt ở module riêng chứ không nhét vào `TaskService`: việc này cần đọc deal, khách hàng và
+service hóa đơn — kéo cả ba vào `TaskService` là biến một service CRUD thành nút giao của
+nửa hệ thống.
 
-**Số tiền do SERVER tính, không nhận từ client.** Frontend gửi lên số tiền thì có hai chỗ
-tính tiền, và chỉ cần một lần lệch là hóa đơn gửi khách khác bảng doanh thu.  #Huynh
+**Số tiền do SERVER quyết, không nhận từ client.** Frontend gửi lên số tiền thì có hai chỗ
+tính tiền, và chỉ cần một lần lệch là hóa đơn gửi khách khác bảng doanh thu.
+
+Số tiền lấy thẳng từ `tasks.billing_amount` — con số đã chốt lúc sinh task từ hạng mục chi
+phí của báo giá đã chốt. Bản cũ tra ngược báo giá rồi chia lại % và khớp mốc VỚI TÊN TASK;
+đổi tên task một chữ là không xuất được hóa đơn, mà lỗi chỉ hiện ra đúng lúc freelancer định
+đi đòi tiền.  #Huynh
 """
 
 import uuid
@@ -37,25 +42,25 @@ async def create_invoice_for_payment_task(
     trong hộp thoại xác nhận nên bấm hai lần là chuyện chắc chắn xảy ra, và hai hóa đơn cho
     cùng một mốc thì khách trả tiền hai lần hoặc không trả lần nào.
     """
-    from src.ai.proposal_generator.schemas.proposal_document import default_payment_milestones
     from src.infrastructure.database.models import ProjectModel
-    from src.modules.analytics.application.milestone_money import (
-        milestone_money_for_deal,
-        task_title_for,
-    )
     from src.modules.invoices.application.service import InvoicesService
     from src.modules.invoices.infrastructure.repository import InvoicesRepository
     from src.modules.invoices.schemas.request import InvoiceLineItemRequest, InvoiceRequest
-    from src.modules.proposals.application.pdf_content import extract_payment_milestones
-    from src.modules.proposals.infrastructure.repository import ProposalsRepository
-    from src.modules.tasks.application.service import PAYMENT_TASK_PREFIX, TaskService
+    from src.modules.tasks.application.service import TaskService
 
     task_service = TaskService(db)
     task = await task_service._get_owned_task(task_id, owner_user_id)
 
-    if not task.title.startswith(PAYMENT_TASK_PREFIX):
+    # Số tiền nằm NGAY TRÊN TASK. Bản cũ phải tra ngược báo giá đã chốt, chia lại % rồi khớp
+    # mốc với TÊN TASK — đổi tên task một chữ là hỏng, và lỗi hiện ra đúng lúc freelancer định
+    # đi đòi tiền. Giờ không còn gì để đứt.
+    #
+    # Đòi `billing_amount` hẳn hoi chứ không rơi về tiền tố tên: task cũ mà migration
+    # `a4b5c6d7e8f9` cố ý bỏ qua (tên đã sửa, tổng lệch giá deal) thì phải LỘ RA ở đây, chứ
+    # không được lặng lẽ xuất một hoá đơn dựng từ con số đoán.  #Huynh
+    if task.billing_amount is None:
         raise BusinessRuleError(
-            "Chỉ xuất hóa đơn được cho công việc thu tiền do hệ thống tạo từ mốc thanh toán "
+            "Chỉ xuất hóa đơn được cho công việc thu tiền do hệ thống tạo từ hạng mục chi phí "
             "của báo giá đã chốt."
         )
 
@@ -78,37 +83,8 @@ async def create_invoice_for_payment_task(
     if deal is None:
         raise NotFoundError(f"Deal {project.deal_id} not found")
 
-    proposal = await ProposalsRepository(db).get_accepted_by_deal(deal.id, owner_user_id)
-    if proposal is None:
-        raise BusinessRuleError(
-            "Deal chưa có báo giá nào được chốt nên chưa biết mốc này là bao nhiêu tiền."
-        )
-
-    milestones = extract_payment_milestones(proposal.content or {}) or default_payment_milestones()
-    # Dùng ĐÚNG bộ tính tiền của bảng doanh thu: tổng các hóa đơn sinh ra từ đây luôn khớp
-    # tuyệt đối với giá đã chốt, kể cả phần đồng lẻ do làm tròn (dồn vào mốc cuối).
-    # `estimated_value` chứ không phải `actual_value`: đây là ĐÚNG trường mà bảng doanh thu
-    # dùng làm giá chốt (`analytics/infrastructure/repository.py` — `"final_price":
-    # estimated_value`). Lấy trường khác là hóa đơn gửi khách và bảng doanh thu kể hai câu
-    # chuyện khác nhau về cùng một deal.
-    #
-    # (Hai trường này đang lẫn lộn trong toàn dự án: `actual_value` có mặt trong model và
-    # API nhưng không nơi nào tự điền, còn analytics thì gọi `estimated_value` là "giá chốt".
-    # Cần dọn, nhưng dọn ở đây là đổi ngầm ý nghĩa số liệu — để thành việc riêng.)  #Huynh
-    money = milestone_money_for_deal(
-        final_price=deal.estimated_value,
-        milestones=milestones,
-        done_task_titles=set(),
-    )
-
-    match = next((m for m in money if task_title_for(m.label) == task.title), None)
-    if match is None:
-        raise BusinessRuleError(
-            f"Không tìm thấy mốc thanh toán ứng với công việc '{task.title}' trong báo giá "
-            "đã chốt. Công việc có thể đã bị đổi tên."
-        )
-    if match.amount <= 0:
-        raise BusinessRuleError("Mốc này đang là 0 đồng — chốt giá cho deal trước đã.")
+    if task.billing_amount <= 0:
+        raise BusinessRuleError("Hạng mục này đang là 0 đồng — chốt số tiền cho nó trước đã.")
 
     invoice = await InvoicesService(db=db, repo=invoices_repo).create(
         owner_user_id,
@@ -118,9 +94,9 @@ async def create_invoice_for_payment_task(
             due_date=due_date or date.today() + timedelta(days=DEFAULT_DUE_DAYS),
             line_items=[
                 InvoiceLineItemRequest(
-                    description=match.label,
+                    description=task.title,
                     quantity=Decimal(1),
-                    unit_price=match.amount,
+                    unit_price=task.billing_amount,
                 )
             ],
         ),

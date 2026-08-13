@@ -66,21 +66,23 @@
 <h2>6. Thời Gian Thực Hiện<span class="en">Timeline</span></h2>
 <p data-field="timeline" data-label="Thời gian thực hiện">{{ timeline }}</p>
 
-<h2>7. Chi Phí Dự Kiến<span class="en">Estimated Cost</span></h2>
+{# MỘT mục cho cả chi phí lẫn thanh toán. Trước đây tách "7. Chi Phí Dự Kiến" và "8. Điều Khoản
+   Thanh Toán", nhưng từ khi thu tiền theo hạng mục thì mỗi hạng mục VỪA là công việc VỪA là một
+   đợt thu — hai bảng thành hai bản sao của cùng một danh sách, khách đọc xong không biết bảng
+   nào là thật. Gộp lại, thêm cột "Thời điểm thu".
+
+   Báo giá CŨ (không có hạng mục nào) vẫn hiện bảng mốc % ngay trong mục này, để bản đã gửi
+   trước đây mở lại không mất bảng thanh toán.  #Huynh #}
+<h2>7. Chi Phí &amp; Thanh Toán<span class="en">Cost &amp; Payment</span></h2>
 {% if pricing_line_items %}
 <table class="data-table">
-    <thead><tr><th>Hạng mục <span class="eni">/ Item</span></th><th class="amount">Thành tiền <span class="eni">/ Amount</span></th></tr></thead>
+    <thead><tr><th>Hạng mục <span class="eni">/ Item</span></th><th class="amount">Thành tiền <span class="eni">/ Amount</span></th><th>Thời điểm thu <span class="eni">/ When</span></th></tr></thead>
     <tbody>
-        {% for item in pricing_line_items %}<tr><td>{{ item.description }}</td><td class="amount">{{ item.amount }}</td></tr>{% endfor %}
+        {% for item in pricing_line_items %}<tr><td>{{ item.description }}</td><td class="amount">{{ item.amount }}</td><td>{{ item.due }}</td></tr>{% endfor %}
     </tbody>
-    <tfoot><tr><td>Tổng báo giá <span class="eni">/ Total</span></td><td class="amount">{{ pricing_total }}</td></tr></tfoot>
+    <tfoot><tr><td>Tổng báo giá <span class="eni">/ Total</span></td><td class="amount">{{ pricing_total }}</td><td></td></tr></tfoot>
 </table>
-{% else %}
-<div class="pricing-box"><strong>Tổng chi phí dự án <span class="eni">/ Total project cost</span>:</strong> {{ pricing }}</div>
-{% endif %}
-
-<h2>8. Điều Khoản Thanh Toán<span class="en">Payment Terms</span></h2>
-{% if payment_milestones %}
+{% elif payment_milestones %}
 <table class="data-table">
     <thead><tr><th>Đợt <span class="eni">/ Milestone</span></th><th class="amount">Tỷ lệ <span class="eni">/ %</span></th><th>Thời điểm <span class="eni">/ When</span></th></tr></thead>
     <tbody>
@@ -93,11 +95,13 @@
         {% endfor %}
     </tbody>
 </table>
+{% else %}
+<div class="pricing-box"><strong>Tổng chi phí dự án <span class="eni">/ Total project cost</span>:</strong> {{ pricing }}</div>
 {% endif %}
 {% if payment_terms %}<p data-field="payment_terms" data-label="Điều khoản thanh toán">{{ payment_terms }}</p>{% endif %}
 
 {% if out_of_scope or revision_policy %}
-<h2>9. Điều Khoản Bổ Sung<span class="en">Additional Terms</span></h2>
+<h2>8. Điều Khoản Bổ Sung<span class="en">Additional Terms</span></h2>
 {% if out_of_scope %}
 <p><strong>Phạm vi KHÔNG bao gồm <span class="eni">/ Out of scope</span>:</strong></p>
 <ul data-field="out_of_scope" data-kind="list" data-label="Phạm vi không bao gồm">
@@ -107,15 +111,15 @@
 {% if revision_policy %}<p><strong>Chính sách chỉnh sửa <span class="eni">/ Revision policy</span>:</strong> <span data-field="revision_policy" data-label="Chính sách chỉnh sửa">{{ revision_policy }}</span></p>{% endif %}
 {% endif %}
 
-<h2>10. Ghi Chú &amp; Giả Định<span class="en">Notes &amp; Assumptions</span></h2>
+<h2>9. Ghi Chú &amp; Giả Định<span class="en">Notes &amp; Assumptions</span></h2>
 <p data-field="assumptions" data-label="Ghi chú và giả định">{{ assumptions }}</p>
 
 {% if standard_terms %}
-<h2>11. Điều Khoản Chuẩn Theo Lĩnh Vực<span class="en">Standard Terms</span></h2>
+<h2>10. Điều Khoản Chuẩn Theo Lĩnh Vực<span class="en">Standard Terms</span></h2>
 <p data-field="standard_terms" data-label="Điều khoản chuẩn theo lĩnh vực" style="white-space:pre-line">{{ standard_terms }}</p>
 {% endif %}
 
-<h2>{% if standard_terms %}12{% else %}11{% endif %}. Xác Nhận<span class="en">Confirmation</span></h2>
+<h2>{% if standard_terms %}11{% else %}10{% endif %}. Xác Nhận<span class="en">Confirmation</span></h2>
 <p>{% if valid_until %}Đề xuất này có hiệu lực đến {{ valid_until }}. {% endif %}Vui lòng xác nhận đồng ý để bắt đầu triển khai dự án.<span class="eni"> / Please confirm to proceed.</span></p>
 
 <table class="signature">

@@ -7,11 +7,9 @@ from decimal import Decimal
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.ai.proposal_generator.schemas.proposal_document import default_payment_milestones
 from src.modules.analytics.application.milestone_money import (
     MilestoneMoney,
     MoneyTotals,
-    milestone_money_for_deal,
     totals,
 )
 from src.modules.analytics.infrastructure.repository import AnalyticsRepository
@@ -24,7 +22,6 @@ from src.modules.analytics.schemas.response import (
     TopClientResponse,
     WinRateResponse,
 )
-from src.modules.proposals.application.pdf_content import extract_payment_milestones
 from src.modules.subscriptions.application.ai_usage import AiUsageService
 
 
@@ -68,25 +65,20 @@ class AnalyticsService:
         )
 
     async def _milestone_money(self, user_id: uuid.UUID) -> MoneyTotals:
-        """Gộp tiền theo mốc của MỌI deal đã ký hợp đồng."""
-        rows: list[MilestoneMoney] = []
-        for deal in await self.repo.milestone_rows(user_id):
-            rows.extend(self._milestones_of(deal))
-        return totals(rows)
+        """Gộp tiền của MỌI task thu tiền — tiền đã nằm sẵn trên task, ở đây chỉ cộng.
 
-    @staticmethod
-    def _milestones_of(deal: dict) -> list[MilestoneMoney]:
-        """Mốc + tiền của một deal. Báo giá không có mốc cấu trúc → rơi về lịch chuẩn 50/50,
-        ĐÚNG như bộ sinh task đã làm khi tạo các task "Thu tiền:" — hai bên phải khớp, nếu
-        không thì bảng tiền và danh sách công việc kể hai câu chuyện khác nhau.  #Huynh"""
-        milestones = (
-            extract_payment_milestones(deal["content"] or {}) or default_payment_milestones()
-        )
-        return milestone_money_for_deal(
-            final_price=deal["final_price"],
-            milestones=milestones,
-            done_task_titles=deal["done_titles"],
-        )
+        Bản cũ phải đọc báo giá đã chốt, chia % ra tiền rồi khớp mốc với TÊN TASK. Bỏ được cả
+        ba bước từ khi có `tasks.billing_amount`, và cũng bỏ luôn nguy cơ đổi tên task là bảng
+        doanh thu âm thầm coi mốc đó chưa thu.  #Huynh"""
+        rows = [
+            MilestoneMoney(
+                label=row["label"],
+                amount=Decimal(row["amount"] or 0),
+                collected=row["collected"],
+            )
+            for row in await self.repo.milestone_rows(user_id)
+        ]
+        return totals(rows)
 
     async def get_pipeline(
         self, user_id: uuid.UUID, snapshot_date: date | None = None
@@ -153,22 +145,32 @@ class AnalyticsService:
                 for x in await self.repo.top_clients(user_id, limit, from_date, to_date, metric)
             ]
 
+        # `milestone_rows` trả về MỖI TASK THU TIỀN một dòng (bản cũ: mỗi deal một dòng), nên
+        # `deal_count` phải đếm deal KHÁC NHAU. Cộng thẳng 1 cho mỗi dòng là một khách có bốn
+        # hạng mục bỗng thành bốn deal.  #Huynh
         by_client: dict[uuid.UUID, dict] = {}
-        for deal in await self.repo.milestone_rows(user_id):
-            money = totals(self._milestones_of(deal))
+        deals_by_client: dict[uuid.UUID, set[uuid.UUID]] = {}
+        for row in await self.repo.milestone_rows(user_id):
+            client_id = row["client_id"]
             entry = by_client.setdefault(
-                deal["client_id"],
+                client_id,
                 {
-                    "client_id": deal["client_id"],
-                    "name": deal["client_name"],
+                    "client_id": client_id,
+                    "name": row["client_name"],
                     "revenue": Decimal(0),
                     "outstanding": Decimal(0),
                     "deal_count": 0,
                 },
             )
-            entry["revenue"] += money.collected
-            entry["outstanding"] += money.outstanding
-            entry["deal_count"] += 1
+            amount = Decimal(row["amount"] or 0)
+            if row["collected"]:
+                entry["revenue"] += amount
+            else:
+                entry["outstanding"] += amount
+            deals_by_client.setdefault(client_id, set()).add(row["deal_id"])
+
+        for client_id, entry in by_client.items():
+            entry["deal_count"] = len(deals_by_client.get(client_id, ()))
 
         ranked = sorted(by_client.values(), key=lambda x: x["revenue"], reverse=True)
         return [TopClientResponse(**x) for x in ranked[:limit]]

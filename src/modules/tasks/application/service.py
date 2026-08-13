@@ -8,6 +8,7 @@ before any read or write (see TaskRepository.entity_exists_for_owner).
 
 import uuid
 from dataclasses import dataclass
+from decimal import Decimal
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -19,15 +20,31 @@ from src.modules.tasks.schemas.request import (
     UpdateChecklistItemRequest,
     UpdateTaskRequest,
 )
-from src.shared.exceptions.domain import NotFoundError
+from src.shared.exceptions.domain import BusinessRuleError, NotFoundError
 
 _DEFAULT_PRIORITY = "medium"
 
-# Tiền tố nhận diện TASK THANH TOÁN do hệ thống tự sinh từ các mốc thanh toán của báo giá
-# đã chốt (Phase B — mục 8/9). Guard "hoàn thành dự án" của deals dựa vào tiền tố này để
-# biết đâu là mốc thu tiền cần tick xong. Đây là HỢP ĐỒNG NGẦM giữa proposals (sinh) và
-# deals (kiểm) — đổi tiền tố là phải đổi cả hai chỗ.  #Huynh
+# Tiền tố tên của TASK THU TIỀN bản CŨ (sinh từ mốc thanh toán theo %).
+#
+# Không còn là dấu nhận biết nữa — `tasks.billing_amount IS NOT NULL` mới là. Giữ lại đúng
+# một vai trò: lối rơi về cho các task mà migration `a4b5c6d7e8f9` cố ý không backfill (tên
+# đã bị sửa, tổng lệch giá deal), để guard "hoàn thành dự án" vẫn chặn được. Xem
+# `TaskRepository.count_billing_tasks`.  #Huynh
 PAYMENT_TASK_PREFIX = "Thu tiền:"
+
+
+@dataclass(frozen=True)
+class BillingTaskPayload:
+    """Một task THU TIỀN do hệ thống sinh — nội bộ, KHÔNG phải shape API.
+
+    Cố ý không dùng `CreateTaskRequest`: đó là body công khai của `POST /projects/{id}/tasks`,
+    thêm `billing_amount` vào đó là cho phép client bất kỳ tự đúc ra task thu tiền với số tiền
+    tuỳ ý, rồi xuất hoá đơn gửi khách bằng con số đó.  #Huynh
+    """
+
+    title: str
+    amount: Decimal
+    description: str | None = None
 
 
 @dataclass
@@ -124,16 +141,49 @@ class TaskService:
             seen.add(payload.title)
         return created
 
+    async def create_billing_tasks_for_entity(
+        self,
+        entity_type: str,
+        entity_id: uuid.UUID,
+        owner_user_id: uuid.UUID,
+        payloads: list[BillingTaskPayload],
+    ) -> list[TaskModel]:
+        """Sinh các task THU TIỀN cho một entity. Idempotent theo "entity đã có task thu tiền
+        chưa", KHÔNG theo tên.
+
+        Vì sao không đi qua `create_many_for_entity`: hàm đó bỏ qua title đã tồn tại. Tên task
+        giờ là NHÃN HẠNG MỤC, nên (a) một task thường trùng tên hạng mục sẽ nuốt mất task thu
+        tiền — mất tiền khỏi guard và khỏi bảng doanh thu, im lặng; và (b) deal cũ đã có task
+        `"Thu tiền: ..."` sẽ được sinh THÊM một bộ mới vì không tên nào trùng → cộng đôi doanh
+        thu. Khoá theo "đã có chưa" chặn được cả hai.  #Huynh
+        """
+        await self._require_entity_owner(entity_type, entity_id, owner_user_id)
+        if await self.repo.has_billing_tasks(entity_type, entity_id, PAYMENT_TASK_PREFIX):
+            return []
+
+        created: list[TaskModel] = []
+        for payload in payloads:
+            task = await self.repo.create(
+                entity_type=entity_type,
+                entity_id=entity_id,
+                title=payload.title,
+                description=payload.description,
+                priority=_DEFAULT_PRIORITY,
+                billing_amount=payload.amount,
+            )
+            created.append(task)
+        return created
+
     async def payment_task_progress(
         self, entity_type: str, entity_id: uuid.UUID, owner_user_id: uuid.UUID
     ) -> tuple[int, int]:
-        """(tổng, đã xong) các task thanh toán ("Thu tiền:") của entity.
+        """(tổng, đã xong) các task THU TIỀN của entity.
 
         Guard "hoàn thành dự án" của deals gọi hàm này: còn mốc thu tiền chưa xong thì
         chưa cho đóng deal.  #Huynh
         """
         await self._require_entity_owner(entity_type, entity_id, owner_user_id)
-        return await self.repo.count_by_title_prefix(entity_type, entity_id, PAYMENT_TASK_PREFIX)
+        return await self.repo.count_billing_tasks(entity_type, entity_id, PAYMENT_TASK_PREFIX)
 
     async def get(self, task_id: uuid.UUID, owner_user_id: uuid.UUID) -> TaskModel:
         return await self._get_owned_task(task_id, owner_user_id)
@@ -149,6 +199,18 @@ class TaskService:
 
     async def delete(self, task_id: uuid.UUID, owner_user_id: uuid.UUID) -> None:
         task = await self._get_owned_task(task_id, owner_user_id)
+        # Task thu tiền là một KHOẢN PHẢI THU, không phải một việc vặt tự thêm. Xoá nó là mất
+        # khoản đó khỏi guard "hoàn thành dự án" lẫn bảng doanh thu, và deal đóng lại được
+        # trong khi tiền chưa về. Trước đây không chặn được vì không có gì phân biệt; giờ có
+        # `billing_amount` thì chặn được đúng chỗ.
+        #
+        # Muốn bỏ một khoản thu thì sửa hạng mục chi phí trên báo giá (hoặc lập phụ lục), chứ
+        # không phải xoá dòng trên bảng việc.  #Huynh
+        if task.billing_amount is not None:
+            raise BusinessRuleError(
+                "Không xoá được công việc thu tiền — đây là một khoản phải thu của dự án. "
+                "Hãy sửa hạng mục chi phí trên báo giá nếu muốn bỏ khoản này."
+            )
         await self.repo.delete(task)
 
     # --- checklist items ------------------------------------------------------

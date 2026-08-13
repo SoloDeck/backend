@@ -21,6 +21,7 @@ PDF, dù frontend làm ĐÚNG hợp đồng.
 thiếu dữ liệu thì để trống chứ không nổ.  #Huynh
 """
 
+from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
@@ -29,6 +30,25 @@ from src.ai.proposal_generator.schemas.proposal_document import (
     PricingLineItem,
     ProposalDocument,
 )
+
+# Thời điểm thu mặc định của một hạng mục. Dùng chung cho bảng "8. Điều Khoản Thanh Toán"
+# và cho mô tả task thu tiền, để tờ giấy gửi khách và bảng việc không nói hai kiểu.  #Huynh
+DEFAULT_COST_ITEM_DUE = "Khi hoàn thành hạng mục"
+
+
+@dataclass(frozen=True)
+class CostItem:
+    """Một hạng mục chi phí ở mục 7, đã quy về SỐ NGUYÊN đồng.
+
+    Đây là ĐƠN VỊ THU TIỀN của hệ thống: mỗi hạng mục sinh ra một task thu tiền và một hoá
+    đơn. Nên `amount` phải là con số chốt để tính toán được, không phải chuỗi đã format —
+    `PricingLineItem` (chuỗi "76.000.000 VND") chỉ dành cho tầng render.  #Huynh
+    """
+
+    label: str
+    amount: int
+    due: str = DEFAULT_COST_ITEM_DUE
+    currency: str = "VND"
 
 
 def _text(value: Any) -> str:
@@ -110,8 +130,8 @@ def _resolve_total_int(content: dict[str, Any]) -> int:
     return 0
 
 
-def typed_pricing_items(override: list[Any]) -> list[tuple[str, int]]:
-    """Bóc dạng MỚI ``[{"label", "amount"}]`` ra ``[(nhãn, tiền)]``. Rỗng = không phải dạng này.
+def _typed_cost_items(override: list[Any]) -> list[CostItem]:
+    """Bóc dạng MỚI ``[{"label", "amount", "due"?}]``. Rỗng = không phải dạng này.
 
     Chỉ nhận khi **mọi** phần tử đều là dict có nhãn — nửa nọ nửa kia thì trả rỗng để chỗ gọi
     rơi về dạng cũ, thay vì dựng một bảng lắp ghép từ hai nguồn.
@@ -122,7 +142,7 @@ def typed_pricing_items(override: list[Any]) -> list[tuple[str, int]]:
     if not all(isinstance(item, dict) for item in override):
         return []
 
-    typed: list[tuple[str, int]] = []
+    typed: list[CostItem] = []
     for item in override:
         label = _text(item.get("label") or item.get("description"))
         if not label:
@@ -131,54 +151,46 @@ def typed_pricing_items(override: list[Any]) -> list[tuple[str, int]]:
             amount = int(Decimal(str(item.get("amount") or 0)))
         except (TypeError, ValueError, InvalidOperation):
             amount = 0
-        typed.append((label, max(amount, 0)))
+        typed.append(
+            CostItem(
+                label=label,
+                amount=max(amount, 0),
+                due=_text(item.get("due")) or DEFAULT_COST_ITEM_DUE,
+            )
+        )
     return typed
 
 
-def _structured_pricing(content: dict[str, Any]) -> tuple[list[PricingLineItem], str, str]:
-    """Bảng giá có cấu trúc cho template — LẤY TỪ CÙNG NGUỒN với card trên màn hình.
+def typed_pricing_items(override: list[Any]) -> list[tuple[str, int]]:
+    """Vỏ mỏng giữ nguyên chữ ký cũ ``[(nhãn, tiền)]`` cho các chỗ gọi chưa cần `due`."""
+    return [(item.label, item.amount) for item in _typed_cost_items(override)]
 
-    Trả về ``(line_items, tong_da_dinh_dang, chuoi_du_phong)``.
 
-    Nguồn ưu tiên là ``pricing_detail`` (khối do bộ định giá tính). Card render từ đúng khối
-    này, nên PDF cũng phải render từ nó thì hai bên mới khớp. Tổng = giá đã chốt
-    (`final_price`) nếu có, chưa thì giá đề xuất (`suggested`). Hạng mục được chia lại theo
-    tổng đó, và ĐỒNG LẺ do làm tròn dồn vào dòng cuối để bảng cộng ra ĐÚNG tổng — y hệt
-    frontend. Bảng cộng không ra tổng là thứ khách soi ra ngay.  #Huynh
+def _resolve_cost_items_with_total(content: dict[str, Any]) -> tuple[list[CostItem], int | None]:
+    """Chuỗi tìm hạng mục chi phí, theo ĐÚNG thứ tự ưu tiên. Phần tử thứ hai là tổng ĐÈ
+    (chỉ shape DTO mới có tổng khai riêng, có thể khác tổng các dòng); `None` = cộng các dòng.
+
+    Bốn nguồn, xét lần lượt:
+
+    1. ``pricing_items`` dạng typed — freelancer tự gõ tiền ở màn review. Dùng thẳng.
+    2. ``pricing_items`` chỉ có nhãn (bản nháp cũ) — chia đều giá chốt.
+    3. ``pricing_detail.line_items`` — bảng của bộ định giá, rescale về giá chốt.
+    4. ``pricing.line_items`` (shape DTO) — bảng đã có sẵn tiền.
+
+    Vì sao phải là MỘT hàm: tờ báo giá gửi khách và bộ sinh task thu tiền đều đọc từ đây.
+    Hai chuỗi tìm riêng là ngày nào đó khách cầm bảng ghi bốn dòng mà nhận về ba hoá đơn số
+    khác — đúng loại lệch mà cả module này sinh ra để chặn.  #Huynh
     """
-    # NHÁNH ƯU TIÊN — freelancer đã tự sửa hạng mục ở màn review (Stage 4, mục 7).
-    #
-    # Nhận HAI dạng, vì shape đã đổi và bản nháp cũ trong DB vẫn dùng dạng cũ:
-    #   - `["Nhãn A", "Nhãn B"]`            (cũ) → chỉ có nhãn, số tiền CHIA ĐỀU từ giá chốt
-    #   - `[{"label": ..., "amount": ...}]` (mới) → freelancer tự gõ tiền, DÙNG THẲNG
-    #
-    # Vì sao thêm dạng mới: bảng bên trái màn review hiện số tiền chia đều, nhưng đó chỉ là
-    # con số FE tự tính để hiển thị — nó không được gửi đi. Nên khi freelancer mới chỉ chốt
-    # giá mà chưa sửa nhãn, panel hiện "125tr × 4" trong khi tờ báo giá vẫn giữ tỷ lệ của bộ
-    # định giá (200/150/75/75). Hai bên nói hai kiểu. Cho gõ tiền thẳng thì hết mơ hồ: cái
-    # freelancer thấy chính là cái khách nhận.
-    #
-    # KHÔNG ép tổng các dòng phải bằng giá chào ở đây — `ProposalsService.transition_status`
-    # mới là chỗ chặn gửi khi lệch, giống hệt cổng "tổng mốc thanh toán = 100%". Tầng render
-    # thì vẽ trung thực thứ đang có, để freelancer nhìn thấy chỗ lệch mà sửa.  #Huynh
     override = content.get("pricing_items")
     if isinstance(override, list) and override:
-        typed = typed_pricing_items(override)
+        typed = _typed_cost_items(override)
         if typed:
-            total = sum(amount for _, amount in typed)
-            return (
-                [
-                    PricingLineItem(description=label, amount=_money(amount, "VND"))
-                    for label, amount in typed
-                ],
-                _money(total, "VND"),
-                "",
-            )
+            return typed, None
 
         labels = [_text(x) for x in override if _text(x)]
         total_int = _resolve_total_int(content)
         if labels and total_int > 0:
-            items: list[PricingLineItem] = []
+            items: list[CostItem] = []
             allocated = 0
             n = len(labels)
             for index, label in enumerate(labels):
@@ -187,8 +199,8 @@ def _structured_pricing(content: dict[str, Any]) -> tuple[list[PricingLineItem],
                 else:
                     amount = round(total_int / n / 1000) * 1000
                     allocated += amount
-                items.append(PricingLineItem(description=label, amount=_money(amount, "VND")))
-            return items, _money(total_int, "VND"), ""
+                items.append(CostItem(label=label, amount=amount))
+            return items, total_int
 
     detail = content.get("pricing_detail")
     if isinstance(detail, dict):
@@ -203,7 +215,7 @@ def _structured_pricing(content: dict[str, Any]) -> tuple[list[PricingLineItem],
             total_int, suggested_int = 0, 0
 
         if raw_items and suggested_int > 0 and total_int > 0:
-            items: list[PricingLineItem] = []
+            items = []
             allocated = 0
             ratio = total_int / suggested_int
             cleaned = [it for it in raw_items if isinstance(it, dict)]
@@ -215,31 +227,83 @@ def _structured_pricing(content: dict[str, Any]) -> tuple[list[PricingLineItem],
                     amount = round(base / 1000) * 1000
                     allocated += amount
                 items.append(
-                    PricingLineItem(
-                        description=_text(it.get("label") or it.get("description")),
-                        amount=_money(amount, "VND"),
+                    CostItem(
+                        label=_text(it.get("label") or it.get("description")),
+                        amount=amount,
                     )
                 )
             if items:
-                return items, _money(total_int, "VND"), ""
+                return items, total_int
 
     # Shape hợp đồng (DTO): pricing là object có line_items sẵn.
     pricing = content.get("pricing")
     if isinstance(pricing, dict) and pricing.get("line_items"):
         currency = _text(pricing.get("currency")) or "VND"
-        items = [
-            PricingLineItem(
-                description=_text(it.get("description")),
-                amount=_money(it.get("amount"), currency),
+        items = []
+        for it in pricing["line_items"]:
+            if not isinstance(it, dict):
+                continue
+            try:
+                amount = int(Decimal(str(it.get("amount") or 0)))
+            except (TypeError, ValueError, InvalidOperation):
+                amount = 0
+            items.append(
+                CostItem(
+                    label=_text(it.get("description")),
+                    amount=max(amount, 0),
+                    currency=currency,
+                )
             )
-            for it in pricing["line_items"]
-            if isinstance(it, dict)
-        ]
-        total_text = _money(pricing["total"], currency) if pricing.get("total") is not None else ""
-        return items, total_text, ""
+        if items:
+            # Tổng ở shape DTO khai RIÊNG và có thể khác tổng các dòng — in đúng thứ đang có.
+            raw_total = pricing.get("total")
+            try:
+                declared = int(Decimal(str(raw_total))) if raw_total is not None else None
+            except (TypeError, ValueError, InvalidOperation):
+                declared = None
+            return items, declared
+
+    return [], None
+
+
+def resolve_cost_items(content: dict[str, Any]) -> list[CostItem]:
+    """Hạng mục chi phí của một báo giá — nguồn DUY NHẤT cho cả tờ báo giá lẫn task thu tiền."""
+    items, _ = _resolve_cost_items_with_total(content or {})
+    return items
+
+
+def _structured_pricing(content: dict[str, Any]) -> tuple[list[PricingLineItem], str, str]:
+    """Bảng giá có cấu trúc cho template. Trả về ``(line_items, tổng, chuỗi_dự_phòng)``.
+
+    Chỉ là lớp ĐỊNH DẠNG mỏng trên `_resolve_cost_items_with_total` — mọi quyết định "hạng
+    mục là gì, bao nhiêu tiền" nằm ở đó, dùng chung với bộ sinh task thu tiền.
+
+    KHÔNG ép tổng các dòng phải bằng giá chào ở đây: `ProposalsService.transition_status`
+    mới là chỗ chặn gửi khi lệch. Tầng render vẽ trung thực thứ đang có, để freelancer nhìn
+    thấy chỗ lệch mà sửa.  #Huynh
+    """
+    items, declared_total = _resolve_cost_items_with_total(content)
+    if items:
+        currency = items[0].currency
+        # Shape DTO khai tổng riêng (có thể đã gồm thuế) → in đúng con số đã khai. Không khai
+        # thì cộng các dòng: bản cũ để TRỐNG dòng tổng, mà một bảng có dòng nhưng không có
+        # tổng thì khách phải tự cộng — và con số cộng ra không thể mâu thuẫn với bảng.  #Huynh
+        total = declared_total if declared_total is not None else sum(i.amount for i in items)
+        return (
+            [
+                PricingLineItem(
+                    description=i.label,
+                    amount=_money(i.amount, i.currency),
+                    due=i.due or DEFAULT_COST_ITEM_DUE,
+                )
+                for i in items
+            ],
+            _money(total, currency),
+            "",
+        )
 
     # Không có bảng: rơi về chuỗi (báo giá cũ, hoặc AI trả chuỗi "Giá sẽ báo sau...").
-    return [], "", _pricing_to_text(pricing)
+    return [], "", _pricing_to_text(content.get("pricing"))
 
 
 def _timeline_to_text(value: Any) -> str:
@@ -369,6 +433,9 @@ def build_proposal_document(
         pricing_total=pricing_total,
         pricing=pricing_fallback,
         payment_terms=payment_terms,
+        # CHỈ dành cho báo giá CŨ. Từ khi gộp mục 7 và 8, thời điểm thu đi kèm ngay trên từng
+        # dòng chi phí (`PricingLineItem.due`); template chỉ dựng bảng mốc % khi KHÔNG có hạng
+        # mục nào — tức là bản nháp cũ trong DB.  #Huynh
         payment_milestones=extract_payment_milestones(content),
         assumptions=assumptions,
         out_of_scope=_text_list(content.get("out_of_scope")),

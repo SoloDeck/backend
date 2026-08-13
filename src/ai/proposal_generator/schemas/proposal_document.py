@@ -2,10 +2,16 @@ from pydantic import BaseModel
 
 
 class PricingLineItem(BaseModel):
-    """Một dòng trong bảng giá — mô tả + thành tiền đã định dạng sẵn (VND)."""
+    """Một dòng trong bảng giá — mô tả + thành tiền đã định dạng sẵn (VND) + thời điểm thu.
+
+    `due` gộp vào đây từ khi bỏ mục "8. Điều Khoản Thanh Toán": mỗi hạng mục vừa là công việc
+    vừa là một đợt thu tiền, nên tách làm hai bảng chỉ tạo ra hai bản sao của cùng một danh
+    sách — khách đọc xong không biết bảng nào là thật.  #Huynh
+    """
 
     description: str
     amount: str
+    due: str = ""
 
 
 class PaymentMilestone(BaseModel):

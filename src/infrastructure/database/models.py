@@ -1552,6 +1552,21 @@ class TaskModel(UUIDMixin, TimestampMixin, Base):
         UUID(as_uuid=True), ForeignKey("invoices.id", ondelete="SET NULL"), nullable=True
     )
 
+    # Số tiền task này phải thu. KHÔNG NULL = đây là task THU TIỀN.
+    #
+    # Trước đây dấu nhận biết là tiền tố tên `"Thu tiền: "`, và tiền thì tính lại mỗi lần cần
+    # bằng cách tra báo giá đã chốt rồi khớp mốc VỚI TÊN TASK. Đổi tên task một chữ là đứt:
+    # không xuất được hoá đơn, và bảng doanh thu âm thầm coi mốc đó chưa thu. Một cột thì
+    # không đứt được.
+    #
+    # Chốt số tiền vào đây là ĐÚNG chứ không phải chụp ảnh cẩu thả: lúc sinh task, báo giá
+    # đang ở trạng thái `accepted` — trạng thái cuối, `update`/`set_price` đều chặn — nên con
+    # số nguồn không thể đổi về sau. Muốn đổi giá thì đi cửa phụ lục hợp đồng.
+    #
+    # `>= 0` chứ không `> 0`: hạng mục 0 đồng vẫn phải hiện trên bảng việc để freelancer thấy
+    # mà sửa, thay vì biến mất im lặng. Chặn 0 đồng là việc của cổng gửi báo giá.  #Huynh
+    billing_amount: Mapped[Decimal | None] = mapped_column(Numeric(15, 2), nullable=True)
+
     # `selectin` chứ không lazy mặc định: danh sách công việc trả về hàng chục task một lúc,
     # lazy-load là N+1 truy vấn — và trong ngữ cảnh async thì lazy-load còn NỔ hẳn
     # (`MissingGreenlet`) chứ không chỉ chậm.
@@ -1568,6 +1583,19 @@ class TaskModel(UUIDMixin, TimestampMixin, Base):
     __table_args__ = (
         Index("idx_tasks_entity", "entity_type", "entity_id"),
         Index("idx_tasks_entity_status", "entity_type", "entity_id", "status"),
+        # Chỉ mục PHẦN theo ENTITY trước: hai truy vấn dùng nó (guard đóng dự án, bảng doanh
+        # thu) đều lọc theo entity rồi mới tới cờ thu tiền. Chỉ mục trần trên `billing_amount`
+        # thì không phục vụ được truy vấn nào.
+        Index(
+            "idx_tasks_billing",
+            "entity_type",
+            "entity_id",
+            postgresql_where=text("billing_amount IS NOT NULL"),
+        ),
+        CheckConstraint(
+            "billing_amount IS NULL OR billing_amount >= 0",
+            name="ck_tasks_billing_amount_non_negative",
+        ),
     )
 
 

@@ -3,6 +3,7 @@
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -408,6 +409,33 @@ class DealsService:
 
     async def update(self, user_id: uuid.UUID, deal_id: uuid.UUID, payload: DealRequest):  # type: ignore[return]
         deal = await self._get_deal(user_id, deal_id)
+
+        # KHÔNG cho đổi giá sau khi đã sinh task thu tiền.
+        #
+        # Task thu tiền chốt số tiền vào `tasks.billing_amount` ngay lúc sinh. Trước đây tiền
+        # được chia lại theo % mỗi lần cần nên nó tự trôi theo `estimated_value`; giờ thì
+        # không. Sửa giá ở đây là bảng doanh thu (cộng từ task) và phễu (cộng từ deal) kể hai
+        # con số khác nhau, mà không có gì trên màn hình báo.
+        #
+        # So RỒI MỚI chặn, không chặn cả trường: frontend gửi `estimated_value` ở MỌI lần sửa
+        # deal (`NewDealModal.tsx`), chặn thẳng là không đổi nổi cái tiêu đề. Muốn đổi giá thật
+        # thì đi cửa phụ lục hợp đồng (`ContractsService.amend`).  #Huynh
+        new_value = getattr(payload, "estimated_value", None)
+        if new_value is not None and Decimal(new_value) != Decimal(deal.estimated_value or 0):
+            # Đọc thẳng repository, KHÔNG dùng `get_or_create_for_deal`: một cái guard mà lại
+            # tạo ra project như tác dụng phụ thì hỏng.
+            from src.modules.projects.infrastructure.repository import ProjectRepository
+            from src.modules.tasks.application.service import PAYMENT_TASK_PREFIX, TaskService
+
+            project = await ProjectRepository(self.db).get_by_deal_id(deal_id, user_id)
+            if project is not None and await TaskService(self.db).repo.has_billing_tasks(
+                "project", project.id, PAYMENT_TASK_PREFIX
+            ):
+                raise BusinessRuleError(
+                    "Deal này đã có công việc thu tiền nên không đổi giá trực tiếp được — "
+                    "các khoản phải thu đã chốt theo giá cũ. Hãy lập phụ lục hợp đồng."
+                )
+
         for field in (
             "title",
             "source",
@@ -535,18 +563,20 @@ class DealsService:
         if target == DealStage.ACTIVE:
             from src.modules.projects.application.service import ProjectService
             from src.modules.proposals.application.service import (
-                payment_task_payloads_for_deal,
+                billing_task_payloads_for_deal,
             )
             from src.modules.tasks.application.service import TaskService
 
             project = await ProjectService(db=self.db).get_or_create_for_deal(
                 deal_id, user_id, name=deal.title
             )
-            # Mốc thanh toán của báo giá đã chốt → task "Thu tiền:" trên project. Idempotent
-            # (bỏ title trùng) nên chuyển active nhiều lần cũng không nhân đôi.  #Huynh
-            payloads = await payment_task_payloads_for_deal(self.db, deal_id, user_id)
+            # Hạng mục chi phí của báo giá đã chốt → task thu tiền trên project. Idempotent
+            # theo "project đã có task thu tiền chưa" (KHÔNG theo tên): deal cũ đã có task
+            # "Thu tiền: ..." theo mốc % mà lại sinh thêm bộ theo hạng mục thì tên nào cũng
+            # khác nhau, dedupe theo tên không bắt được, và doanh thu cộng đôi.  #Huynh
+            payloads = await billing_task_payloads_for_deal(self.db, deal_id, user_id)
             if payloads:
-                await TaskService(self.db).create_many_for_entity(
+                await TaskService(self.db).create_billing_tasks_for_entity(
                     "project", project.id, user_id, payloads
                 )
         return saved
