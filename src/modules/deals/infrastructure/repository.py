@@ -454,3 +454,25 @@ class DealsRepository:
             .order_by(LeadScoreModel.generated_at.desc())
             .limit(1)
         )
+
+    async def get_lead_score_by_id(
+        self,
+        lead_score_id: uuid.UUID,
+        deal_id: uuid.UUID,
+        owner_user_id: uuid.UUID,
+    ):
+        """Một bản chấm CỤ THỂ của deal, hoặc None.
+
+        Lọc bằng CẢ ba: id bản chấm, id deal, và chủ sở hữu. Thiếu vế `deal_id` thì biết id
+        một bản chấm là chốt được nó sang deal khác của chính mình; thiếu vế chủ sở hữu thì
+        chốt được bản chấm của người khác.  #Huynh
+        """
+        return await self.db.scalar(
+            select(LeadScoreModel)
+            .join(DealModel, DealModel.id == LeadScoreModel.deal_id)
+            .where(
+                LeadScoreModel.id == lead_score_id,
+                LeadScoreModel.deal_id == deal_id,
+                DealModel.owner_user_id == owner_user_id,
+            )
+        )

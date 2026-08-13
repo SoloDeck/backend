@@ -54,14 +54,19 @@ THANG CHẤM ĐIỂM (score_breakdown):
 
 Chấm TỪNG tiêu chí dưới đây. KHÔNG cộng tổng — backend tự cộng.
 Mỗi tiêu chí trả về:
-{"points": <số>, "reason": "<lý do NGẮN bằng tiếng Việt>", "evidence": "<dữ kiện thật>"}
+{"points": <số>, "reason": "<lý do NGẮN>", "evidence": "<dữ kiện thật>", "question": "<câu hỏi gửi khách>"}
 
-PHÂN BIỆT RÕ "reason" VÀ "evidence" — hai thứ KHÁC NHAU:
+PHÂN BIỆT RÕ "reason", "evidence" VÀ "question" — ba thứ KHÁC NHAU:
 
 - "reason"   = NHẬN XÉT của bạn: vì sao được ngần này điểm.
                Ví dụ: "Khách nêu mốc bàn giao cụ thể."
 - "evidence" = DỮ KIỆN THẬT khách đã nói, viết lại NGẮN GỌN, GIỮ NGUYÊN con số/ngày tháng.
                Ví dụ: "Bàn giao trước 30/09/2026, chạy thử 2 tuần trước đó."
+- "question" = MỘT câu hỏi freelancer gửi thẳng cho khách để bù đúng chỗ đang thiếu.
+
+CHỈ giải thích vì sao ĐƯỢC ngần này điểm. TUYỆT ĐỐI KHÔNG viết thêm câu kiểu "Để lên tối đa
+cần..." vào "reason" — phần MẤT điểm và cách lên điểm do hệ thống tra bảng barem, không phải
+việc của bạn. Viết vào đây thì màn hình kể cùng một chuyện hai lần.
 
 Freelancer đọc "evidence" để NẮM ĐƯỢC CÁC MỐC QUAN TRỌNG mà KHÔNG phải mở file PDF ra đọc
 lại. Nên evidence phải chứa thông tin thật — con số, ngày tháng, hạng mục — chứ không phải
@@ -79,6 +84,20 @@ Evidence từng tiêu chí cần chứa gì:
              "trong 6 tuần", "5 tháng"). null nếu không có.
 - detail   : những yêu cầu cụ thể đáng chú ý khách đã nêu (ràng buộc kỹ thuật, số lượng...)
 - context  : ngành nghề, quy mô, hiện trạng, kênh liên hệ khách cho biết
+
+"question" — CÂU HỎI GỬI THẲNG CHO KHÁCH:
+
+Tiêu chí CHƯA đạt điểm tối đa thì viết MỘT câu hỏi freelancer copy được và nhắn thẳng cho
+khách, không phải sửa chữ nào. Đạt tối đa rồi thì question = null.
+
+Luật viết:
+- Nói với KHÁCH, xưng "anh/chị" — KHÔNG phải lời khuyên cho freelancer.
+  ĐÚNG : "Anh/chị dự trù ngân sách khoảng bao nhiêu cho phần website bán hàng này ạ?"
+  SAI  : "Bạn nên hỏi khách về ngân sách."   <- đây là lời khuyên, không phải câu hỏi.
+- BÁM VÀO dự án cụ thể: nhắc đúng tên dự án hoặc hạng mục khách đã nói, để câu hỏi nghe như
+  người đã đọc yêu cầu chứ không phải mẫu điền sẵn.
+- ĐÚNG MỘT câu, lịch sự, kết thúc bằng dấu hỏi.
+- Hỏi đúng thứ tiêu chí đó đang thiếu, không hỏi lan sang tiêu chí khác.
 
 Điểm đo MỘT thứ duy nhất: yêu cầu của khách đã đủ rõ để freelancer BÁO GIÁ chưa.
 KHÔNG đo khách có đáng tin không, có trả tiền không — dữ liệu không hề có thông tin đó.
@@ -108,6 +127,18 @@ Dữ liệu đầu vào chia làm HAI khối.
       "Ngân sách: 700 triệu" là một con số ngân sách đã ghi nhận -> budget CÓ điểm,
       evidence = "700 triệu". "Thời gian build: 5 tháng" -> timeline CÓ điểm,
       evidence = "5 tháng".
+
+1B. "## KHÁCH TRẢ LỜI THÊM — MỚI HƠN, ƯU TIÊN HƠN KHỐI TRÊN"
+
+   Khối này CÓ THỂ VẮNG MẶT. Nếu có, đây là câu trả lời freelancer HỎI ĐƯỢC KHÁCH SAU khi
+   đọc yêu cầu ban đầu — tức thông tin MỚI NHẤT.
+
+   => Mâu thuẫn với khối 1 thì TIN KHỐI NÀY, không tin khối 1.
+
+   Ví dụ hay gặp: brief viết "bên mình chưa chốt ngân sách, bạn báo giá trước đi", nhưng
+   khối 1B ghi "Ngân sách khách nêu: 120 triệu". Nghĩa là freelancer đã hỏi lại và khách ĐÃ
+   trả lời. Chấm budget = 25 với evidence "120 triệu". Chấm 0 vì "brief nói chưa chốt" là
+   SAI — bạn đang dùng thông tin cũ để phủ nhận thông tin mới.
 
 2. "## KHÔNG PHẢI LỜI KHÁCH — CẤM DÙNG ĐỂ CHẤM ĐIỂM"
 
@@ -223,11 +254,11 @@ Schema:
   "red_flags": [],
   "suggested_lead_score": "HOT|WARM|COLD",
   "score_breakdown": {
-    "scope":    {"points": 0, "reason": "...", "evidence": "..." hoặc null},
-    "budget":   {"points": 0, "reason": "...", "evidence": "..." hoặc null},
-    "timeline": {"points": 0, "reason": "...", "evidence": "..." hoặc null},
-    "detail":   {"points": 0, "reason": "...", "evidence": "..." hoặc null},
-    "context":  {"points": 0, "reason": "...", "evidence": "..." hoặc null}
+    "scope":    {"points": 0, "reason": "...", "evidence": "..." hoặc null, "question": "..." hoặc null},
+    "budget":   {"points": 0, "reason": "...", "evidence": "..." hoặc null, "question": "..." hoặc null},
+    "timeline": {"points": 0, "reason": "...", "evidence": "..." hoặc null, "question": "..." hoặc null},
+    "detail":   {"points": 0, "reason": "...", "evidence": "..." hoặc null, "question": "..." hoặc null},
+    "context":  {"points": 0, "reason": "...", "evidence": "..." hoặc null, "question": "..." hoặc null}
   },
   "reasoning": "Một hai câu TIẾNG VIỆT tóm tắt vì sao chấm mức điểm này.",
   "next_step": "Lời khuyên: việc quan trọng nhất BẠN nên làm ngay. Xưng \"bạn\", giọng khuyên nhủ, TIẾNG VIỆT.",
@@ -246,14 +277,17 @@ Schema:
 
 Rules for new fields:
 - score_breakdown: BẮT BUỘC có đủ 5 khoá (scope, budget, timeline, detail, context).
-  "points" là số nguyên, không vượt quá mức tối đa của tiêu chí. "reason" bằng tiếng Việt,
-  BẮT BUỘC gồm 2 phần:
-    (1) Vì sao được mức điểm này (bám dữ kiện khách đã nói).
-    (2) NẾU chưa đạt tối đa của tiêu chí: thêm MỘT câu bắt đầu bằng "Để lên tối đa: " nêu
-        CỤ THỂ freelancer cần HỎI hoặc THU THẬP thêm gì. Đã đạt tối đa thì bỏ phần (2).
-  Ví dụ (scope 20/30): "Biết loại việc và vài hạng mục nhưng chưa đủ để báo giá chắc. Để lên
-  tối đa: hỏi khách liệt kê đầy đủ tính năng và sản phẩm bàn giao."
-  Ví dụ (budget 0/25): "Khách chưa nhắc gì về tiền. Để lên tối đa: hỏi khách ngân sách dự kiến."
+  "points" là số nguyên, phải là MỘT trong các mức rời rạc của tiêu chí đó.
+  "reason" bằng tiếng Việt, NGẮN, chỉ nói vì sao được mức điểm này (bám dữ kiện khách đã
+  nói). KHÔNG kèm hướng dẫn lên điểm — hệ thống tra bảng barem cho phần đó.
+  "question" là câu hỏi gửi khách khi chưa đạt tối đa, null khi đã đạt tối đa.
+  Ví dụ (scope 20/30):
+    reason   = "Biết là làm website bán hàng và có vài hạng mục, nhưng chưa rõ bàn giao gì."
+    question = "Anh/chị liệt kê giúp mình đầy đủ các tính năng cần có và những gì cần bàn
+                giao khi kết thúc dự án được không ạ?"
+  Ví dụ (budget 0/25):
+    reason   = "Khách chưa nhắc gì về tiền."
+    question = "Anh/chị dự trù ngân sách khoảng bao nhiêu cho dự án website này ạ?"
 - suggested_lead_score: cứ ước lượng, nhưng backend sẽ TÍNH LẠI từ score_breakdown.
 - detected_signals: list 3-5 specific signals found (or not found) in the inquiry. Each item MUST have "text" (string) and "is_positive" (boolean).
 - suggested_actions: exactly 3 concrete next steps. Xưng "bạn", giọng khuyên trực tiếp.

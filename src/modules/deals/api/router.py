@@ -12,7 +12,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.infrastructure.database.session import get_db_session
 from src.modules.deals.application.attachment_service import DealAttachmentService
 from src.modules.deals.application.service import DealsService
-from src.modules.deals.schemas.request import DealRequest, DealStageRequest
+from src.modules.deals.schemas.request import (
+    DealRequest,
+    DealStageRequest,
+    SaveQualificationRequest,
+)
 from src.modules.deals.schemas.response import (
     DealAttachmentResponse,
     DealResponse,
@@ -175,16 +179,26 @@ async def save_deal_qualification(
     deal_id: uuid.UUID,
     user_id: CurrentUserId,
     db: DBSession,
+    payload: SaveQualificationRequest | None = None,
 ) -> ApiResponse[LeadScoreHistoryResponse]:
-    """Chốt bản chấm mới nhất — đóng dấu `saved_at` để tab "Tài liệu" hiện nó.
+    """Đóng dấu `saved_at` lên một bản chấm để tab "Tài liệu" hiện nó.
 
-    Không nhận id bản chấm: bảng đánh giá luôn hiển thị lần chấm vừa xong, nên "chốt cái tôi
-    đang xem" chính là "chốt bản mới nhất". Nhận id từ client thì lại phải kiểm id đó có
-    thuộc deal này không — thêm một cửa để sai.
+    Body tuỳ chọn, cả hai khoá đều có thể vắng — đường gọi cũ (POST không body) không vỡ:
 
-    Chưa chấm lần nào -> 404, vì không có gì để chốt.  #Huynh
+    * `qualification_id` — chốt ĐÚNG bản đó. Bỏ trống thì chốt bản mới nhất.
+      Cần thiết cho luồng mở lại bản cũ từ tab Lịch sử: lúc đó "bản đang xem" không còn là
+      "bản mới nhất", chốt nhầm dòng thì người dùng không hề biết.
+    * `gap_acknowledged` — giao diện đã cảnh báo bản này chưa đủ 100 điểm mà người dùng vẫn
+      chọn chốt.
+
+    Không tìm thấy bản chấm (hoặc nó thuộc deal khác / người khác) -> 404.  #Huynh
     """
-    row = await DealsService(db=db).save_latest_qualification(user_id, deal_id)
+    row = await DealsService(db=db).save_qualification(
+        user_id,
+        deal_id,
+        qualification_id=payload.qualification_id if payload else None,
+        gap_acknowledged=bool(payload and payload.gap_acknowledged),
+    )
     return ApiResponse.ok(LeadScoreHistoryResponse.model_validate(row))
 
 
