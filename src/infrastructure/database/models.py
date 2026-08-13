@@ -595,6 +595,13 @@ class DealModel(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     currency: Mapped[str] = mapped_column(String(3), nullable=False, server_default="VND")
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     desired_timeline: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # Ngân sách KHÁCH nêu, ghi lại sau khi freelancer hỏi được — ĐƯỢC chấm điểm.
+    #
+    # Khác hẳn `estimated_value` ngay bên trên: đó là con số freelancer TỰ ƯỚC để tính doanh
+    # thu, và nó bị cấm dùng để chấm điểm (xem `_build_inquiry_context`). Không có cột này
+    # thì freelancer gọi điện hỏi được ngân sách xong chẳng có chỗ nào để ghi — biết mình
+    # thiếu gì mà vẫn không vá được, luồng đứt ngay đó.  #Huynh
+    client_budget: Mapped[str | None] = mapped_column(String(255), nullable=True)
     project_type: Mapped[str | None] = mapped_column(String(200), nullable=True)
     service_category: Mapped[str | None] = mapped_column(String(200), nullable=True)
     pricing_tier: Mapped[str | None] = mapped_column(String(100), nullable=True)
@@ -828,6 +835,15 @@ class LeadScoreModel(Base):
     # Nullable, và mọi dòng cũ đều NULL: bản chấm trước khi có tính năng này thì đúng là chưa
     # ai chốt cả, đừng đoán hộ.  #Huynh
     saved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # Freelancer đã được cảnh báo là bản này chưa đủ 100 điểm, và vẫn chọn chốt.
+    #
+    # Không có cờ này thì nhìn vào một bản đã chốt 27/100 sẽ không phân biệt được "hệ thống
+    # để lọt" với "người dùng biết rõ và tự chịu trách nhiệm". Số điểm thiếu thì suy lại được
+    # từ `breakdown`, nhưng việc CÓ ĐƯỢC CẢNH BÁO thì không suy ra từ đâu cả.
+    #
+    # Dòng cũ để `false`: trước đây không có cảnh báo nào, nên không ai từng chấp nhận gì.
+    gap_acknowledged: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
 
     __table_args__ = (
         Index("idx_lead_scores_deal", "deal_id"),

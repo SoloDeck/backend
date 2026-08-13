@@ -2,6 +2,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime
 
+from src.ai.lead_qualifier.scoring import COLD_THRESHOLD, level_from_score
 from src.modules.deals.domain.value_objects.ai_confidence import AIConfidence
 
 
@@ -29,13 +30,20 @@ class LeadScore:
 
     @property
     def is_qualified(self) -> bool:
-        """Conventionally, ≥60 score means the lead is worth pursuing."""
-        return self.score >= 60
+        """Đủ điều kiện theo đuổi = không phải COLD.
+
+        Trước đây chỗ này hardcode `>= 60`, trong khi `DealResponse.is_ai_qualified` dùng
+        ngưỡng 45. Cùng một deal 50 điểm: API trả `is_ai_qualified = true` nhưng
+        `recommendation = "pass"` — hai câu trả lời ngược nhau cho cùng một con số, và người
+        dùng nhìn thấy cả hai. Giờ cả hai đọc chung `COLD_THRESHOLD`.  #Huynh
+        """
+        return self.score >= COLD_THRESHOLD
 
     @property
     def level(self) -> str:
-        if self.score >= 80:
-            return "hot"
-        if self.score >= 50:
-            return "warm"
-        return "cold"
+        """Ngưỡng cũ ở đây là 80/50, lệch hẳn với 75/45 của bộ chấm điểm.
+
+        Deal 78 điểm: bảng chấm điểm kết luận HOT, tầng domain nói WARM. Một thang điểm
+        không được có hai định nghĩa nhãn.  #Huynh
+        """
+        return level_from_score(self.score).lower()
