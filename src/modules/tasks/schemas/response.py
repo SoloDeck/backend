@@ -54,6 +54,10 @@ class TaskResponse(BaseModel):
     # Chỉ ĐỌC: không có trong body tạo/sửa task. Cho client tự đặt số tiền là cho phép đúc ra
     # một task thu tiền số tuỳ ý rồi xuất hóa đơn gửi khách bằng con số đó.  #Huynh
     billing_amount: Decimal | None = None
+    # `on_signing` = đòi được NGAY; `on_completion` = đòi khi công việc xong. `None` với task
+    # cũ / task freelancer tự thêm. Frontend dùng để vẽ nhãn "Thu ngay" và để hỏi lại khi xuất
+    # hóa đơn cho việc chưa tick xong. Chỉ ĐỌC, y như `billing_amount`.  #Huynh
+    billing_due_type: str | None = None
     # Chỉ có với task thu tiền ĐÃ xuất hóa đơn. `None` nghĩa là chưa xuất — frontend hiện
     # nút "Tạo & gửi hóa đơn", còn có rồi thì hiện nhãn theo `invoice.status`.
     invoice: TaskInvoiceSummary | None = None

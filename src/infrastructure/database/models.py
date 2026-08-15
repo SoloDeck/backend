@@ -1567,6 +1567,16 @@ class TaskModel(UUIDMixin, TimestampMixin, Base):
     # mà sửa, thay vì biến mất im lặng. Chặn 0 đồng là việc của cổng gửi báo giá.  #Huynh
     billing_amount: Mapped[Decimal | None] = mapped_column(Numeric(15, 2), nullable=True)
 
+    # Thu TRƯỚC khi làm hay thu KHI XONG — `on_signing` / `on_completion`, chép từ hạng mục
+    # chi phí lúc sinh task (`pdf_content.DUE_TYPE_LABELS`).
+    #
+    # Không dùng enum Postgres: hai giá trị này là chuyện NGHIỆP VỤ còn đang định hình, mà
+    # thêm giá trị vào enum Postgres phải có migration riêng và khoá bảng. `String(20)` +
+    # hằng số bên Python đủ chặt cho một thứ chỉ chính code này ghi.
+    #
+    # NULL với task cũ (trước khi có cột này) và với task freelancer tự thêm.  #Huynh
+    billing_due_type: Mapped[str | None] = mapped_column(String(20), nullable=True)
+
     # `selectin` chứ không lazy mặc định: danh sách công việc trả về hàng chục task một lúc,
     # lazy-load là N+1 truy vấn — và trong ngữ cảnh async thì lazy-load còn NỔ hẳn
     # (`MissingGreenlet`) chứ không chỉ chậm.

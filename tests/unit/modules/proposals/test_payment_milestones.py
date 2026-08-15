@@ -10,6 +10,7 @@ from src.ai.proposal_generator.schemas.proposal_content import ProposalContent
 from src.ai.proposal_generator.schemas.proposal_document import default_payment_milestones
 from src.modules.proposals.application.pdf_content import (
     build_proposal_document,
+    infer_due_type,
     resolve_cost_items,
 )
 from src.modules.proposals.application.service import (
@@ -116,7 +117,11 @@ class TestBillingTaskPayloads:
         items = resolve_cost_items(
             {
                 "pricing_items": [
-                    {"label": "Trang đăng nhập", "amount": 76_000_000, "due": "Khi ký hợp đồng"},
+                    {
+                        "label": "Trang đăng nhập",
+                        "amount": 76_000_000,
+                        "due_type": "on_signing",
+                    },
                     {"label": "Tích hợp ngân hàng", "amount": 63_500_000},
                 ]
             }
@@ -129,7 +134,9 @@ class TestBillingTaskPayloads:
         assert payloads[0].title == "Trang đăng nhập"
         assert payloads[0].amount == Decimal(76_000_000)
         assert "Khi ký hợp đồng" in payloads[0].description
-        # Không khai `due` thì lấy mặc định, để bảng mục 8 không có ô trống.
+        # Loại đi theo task để bảng việc biết dòng nào đòi được ngay.
+        assert payloads[0].due_type == "on_signing"
+        assert payloads[1].due_type == "on_completion"
         assert "Khi hoàn thành hạng mục" in payloads[1].description
 
     def test_amount_lives_on_the_column_not_in_the_title(self):
@@ -142,6 +149,99 @@ class TestBillingTaskPayloads:
 
     def test_no_cost_items_no_tasks(self):
         assert _cost_items_to_payloads(resolve_cost_items({})) == []
+
+
+class TestThoiDiemThuLaLOAIChuKhongPhaiChuTuDo:
+    """Thời điểm thu là enum `on_signing` / `on_completion`, kèm ghi chú tự do tuỳ chọn.
+
+    Bản đầu để chữ tự do, và hệ thống phải ĐOÁN xem câu đó có nghĩa "thu trước" không bằng cách
+    dò từ khoá tiếng Việt — gõ "Ngay sau khi hai bên xác nhận" là đoán trượt, cảnh báo hiện sai.
+    Chữ đẹp cho khách đọc nhưng máy không suy luận được gì trên nó.  #Huynh
+    """
+
+    def test_hang_muc_DAU_mac_dinh_thu_khi_ky_hop_dong(self):
+        """MẶC ĐỊNH GIỮ CỌC — điểm quan trọng nhất của thay đổi này.
+
+        Trước đó mọi hạng mục mặc định "thu khi hoàn thành", tức freelancer làm xong sạch dự án
+        mới nhận đồng đầu tiên. TỆ HƠN hẳn lịch 50/50 của bản cũ, mà không ai để ý vì nó là
+        mặc định im lặng.
+        """
+        items = resolve_cost_items(
+            {
+                "pricing_items": [
+                    {"label": "Phân tích yêu cầu", "amount": 39_000_000},
+                    {"label": "Thiết kế hệ thống", "amount": 39_000_000},
+                ]
+            }
+        )
+        assert items[0].due_type == "on_signing"
+        assert items[0].due_label == "Khi ký hợp đồng"
+        assert items[1].due_type == "on_completion"
+
+    def test_freelancer_da_chon_thi_khong_de_len(self):
+        items = resolve_cost_items(
+            {
+                "pricing_items": [
+                    {"label": "A", "amount": 10, "due_type": "on_completion"},
+                    {"label": "B", "amount": 10, "due_type": "on_signing"},
+                ]
+            }
+        )
+        assert [i.due_type for i in items] == ["on_completion", "on_signing"]
+
+    def test_ghi_chu_tu_do_in_de_len_nhan_chuan(self):
+        # Hợp đồng thật hay có điều kiện riêng — ép về hai câu cố định là làm nghèo tờ giấy.
+        items = resolve_cost_items(
+            {
+                "pricing_items": [
+                    {
+                        "label": "A",
+                        "amount": 10,
+                        "due_type": "on_completion",
+                        "due_note": "Sau khi phòng Marketing duyệt demo",
+                    }
+                ]
+            }
+        )
+        assert items[0].due_label == "Sau khi phòng Marketing duyệt demo"
+        assert items[0].due_type == "on_completion"  # máy vẫn biết đây là thu khi xong
+
+    def test_bang_suy_ra_tu_bo_dinh_gia_cung_giu_coc(self):
+        # Freelancer chưa đụng vào panel: bảng tới từ bộ định giá, vẫn phải có dòng thu trước.
+        items = resolve_cost_items(
+            {
+                "pricing_detail": {
+                    "final_price": 100_000_000,
+                    "suggested": 100_000_000,
+                    "line_items": [
+                        {"label": "A", "amount": 60_000_000},
+                        {"label": "B", "amount": 40_000_000},
+                    ],
+                }
+            }
+        )
+        assert items[0].due_type == "on_signing"
+        assert items[1].due_type == "on_completion"
+
+    def test_doc_duoc_du_lieu_cu_con_ghi_thoi_diem_thu_bang_chu(self):
+        items = resolve_cost_items(
+            {
+                "pricing_items": [
+                    {"label": "A", "amount": 10, "due": "Khi ký hợp đồng"},
+                    {"label": "B", "amount": 10, "due": "Khi hoàn thành hạng mục"},
+                ]
+            }
+        )
+        assert [i.due_type for i in items] == ["on_signing", "on_completion"]
+        # Câu trùng y hệt nhãn chuẩn thì bỏ, không in lại thành ghi chú thừa.
+        assert [i.due_note for i in items] == ["", ""]
+
+    def test_doan_khong_ra_thi_tra_None_chu_khong_doan_bua(self):
+        # Thà im còn hơn gắn nhãn sai rồi nhắc sai.
+        assert infer_due_type("Ngay sau khi hai bên xác nhận") is None
+        assert infer_due_type("") is None
+        assert infer_due_type("Khi nghiệm thu & bàn giao") == "on_completion"
+        assert infer_due_type("Đặt cọc trước khi bắt đầu") == "on_signing"
 
 
 class TestLegacyMilestonePayloads:

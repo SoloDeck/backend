@@ -45,6 +45,9 @@ class BillingTaskPayload:
     title: str
     amount: Decimal
     description: str | None = None
+    # `on_signing` / `on_completion`, chép từ hạng mục chi phí. `None` = lối rơi về cho báo
+    # giá cũ theo mốc %, khi không suy được thời điểm thu.
+    due_type: str | None = None
 
 
 @dataclass
@@ -170,6 +173,7 @@ class TaskService:
                 description=payload.description,
                 priority=_DEFAULT_PRIORITY,
                 billing_amount=payload.amount,
+                billing_due_type=payload.due_type,
             )
             created.append(task)
         return created

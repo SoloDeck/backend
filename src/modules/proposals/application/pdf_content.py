@@ -21,7 +21,7 @@ PDF, dù frontend làm ĐÚNG hợp đồng.
 thiếu dữ liệu thì để trống chứ không nổ.  #Huynh
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
@@ -31,9 +31,27 @@ from src.ai.proposal_generator.schemas.proposal_document import (
     ProposalDocument,
 )
 
-# Thời điểm thu mặc định của một hạng mục. Dùng chung cho bảng "8. Điều Khoản Thanh Toán"
-# và cho mô tả task thu tiền, để tờ giấy gửi khách và bảng việc không nói hai kiểu.  #Huynh
-DEFAULT_COST_ITEM_DUE = "Khi hoàn thành hạng mục"
+# Thời điểm thu của một hạng mục — LOẠI có sẵn, không phải chữ tự do.
+#
+# Vì sao là enum: bản đầu để freelancer gõ chữ, và hệ thống phải ĐOÁN xem câu đó có nghĩa "thu
+# trước" không bằng cách dò từ khoá tiếng Việt ("khi ký", "đặt cọc"...). Gõ "Ngay sau khi hai
+# bên xác nhận" là đoán trượt, cảnh báo hiện sai. Chữ đẹp cho khách đọc nhưng máy không suy
+# luận được gì trên nó.
+#
+# Chữ tự do KHÔNG mất: nó chuyển sang `due_note`, in đè lên nhãn mặc định. Hợp đồng thật hay
+# có điều kiện riêng ("khi bên A duyệt bản demo"), ép về hai câu cố định là làm nghèo tờ giấy.
+DUE_ON_SIGNING = "on_signing"
+DUE_ON_COMPLETION = "on_completion"
+
+DUE_TYPE_LABELS = {
+    DUE_ON_SIGNING: "Khi ký hợp đồng",
+    DUE_ON_COMPLETION: "Khi hoàn thành hạng mục",
+}
+DEFAULT_COST_ITEM_DUE = DUE_TYPE_LABELS[DUE_ON_COMPLETION]
+
+# Từ khoá nhận ra "thu trước khi làm" trong dữ liệu CŨ (khi thời điểm thu còn là chữ tự do).
+# CHỈ dùng làm cầu nối đọc dữ liệu cũ — đừng gọi nó ở đường ghi mới.  #Huynh
+_LEGACY_UPFRONT_HINTS = ("khi ký", "ký hợp đồng", "trước khi", "đặt cọc", "tạm ứng", "ứng trước")
 
 
 @dataclass(frozen=True)
@@ -42,13 +60,25 @@ class CostItem:
 
     Đây là ĐƠN VỊ THU TIỀN của hệ thống: mỗi hạng mục sinh ra một task thu tiền và một hoá
     đơn. Nên `amount` phải là con số chốt để tính toán được, không phải chuỗi đã format —
-    `PricingLineItem` (chuỗi "76.000.000 VND") chỉ dành cho tầng render.  #Huynh
+    `PricingLineItem` (chuỗi "76.000.000 VND") chỉ dành cho tầng render.
+
+    `due_type` là thứ MÁY đọc (thu trước hay thu khi xong), `due_note` là thứ KHÁCH đọc.
     """
 
     label: str
     amount: int
-    due: str = DEFAULT_COST_ITEM_DUE
+    due_type: str = DUE_ON_COMPLETION
+    due_note: str = ""
     currency: str = "VND"
+
+    @property
+    def due_label(self) -> str:
+        """Chữ in ra tờ báo giá: ghi chú riêng nếu có, không thì nhãn chuẩn của loại."""
+        return self.due_note or DUE_TYPE_LABELS.get(self.due_type, DEFAULT_COST_ITEM_DUE)
+
+    @property
+    def collected_upfront(self) -> bool:
+        return self.due_type == DUE_ON_SIGNING
 
 
 def _text(value: Any) -> str:
@@ -130,19 +160,58 @@ def _resolve_total_int(content: dict[str, Any]) -> int:
     return 0
 
 
+def infer_due_type(text: str) -> str | None:
+    """Suy thời điểm thu từ một câu tiếng Việt. `None` = không đoán được.
+
+    ĐÂY LÀ CẦU NỐI CHO DỮ LIỆU CŨ, không phải cách làm việc chính. Dùng ở hai chỗ: đọc báo giá
+    còn ghi thời điểm thu bằng chữ tự do, và sinh task từ mốc thanh toán % của báo giá cũ.
+    Đường ghi mới luôn có `due_type` hẳn hoi nên không đi qua đây.
+
+    Đoán trượt chỉ mất một nhãn trên bảng việc, không sai tiền — nên thà trả `None` (giao diện
+    im lặng) còn hơn đoán bừa một loại rồi nhắc sai.  #Huynh
+    """
+    lowered = (text or "").lower()
+    if not lowered:
+        return None
+    if any(hint in lowered for hint in _LEGACY_UPFRONT_HINTS):
+        return DUE_ON_SIGNING
+    if any(hint in lowered for hint in ("hoàn thành", "nghiệm thu", "bàn giao")):
+        return DUE_ON_COMPLETION
+    return None
+
+
+def _coerce_due(item: dict[str, Any]) -> tuple[str | None, str]:
+    """``(due_type, due_note)`` của một hạng mục. `due_type` là `None` khi chưa ai đặt."""
+    raw_type = _text(item.get("due_type")).lower()
+    if raw_type in DUE_TYPE_LABELS:
+        return raw_type, _text(item.get("due_note"))
+
+    legacy = _text(item.get("due_note") or item.get("due"))
+    if not legacy:
+        return None, ""
+    # Ghi chú trùng y hệt nhãn chuẩn thì bỏ đi — in lại nguyên câu mặc định là thừa.
+    note = "" if legacy in DUE_TYPE_LABELS.values() else legacy
+    return infer_due_type(legacy), note
+
+
 def _typed_cost_items(override: list[Any]) -> list[CostItem]:
-    """Bóc dạng MỚI ``[{"label", "amount", "due"?}]``. Rỗng = không phải dạng này.
+    """Bóc dạng MỚI ``[{"label", "amount", "due_type"?, "due_note"?}]``. Rỗng = không phải dạng này.
 
     Chỉ nhận khi **mọi** phần tử đều là dict có nhãn — nửa nọ nửa kia thì trả rỗng để chỗ gọi
     rơi về dạng cũ, thay vì dựng một bảng lắp ghép từ hai nguồn.
 
     Tiền thiếu/hỏng tính là 0 chứ không loại bỏ dòng: mất hẳn một hạng mục khỏi báo giá gửi
-    khách nguy hiểm hơn nhiều so với một dòng ghi 0đ mà freelancer nhìn thấy và sửa.  #Huynh
+    khách nguy hiểm hơn nhiều so với một dòng ghi 0đ mà freelancer nhìn thấy và sửa.
+
+    MẶC ĐỊNH GIỮ CỌC: chưa dòng nào được đặt loại thì dòng ĐẦU thành "khi ký hợp đồng". Bản
+    trước mặc định tất cả là "khi hoàn thành" — tức là freelancer làm xong sạch dự án mới nhận
+    đồng đầu tiên, TỆ HƠN hẳn lịch 50/50 của bản cũ. Freelancer đặt tay dòng nào thì tôn trọng
+    hết, không đè.  #Huynh
     """
     if not all(isinstance(item, dict) for item in override):
         return []
 
-    typed: list[CostItem] = []
+    parsed: list[tuple[str, int, str | None, str]] = []
     for item in override:
         label = _text(item.get("label") or item.get("description"))
         if not label:
@@ -151,19 +220,38 @@ def _typed_cost_items(override: list[Any]) -> list[CostItem]:
             amount = int(Decimal(str(item.get("amount") or 0)))
         except (TypeError, ValueError, InvalidOperation):
             amount = 0
-        typed.append(
-            CostItem(
-                label=label,
-                amount=max(amount, 0),
-                due=_text(item.get("due")) or DEFAULT_COST_ITEM_DUE,
-            )
+        due_type, due_note = _coerce_due(item)
+        parsed.append((label, max(amount, 0), due_type, due_note))
+
+    nobody_chose = all(due_type is None for _, _, due_type, _ in parsed)
+    return [
+        CostItem(
+            label=label,
+            amount=amount,
+            due_type=due_type
+            or (DUE_ON_SIGNING if nobody_chose and index == 0 else DUE_ON_COMPLETION),
+            due_note=due_note,
         )
-    return typed
+        for index, (label, amount, due_type, due_note) in enumerate(parsed)
+    ]
 
 
 def typed_pricing_items(override: list[Any]) -> list[tuple[str, int]]:
-    """Vỏ mỏng giữ nguyên chữ ký cũ ``[(nhãn, tiền)]`` cho các chỗ gọi chưa cần `due`."""
+    """Vỏ mỏng giữ nguyên chữ ký cũ ``[(nhãn, tiền)]`` cho các chỗ gọi chưa cần thời điểm thu."""
     return [(item.label, item.amount) for item in _typed_cost_items(override)]
+
+
+def _with_deposit_default(items: list[CostItem]) -> list[CostItem]:
+    """Dòng ĐẦU thu khi ký hợp đồng — dùng cho các bảng SUY RA (bộ định giá, shape DTO), nơi
+    chưa ai kịp chọn thời điểm thu.
+
+    Không có bước này thì mặc định là "thu khi hoàn thành" cho tất cả, tức freelancer làm xong
+    sạch dự án mới nhận đồng đầu tiên — tệ hơn hẳn lịch 50/50 của bản cũ. Freelancer vẫn đổi
+    được từng dòng ở màn soạn báo giá.  #Huynh"""
+    if not items:
+        return items
+    first = items[0]
+    return [replace(first, due_type=DUE_ON_SIGNING), *items[1:]]
 
 
 def _resolve_cost_items_with_total(content: dict[str, Any]) -> tuple[list[CostItem], int | None]:
@@ -200,7 +288,7 @@ def _resolve_cost_items_with_total(content: dict[str, Any]) -> tuple[list[CostIt
                     amount = round(total_int / n / 1000) * 1000
                     allocated += amount
                 items.append(CostItem(label=label, amount=amount))
-            return items, total_int
+            return _with_deposit_default(items), total_int
 
     detail = content.get("pricing_detail")
     if isinstance(detail, dict):
@@ -233,7 +321,7 @@ def _resolve_cost_items_with_total(content: dict[str, Any]) -> tuple[list[CostIt
                     )
                 )
             if items:
-                return items, total_int
+                return _with_deposit_default(items), total_int
 
     # Shape hợp đồng (DTO): pricing là object có line_items sẵn.
     pricing = content.get("pricing")
@@ -261,7 +349,7 @@ def _resolve_cost_items_with_total(content: dict[str, Any]) -> tuple[list[CostIt
                 declared = int(Decimal(str(raw_total))) if raw_total is not None else None
             except (TypeError, ValueError, InvalidOperation):
                 declared = None
-            return items, declared
+            return _with_deposit_default(items), declared
 
     return [], None
 
@@ -294,7 +382,7 @@ def _structured_pricing(content: dict[str, Any]) -> tuple[list[PricingLineItem],
                 PricingLineItem(
                     description=i.label,
                     amount=_money(i.amount, i.currency),
-                    due=i.due or DEFAULT_COST_ITEM_DUE,
+                    due=i.due_label,
                 )
                 for i in items
             ],

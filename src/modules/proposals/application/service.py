@@ -23,6 +23,7 @@ from src.modules.proposals.application.pdf_content import (
     CostItem,
     build_proposal_document,
     extract_payment_milestones,
+    infer_due_type,
     resolve_cost_items,
 )
 from src.modules.proposals.infrastructure.repository import ProposalsRepository
@@ -82,14 +83,16 @@ def _cost_items_to_payloads(items: list[CostItem]) -> list[BillingTaskPayload]:
     """
     payloads: list[BillingTaskPayload] = []
     for item in items:
-        desc_parts = [f"Số tiền: {item.amount:,.0f} đ".replace(",", ".")]
-        if item.due:
-            desc_parts.append(f"Thời điểm thu: {item.due}")
+        desc_parts = [
+            f"Số tiền: {item.amount:,.0f} đ".replace(",", "."),
+            f"Thời điểm thu: {item.due_label}",
+        ]
         payloads.append(
             BillingTaskPayload(
                 title=item.label[:500],
                 amount=Decimal(item.amount),
                 description="\n".join(desc_parts),
+                due_type=item.due_type,
             )
         )
     return payloads
@@ -130,6 +133,9 @@ def _milestones_to_payloads(
                 title=f"{PAYMENT_TASK_PREFIX} {m.label}"[:500],
                 amount=amount,
                 description="\n".join(desc_parts),
+                # Mốc cũ chỉ có chữ tự do nên phải suy. Suy không ra thì để `None` — bảng việc
+                # im lặng, thà thiếu một nhãn còn hơn nhắc sai.  #Huynh
+                due_type=infer_due_type(f"{m.label} {m.due}"),
             )
         )
     return payloads
