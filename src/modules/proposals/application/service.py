@@ -20,6 +20,7 @@ from src.ai.proposal_generator.schemas.proposal_document import (
 )
 from src.modules.deals.infrastructure.repository import DealsRepository
 from src.modules.proposals.application.pdf_content import (
+    DUE_CUSTOM,
     CostItem,
     build_proposal_document,
     extract_payment_milestones,
@@ -704,6 +705,19 @@ class ProposalsService:
                 raise BusinessRuleError(
                     f"Hạng mục '{zero_items[0]}' đang là 0 đồng. Mỗi hạng mục là một đợt thu "
                     "tiền, nên phải có số tiền cụ thể. Hãy điền số tiền hoặc xoá hạng mục này."
+                )
+
+            # Chọn "Khác" mà bỏ trống ghi chú: tờ giấy khách KÝ sẽ có ô "thời điểm thu" mơ hồ,
+            # đúng thứ đẻ ra cãi nhau lúc đòi tiền. Cùng lý do với cổng 0 đồng ngay trên.
+            vague = [
+                item.label
+                for item in cost_items
+                if item.due_type == DUE_CUSTOM and not item.due_note.strip()
+            ]
+            if vague:
+                raise BusinessRuleError(
+                    f"Hạng mục '{vague[0]}' chọn thời điểm thu 'Khác' nhưng chưa ghi rõ là khi "
+                    "nào. Hãy ghi cụ thể hoặc chọn một mốc có sẵn."
                 )
 
             # KHÔNG cho gửi khi tổng các hạng mục ≠ giá chào khách: khách cầm tờ báo giá tự

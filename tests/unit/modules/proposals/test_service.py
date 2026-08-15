@@ -170,6 +170,46 @@ class TestCongTienKhiGuiBaoGia:
                 proposal.owner_user_id, proposal.id, "sent"
             )
 
+    async def test_chon_KHAC_ma_bo_trong_thi_chan_gui(self) -> None:
+        # Tờ giấy khách KÝ sẽ có ô "thời điểm thu" mơ hồ — đúng thứ đẻ ra cãi nhau lúc đòi tiền.
+        proposal = _make_proposal(
+            status="draft",
+            content=self._content(
+                [{"label": "Giai đoạn 2", "amount": 5_000_000, "due_type": "custom"}]
+            ),
+        )
+        db = AsyncMock()
+        db.scalar.side_effect = [proposal, None]
+
+        with pytest.raises(BusinessRuleError, match="Giai đoạn 2"):
+            await ProposalsService(db=db).transition_status(
+                proposal.owner_user_id, proposal.id, "sent"
+            )
+
+    async def test_chon_KHAC_va_ghi_ro_thi_gui_duoc(self) -> None:
+        proposal = _make_proposal(
+            status="draft",
+            content=self._content(
+                [
+                    {
+                        "label": "Giai đoạn 2",
+                        "amount": 5_000_000,
+                        "due_type": "custom",
+                        "due_note": "Sau khi bên A duyệt bản demo",
+                    }
+                ]
+            ),
+        )
+        db = AsyncMock()
+        db.scalar.side_effect = [proposal, None]
+
+        with patch("src.modules.proposals.application.service.event_bus") as mock_bus:
+            mock_bus.publish = AsyncMock()
+            result = await ProposalsService(db=db).transition_status(
+                proposal.owner_user_id, proposal.id, "sent"
+            )
+        assert result.status == "sent"
+
     async def test_tong_khop_gia_chao_thi_gui_duoc(self) -> None:
         proposal = _make_proposal(
             status="draft",

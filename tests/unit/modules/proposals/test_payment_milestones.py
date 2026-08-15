@@ -236,6 +236,29 @@ class TestThoiDiemThuLaLOAIChuKhongPhaiChuTuDo:
         # Câu trùng y hệt nhãn chuẩn thì bỏ, không in lại thành ghi chú thừa.
         assert [i.due_note for i in items] == ["", ""]
 
+    def test_chon_KHAC_thi_ghi_chu_thanh_chu_in_ra_bao_gia(self):
+        """"Khác" = freelancer tự ghi. Máy coi như KHÔNG BIẾT.
+
+        "Sau 30 ngày kể từ ngày ký" là thu TRƯỚC còn "Khi khách duyệt demo" là thu SAU — cùng
+        rơi vào ô này mà ý nghĩa ngược nhau, nên không được đoán.  #Huynh
+        """
+        items = resolve_cost_items(
+            {
+                "pricing_items": [
+                    {
+                        "label": "Giai đoạn 2",
+                        "amount": 10,
+                        "due_type": "custom",
+                        "due_note": "Sau khi bên A duyệt bản demo",
+                    }
+                ]
+            }
+        )
+        assert items[0].due_type == "custom"
+        assert items[0].due_label == "Sau khi bên A duyệt bản demo"
+        # KHÔNG được coi là thu trước, dù câu chữ có chữ "ký" hay không.
+        assert items[0].collected_upfront is False
+
     def test_doan_khong_ra_thi_tra_None_chu_khong_doan_bua(self):
         # Thà im còn hơn gắn nhãn sai rồi nhắc sai.
         assert infer_due_type("Ngay sau khi hai bên xác nhận") is None

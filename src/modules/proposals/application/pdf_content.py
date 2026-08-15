@@ -42,10 +42,20 @@ from src.ai.proposal_generator.schemas.proposal_document import (
 # có điều kiện riêng ("khi bên A duyệt bản demo"), ép về hai câu cố định là làm nghèo tờ giấy.
 DUE_ON_SIGNING = "on_signing"
 DUE_ON_COMPLETION = "on_completion"
+# "Khác" — freelancer tự ghi thời điểm thu. MÁY COI NHƯ KHÔNG BIẾT: không gắn nhãn "Thu ngay"
+# trên bảng việc, không hỏi lại khi xuất hoá đơn sớm.
+#
+# Vì sao không đoán: "Sau 30 ngày kể từ ngày ký" là thu trước, còn "Khi khách duyệt demo" là
+# thu sau — cùng rơi vào ô "Khác" mà ý nghĩa ngược nhau. Đoán một trong hai là có ngày nhắc
+# freelancer đi đòi tiền chưa tới hạn.
+DUE_CUSTOM = "custom"
 
 DUE_TYPE_LABELS = {
     DUE_ON_SIGNING: "Khi ký hợp đồng",
     DUE_ON_COMPLETION: "Khi hoàn thành hạng mục",
+    # Chỉ là lưới an toàn cho dữ liệu hỏng — cổng gửi báo giá chặn "Khác" mà bỏ trống ghi chú,
+    # nên tờ giấy gửi khách không bao giờ in ra câu mơ hồ này.
+    DUE_CUSTOM: "Theo thoả thuận riêng",
 }
 DEFAULT_COST_ITEM_DUE = DUE_TYPE_LABELS[DUE_ON_COMPLETION]
 
