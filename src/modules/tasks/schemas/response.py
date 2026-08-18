@@ -58,6 +58,9 @@ class TaskResponse(BaseModel):
     # cũ / task freelancer tự thêm. Frontend dùng để vẽ nhãn "Thu ngay" và để hỏi lại khi xuất
     # hóa đơn cho việc chưa tick xong. Chỉ ĐỌC, y như `billing_amount`.  #Huynh
     billing_due_type: str | None = None
+    # Thứ tự hiển thị trong entity. Với task thu tiền, đây là thứ tự hạng mục trên tờ báo giá.
+    # Chỉ ĐỌC — client không đặt được, hệ thống tự gán khi tạo.  #Huynh
+    position: int = 0
     # Chỉ có với task thu tiền ĐÃ xuất hóa đơn. `None` nghĩa là chưa xuất — frontend hiện
     # nút "Tạo & gửi hóa đơn", còn có rồi thì hiện nhãn theo `invoice.status`.
     invoice: TaskInvoiceSummary | None = None

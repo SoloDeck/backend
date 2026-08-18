@@ -66,6 +66,14 @@ Bạn phải trả về 3 thứ dưới đây, và KHÔNG có tiền trong đó:
 
    KHÔNG có số giờ. KHÔNG có tiền. Chỉ tên hạng mục và tỉ trọng.
 
+   XẾP THEO TRÌNH TỰ TRIỂN KHAI THẬT, không theo tỉ trọng và không tuỳ hứng:
+   phân tích → thiết kế → phát triển → tích hợp → kiểm thử → bàn giao.
+
+   Đặt "Phát triển ứng dụng di động" TRƯỚC "Thiết kế giao diện người dùng" là sai nghiệp vụ —
+   không ai code xong rồi mới thiết kế giao diện. Thứ tự này không phải chuyện trình bày: nó
+   chính là thứ tự khách đọc trên tờ báo giá, và là thứ tự các đầu việc hiện trên bảng việc
+   của freelancer sau khi ký hợp đồng.
+
 Mỗi hệ số phải kèm "reason" — MỘT câu tiếng Việt, TRÍCH ĐƯỢC từ dữ liệu. Không trích được
 thì chọn "normal". Lý do như "dự án này khá phức tạp" là vô giá trị: phức tạp Ở CHỖ NÀO?
 

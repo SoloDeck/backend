@@ -52,6 +52,20 @@ class TaskRepository:
         await self.db.refresh(task)
         return task
 
+    async def next_position(self, entity_type: str, entity_id: uuid.UUID) -> int:
+        """Số thứ tự kế tiếp của entity. Gọi MỘT lần rồi tự cộng dồn khi tạo nhiều task.
+
+        Đừng gọi trong vòng lặp: vừa N truy vấn, vừa không chắc thấy các task vừa `add` mà
+        chưa `flush` — hai task cùng lô sẽ nhận trùng số.  #Huynh
+        """
+        current = await self.db.scalar(
+            select(func.max(TaskModel.position)).where(
+                TaskModel.entity_type == entity_type,
+                TaskModel.entity_id == entity_id,
+            )
+        )
+        return int(current) + 1 if current is not None else 0
+
     async def count_billing_tasks(
         self, entity_type: str, entity_id: uuid.UUID, legacy_prefix: str
     ) -> tuple[int, int]:
@@ -125,10 +139,19 @@ class TaskRepository:
             conditions.append(TaskModel.status == status)
 
         total = await self.db.scalar(select(func.count()).select_from(TaskModel).where(*conditions))
+        # Sắp theo THỨ TỰ HIỂN THỊ, không theo thời điểm tạo.
+        #
+        # Bản trước là `created_at.desc()` trần. Với task thu tiền — cả lô sinh trong MỘT
+        # transaction, mà `now()` của PostgreSQL trả thời điểm bắt đầu transaction — mọi dòng
+        # có `created_at` bằng nhau, nên đó là sắp xếp hoà hoàn toàn: thứ tự do planner quyết
+        # và đổi giữa các lần gọi. Freelancer kéo sắp lại hạng mục ở báo giá cũng vô nghĩa.
+        #
+        # `id` là khoá chót để không bao giờ còn hoà — phân trang mà thứ tự đổi giữa hai trang
+        # thì có bản ghi hiện hai lần và có bản ghi biến mất.  #Huynh
         result = await self.db.execute(
             select(TaskModel)
             .where(*conditions)
-            .order_by(TaskModel.created_at.desc())
+            .order_by(TaskModel.position, TaskModel.created_at, TaskModel.id)
             .offset(offset)
             .limit(limit)
         )

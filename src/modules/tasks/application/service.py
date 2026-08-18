@@ -104,6 +104,7 @@ class TaskService:
             description=payload.description,
             priority=payload.priority.value if payload.priority else _DEFAULT_PRIORITY,
             deadline=payload.deadline,
+            position=await self.repo.next_position(entity_type, entity_id),
         )
 
     async def create_many_for_entity(
@@ -129,6 +130,8 @@ class TaskService:
             )
             seen = {row.title for row in rows}
         created: list[TaskModel] = []
+        # Lấy mốc MỘT lần rồi tự cộng dồn — xem `next_position`.
+        position = await self.repo.next_position(entity_type, entity_id)
         for payload in payloads:
             if payload.title in seen:
                 continue
@@ -139,9 +142,11 @@ class TaskService:
                 description=payload.description,
                 priority=payload.priority.value if payload.priority else _DEFAULT_PRIORITY,
                 deadline=payload.deadline,
+                position=position,
             )
             created.append(task)
             seen.add(payload.title)
+            position += 1
         return created
 
     async def create_billing_tasks_for_entity(
@@ -165,6 +170,10 @@ class TaskService:
             return []
 
         created: list[TaskModel] = []
+        # Thứ tự payload = thứ tự hạng mục trên tờ báo giá (freelancer đã kéo sắp ở mục 7).
+        # Chép xuống `position` để bảng việc hiện đúng trình tự đó — `created_at` không làm
+        # được việc này, cả lô sinh trong một transaction nên bằng nhau hết.  #Huynh
+        position = await self.repo.next_position(entity_type, entity_id)
         for payload in payloads:
             task = await self.repo.create(
                 entity_type=entity_type,
@@ -174,8 +183,10 @@ class TaskService:
                 priority=_DEFAULT_PRIORITY,
                 billing_amount=payload.amount,
                 billing_due_type=payload.due_type,
+                position=position,
             )
             created.append(task)
+            position += 1
         return created
 
     async def payment_task_progress(

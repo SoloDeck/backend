@@ -1577,6 +1577,20 @@ class TaskModel(UUIDMixin, TimestampMixin, Base):
     # NULL với task cũ (trước khi có cột này) và với task freelancer tự thêm.  #Huynh
     billing_due_type: Mapped[str | None] = mapped_column(String(20), nullable=True)
 
+    # Thứ tự hiển thị TRONG một entity. Với task thu tiền, đây chính là thứ tự hạng mục chi
+    # phí trên tờ báo giá — freelancer kéo sắp lại ở mục 7 thì bảng việc phải theo.
+    #
+    # Vì sao KHÔNG suy ra được từ `created_at`: `created_at` dùng `server_default=func.now()`,
+    # mà `now()` của PostgreSQL trả về thời điểm bắt đầu TRANSACTION. Cả lô task thu tiền sinh
+    # trong một transaction nên `created_at` BẰNG NHAU tuyệt đối — `ORDER BY created_at` là
+    # hoà hoàn toàn, thứ tự do planner quyết và đổi giữa các lần truy vấn.
+    #
+    # Tên `position` theo `ChecklistItemModel.position` (anh em gần nhất, cùng module) chứ
+    # không theo `sort_order` — cái đó là của các dòng chứng từ tiền (hoá đơn, mốc hợp đồng).
+    #
+    # NOT NULL + mặc định 0: task tự thêm cũng có thứ tự, không phải xử lý NULL ở mọi chỗ sort.
+    position: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+
     # `selectin` chứ không lazy mặc định: danh sách công việc trả về hàng chục task một lúc,
     # lazy-load là N+1 truy vấn — và trong ngữ cảnh async thì lazy-load còn NỔ hẳn
     # (`MissingGreenlet`) chứ không chỉ chậm.
@@ -1593,6 +1607,8 @@ class TaskModel(UUIDMixin, TimestampMixin, Base):
     __table_args__ = (
         Index("idx_tasks_entity", "entity_type", "entity_id"),
         Index("idx_tasks_entity_status", "entity_type", "entity_id", "status"),
+        # Phục vụ đúng `list_by_entity` — lọc theo entity rồi sắp theo thứ tự hiển thị.
+        Index("idx_tasks_entity_position", "entity_type", "entity_id", "position"),
         # Chỉ mục PHẦN theo ENTITY trước: hai truy vấn dùng nó (guard đóng dự án, bảng doanh
         # thu) đều lọc theo entity rồi mới tới cờ thu tiền. Chỉ mục trần trên `billing_amount`
         # thì không phục vụ được truy vấn nào.

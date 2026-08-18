@@ -9,7 +9,9 @@ from decimal import Decimal
 from src.ai.proposal_generator.schemas.proposal_content import ProposalContent
 from src.ai.proposal_generator.schemas.proposal_document import default_payment_milestones
 from src.modules.proposals.application.pdf_content import (
+    DEPOSIT_DEFAULT_PERCENT,
     build_proposal_document,
+    deposit_amount,
     infer_due_type,
     resolve_cost_items,
 )
@@ -159,12 +161,16 @@ class TestThoiDiemThuLaLOAIChuKhongPhaiChuTuDo:
     Chữ đẹp cho khách đọc nhưng máy không suy luận được gì trên nó.  #Huynh
     """
 
-    def test_hang_muc_DAU_mac_dinh_thu_khi_ky_hop_dong(self):
-        """MẶC ĐỊNH GIỮ CỌC — điểm quan trọng nhất của thay đổi này.
+    def test_bang_freelancer_da_luu_thi_moi_hang_muc_mac_dinh_thu_khi_hoan_thanh(self):
+        """KHÔNG suy khoản cọc theo VỊ TRÍ nữa — thay cho luật "dòng đầu thu khi ký" cũ.
 
-        Trước đó mọi hạng mục mặc định "thu khi hoàn thành", tức freelancer làm xong sạch dự án
-        mới nhận đồng đầu tiên. TỆ HƠN hẳn lịch 50/50 của bản cũ, mà không ai để ý vì nó là
-        mặc định im lặng.
+        Luật cũ có ý tốt (đừng để freelancer làm xong sạch dự án mới nhận đồng đầu tiên) nhưng
+        đặt sai chỗ: nó lấy thứ tự bảng làm dữ liệu về TIỀN. AI xếp hạng mục tuỳ hứng nên hạng
+        mục đắt nhất hay vô tình thành khoản thu trước; và từ khi freelancer kéo đổi được thứ
+        tự, kéo một cái là khoản cọc nhảy theo.
+
+        Nay khoản cọc là một HÀNG riêng có nhãn hẳn hoi, nên bảng freelancer đã lưu được tôn
+        trọng tuyệt đối: không chèn thêm gì, không đoán gì.  #Huynh
         """
         items = resolve_cost_items(
             {
@@ -174,9 +180,20 @@ class TestThoiDiemThuLaLOAIChuKhongPhaiChuTuDo:
                 ]
             }
         )
-        assert items[0].due_type == "on_signing"
-        assert items[0].due_label == "Khi ký hợp đồng"
-        assert items[1].due_type == "on_completion"
+        assert [i.label for i in items] == ["Phân tích yêu cầu", "Thiết kế hệ thống"]
+        assert [i.due_type for i in items] == ["on_completion", "on_completion"]
+
+    def test_bang_da_luu_giu_nguyen_thu_tu_du_hang_dat_nhat_nam_cuoi(self):
+        """Thứ tự mảng là thứ tự freelancer đã kéo — không sort lại theo tiền hay theo gì khác."""
+        items = resolve_cost_items(
+            {
+                "pricing_items": [
+                    {"label": "Thiết kế giao diện", "amount": 10_000_000},
+                    {"label": "Phát triển ứng dụng", "amount": 90_000_000},
+                ]
+            }
+        )
+        assert [i.label for i in items] == ["Thiết kế giao diện", "Phát triển ứng dụng"]
 
     def test_freelancer_da_chon_thi_khong_de_len(self):
         items = resolve_cost_items(
@@ -206,8 +223,13 @@ class TestThoiDiemThuLaLOAIChuKhongPhaiChuTuDo:
         assert items[0].due_label == "Sau khi phòng Marketing duyệt demo"
         assert items[0].due_type == "on_completion"  # máy vẫn biết đây là thu khi xong
 
-    def test_bang_suy_ra_tu_bo_dinh_gia_cung_giu_coc(self):
-        # Freelancer chưa đụng vào panel: bảng tới từ bộ định giá, vẫn phải có dòng thu trước.
+    def test_bang_suy_ra_tu_bo_dinh_gia_co_san_hang_coc_30_phan_tram(self):
+        """Freelancer chưa đụng vào panel: bảng tới từ bộ định giá phải đã có sẵn HÀNG cọc.
+
+        Vì sao backend cũng phải chèn chứ không để mỗi frontend lo: tờ báo giá bên phải màn
+        soạn do SERVER dựng. Chỉ frontend mặc định cọc thì panel trái hiện 3 dòng còn tờ giấy
+        phải hiện 2 — đúng loại lệch mà cả module này sinh ra để chặn.  #Huynh
+        """
         items = resolve_cost_items(
             {
                 "pricing_detail": {
@@ -220,8 +242,12 @@ class TestThoiDiemThuLaLOAIChuKhongPhaiChuTuDo:
                 }
             }
         )
-        assert items[0].due_type == "on_signing"
-        assert items[1].due_type == "on_completion"
+        assert [i.label for i in items] == ["Tạm ứng khi ký hợp đồng", "A", "B"]
+        assert [i.due_type for i in items] == ["on_signing", "on_completion", "on_completion"]
+        # Cọc CẮT RA TỪ TỔNG: 30% = 30tr, phần còn lại 70tr giãn theo tỷ lệ 60/40 cũ.
+        assert [i.amount for i in items] == [30_000_000, 42_000_000, 28_000_000]
+        # Bất biến quan trọng nhất — khách vẫn trả đúng giá đã chào, không đội lên.
+        assert sum(i.amount for i in items) == 100_000_000
 
     def test_doc_duoc_du_lieu_cu_con_ghi_thoi_diem_thu_bang_chu(self):
         items = resolve_cost_items(
@@ -360,3 +386,84 @@ class TestMotBangDuyNhatChoChiPhiVaThanhToan:
         )
         assert doc.pricing_line_items == []
         assert doc.payment_milestones[0].percent == 50
+
+
+class TestPhiTraTruoc:
+    """Khoản cọc CẮT RA TỪ TỔNG — khách vẫn trả đúng giá đã chào, không đội lên.
+
+    Cộng thêm vào tổng là tờ báo giá tự mâu thuẫn với chính dòng "Tổng báo giá" của nó, và
+    khách cầm giấy cộng cột "Thành tiền" ra một số khác — mất uy tín ngay tại bàn.  #Huynh
+    """
+
+    def test_vi_du_that_156_trieu_cong_lai_khong_le_mot_dong(self):
+        # Đúng bộ số trên ảnh chụp màn hình người dùng gửi.
+        items = resolve_cost_items(
+            {
+                "pricing_detail": {
+                    "final_price": 156_000_000,
+                    "suggested": 156_000_000,
+                    "line_items": [
+                        {"label": "Phát triển ứng dụng di động", "amount": 62_500_000},
+                        {"label": "Tích hợp chức năng đặt lịch", "amount": 47_000_000},
+                        {"label": "Thiết kế giao diện người dùng", "amount": 46_500_000},
+                    ],
+                }
+            }
+        )
+        assert items[0].label == "Tạm ứng khi ký hợp đồng"
+        assert items[0].amount == 46_800_000  # đúng 30%
+        assert sum(i.amount for i in items) == 156_000_000
+
+    def test_lam_tron_boi_nghin_va_khong_dung_lam_tron_ngan_hang(self):
+        # `round()` của Python là làm tròn ngân hàng: round(2.5) == 2, trong khi `Math.round`
+        # bên web là nửa-lên == 3. Hai bên vẽ cùng một bảng nên phải cùng luật.
+        assert deposit_amount(15_000, 30, 0) == 5_000  # 4.500 -> nửa-lên -> 5.000
+        assert deposit_amount(100_000_000, 30, 3) == 30_000_000
+
+    def test_phan_tram_0_thi_khong_co_hang_coc(self):
+        assert deposit_amount(100_000_000, 0, 3) == 0
+
+    def test_coc_bi_kep_de_moi_hang_muc_con_lai_van_con_tien(self):
+        # 99% của 1 triệu là 990.000, chỉ còn 10.000 chia cho 20 hạng mục -> có dòng 0 đ, mà
+        # dòng 0 đ thì cổng gửi chặn và deal kẹt vĩnh viễn nếu lọt.
+        assert deposit_amount(1_000_000, 99, 20) == 980_000
+
+    def test_freelancer_da_tat_coc_thi_khong_tu_chen_lai(self):
+        # Bảng đã lưu là ý muốn của freelancer — tôn trọng tuyệt đối, kể cả khi họ bỏ cọc.
+        items = resolve_cost_items({"pricing_items": [{"label": "A", "amount": 100_000_000}]})
+        assert [i.label for i in items] == ["A"]
+        assert items[0].due_type == "on_completion"
+
+    def test_shape_dto_khong_bi_cat_coc(self):
+        # Tổng ở shape DTO khai riêng, có thể đã gồm thuế — cắt 30% khỏi bảng mình không tự
+        # tính ra là đoán mò trên tiền người khác.
+        items = resolve_cost_items(
+            {
+                "pricing": {
+                    "currency": "VND",
+                    "total": 100_000_000,
+                    "line_items": [{"description": "A", "amount": 100_000_000}],
+                }
+            }
+        )
+        assert [i.label for i in items] == ["A"]
+
+    def test_hang_coc_sinh_ra_mot_task_thu_tien_nhu_moi_hang_muc_khac(self):
+        # Bằng chứng vì sao cọc là HẠNG MỤC chứ không phải trường riêng: không dòng code nào
+        # ở bộ sinh task phải biết tới khái niệm "cọc".
+        items = resolve_cost_items(
+            {
+                "pricing_detail": {
+                    "final_price": 100_000_000,
+                    "suggested": 100_000_000,
+                    "line_items": [{"label": "A", "amount": 100_000_000}],
+                }
+            }
+        )
+        payloads = _cost_items_to_payloads(items)
+        assert [p.title for p in payloads] == ["Tạm ứng khi ký hợp đồng", "A"]
+        assert [p.due_type for p in payloads] == ["on_signing", "on_completion"]
+        assert sum(p.amount for p in payloads) == Decimal(100_000_000)
+
+    def test_phan_tram_mac_dinh_la_30(self):
+        assert DEPOSIT_DEFAULT_PERCENT == 30
