@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field, field_validator
 from src.ai.shared.text_coercion import to_text as _to_text
 from src.ai.shared.text_coercion import to_text_list as _to_text_list
 
-from .proposal_document import PaymentMilestone, default_payment_milestones
+from .proposal_document import PaymentMilestone
 
 
 class ProposalContent(BaseModel):
