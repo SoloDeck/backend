@@ -102,7 +102,9 @@ class InvoicesService:
     async def get_one(self, user_id: uuid.UUID, invoice_id: uuid.UUID):  # type: ignore[return]
         return await self._get_invoice(user_id, invoice_id)
 
-    async def update(self, user_id: uuid.UUID, invoice_id: uuid.UUID, payload: InvoiceUpdateRequest):  # type: ignore[return]
+    async def update(
+        self, user_id: uuid.UUID, invoice_id: uuid.UUID, payload: InvoiceUpdateRequest
+    ):  # type: ignore[return]
         invoice = await self._get_invoice(user_id, invoice_id)
         if invoice.status != "draft":
             raise BusinessRuleError("Only draft invoices can be updated")
@@ -124,7 +126,31 @@ class InvoicesService:
         return await self.repo.save(invoice)
 
     async def delete(self, user_id: uuid.UUID, invoice_id: uuid.UUID) -> None:
+        """Xoá một hoá đơn NHÁP tạo nhầm.
+
+        Phải dọn `invoice_line_items` trước: khoá ngoại
+        ``fk_invoice_line_items_invoice`` đặt ``NO ACTION`` và model không khai
+        ``relationship``, nên không ai xoá hộ. Mà hoá đơn nào cũng có ít nhất một dòng hạng
+        mục, nên trước đây nút Xoá KHÔNG BAO GIỜ chạy được — Postgres chặn, IntegrityError
+        bay lên thành 500 và màn hình chỉ nói được "An unexpected error occurred".
+
+        Hai cửa chặn thêm, vì xoá là mất hẳn: chỉ bản nháp mới được xoá, và đã ghi nhận đồng
+        nào của khách thì thôi — chứng từ thu tiền không phải thứ để dọn cho gọn mắt.  #Huynh
+        """
         invoice = await self._get_invoice(user_id, invoice_id)
+
+        if invoice.status != "draft":
+            raise BusinessRuleError(
+                "Chỉ xoá được hoá đơn còn ở dạng nháp. Hoá đơn đã gửi cho khách thì huỷ "
+                "chứ không xoá, để còn dấu vết đối soát."
+            )
+
+        payments = await self.repo.list_payments(invoice_id)
+        if payments:
+            raise BusinessRuleError("Hoá đơn này đã có ghi nhận thanh toán nên không xoá được.")
+
+        # Truyền danh sách rỗng = xoá sạch dòng hạng mục mà không thêm lại gì.
+        await self.repo.replace_line_items(invoice_id, [])
         await self.repo.delete(invoice)
 
     async def _build_invoice_email(self, invoice, attachments: list[dict[str, str]] | None):
@@ -228,9 +254,7 @@ class InvoicesService:
         share_token = invoice.share_token or secrets.token_urlsafe(32)
 
         if notify:
-            content, inline_images, to_email = await self._build_invoice_email(
-                invoice, attachments
-            )
+            content, inline_images, to_email = await self._build_invoice_email(invoice, attachments)
             owner = await self.repo.get_owner(invoice.owner_user_id)
             await send_email(
                 to=to_email,
