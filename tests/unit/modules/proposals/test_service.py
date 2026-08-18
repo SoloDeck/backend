@@ -27,7 +27,19 @@ def _make_proposal(**kwargs) -> MagicMock:
     m.responded_at = kwargs.get("responded_at")
     # Có giá cụ thể để qua được cổng "không gửi báo giá không có giá". MagicMock mặc định
     # cho `.content` trả về mock (không phải dict) nên cổng chặn.  #Huynh
-    m.content = kwargs.get("content", {"pricing": {"total": 5_000_000, "currency": "VND"}})
+    #
+    # Có sẵn MỘT hạng mục để qua cổng "không gửi báo giá trắng hạng mục" — bài nào muốn kiểm
+    # chính cổng đó thì truyền `content` riêng.
+    m.content = kwargs.get(
+        "content",
+        {
+            "pricing": {
+                "total": 5_000_000,
+                "currency": "VND",
+                "line_items": [{"description": "Trọn gói", "amount": 5_000_000}],
+            }
+        },
+    )
     return m
 
 
@@ -227,8 +239,20 @@ class TestCongTienKhiGuiBaoGia:
             )
         assert result.status == "sent"
 
-    async def test_bao_gia_cu_khong_co_hang_muc_thi_khong_chan_oan(self) -> None:
-        # Báo giá cũ chỉ có tổng, không có bảng hạng mục nào -> không có gì để đối chiếu.
+    async def test_bao_gia_trang_hang_muc_thi_chan_gui(self) -> None:
+        """Không hạng mục nào -> CHẶN. Bài này TRƯỚC ĐÂY khẳng định điều ngược lại.
+
+        Bản cũ để lọt vì cổng đối chiếu tổng viết `if cost_items and agreed > 0`: không có
+        hạng mục thì cả khối kiểm bị nhảy qua. Lúc đó lọt là vô hại vì chưa ai sinh task từ
+        hạng mục.
+
+        Giờ thì có: lọt tới cuối đường, `resolve_cost_items` trả rỗng, bộ sinh task rơi xuống
+        nhánh chia mốc % và đẻ ra hai task chung chung "đặt cọc 50% / bàn giao 50%" — khác hẳn
+        quy tắc mỗi hạng mục là một đợt thu tiền và một hoá đơn, mà không báo cho ai biết.
+
+        Đường KHUNG (không AI) rơi vào đây mặc định vì mẫu không mang tiền, nên đây không phải
+        trường hợp hiếm.  #Huynh
+        """
         proposal = _make_proposal(
             status="draft",
             content={"pricing": {"total": 5_000_000, "currency": "VND"}},
@@ -236,12 +260,15 @@ class TestCongTienKhiGuiBaoGia:
         db = AsyncMock()
         db.scalar.side_effect = [proposal, None]
 
-        with patch("src.modules.proposals.application.service.event_bus") as mock_bus:
-            mock_bus.publish = AsyncMock()
-            result = await ProposalsService(db=db).transition_status(
+        # Bắt ĐÚNG câu của cổng này, không bắt cụm "hạng mục chi phí" chung chung: cổng
+        # "tổng lệch giá chào" ngay dưới cũng nói cụm đó, nên khớp lỏng là bài này vẫn xanh
+        # kể cả khi cổng bị gỡ mất.
+        with pytest.raises(BusinessRuleError, match="Chưa có hạng mục chi phí nào"):
+            await ProposalsService(db=db).transition_status(
                 proposal.owner_user_id, proposal.id, "sent"
             )
-        assert result.status == "sent"
+        # Chặn là chặn HẲN: trạng thái không được nhúc nhích.
+        assert proposal.status == "draft"
 
     async def test_bao_gia_khong_co_moc_thi_khong_chan(self) -> None:
         # Báo giá cũ không có mốc cấu trúc — chúng rơi về lịch chuẩn 50/50 lúc sinh task,

@@ -20,6 +20,11 @@ from src.modules.proposals.schemas.request import (
 from src.modules.proposals.schemas.response import ProposalResponse, TermTemplateOption
 from src.shared.dependencies.ai import AIFacadeDep
 from src.shared.dependencies.auth import CurrentUserId
+from src.shared.domain.template_blocks import (
+    skeleton_block_labels,
+    template_block_labels,
+    template_preview,
+)
 from src.shared.responses.response import ApiResponse, PaginatedResponse
 
 router = APIRouter()
@@ -75,6 +80,31 @@ async def generate_proposal_from_deal(
     return ApiResponse.created(ProposalResponse.model_validate(proposal))
 
 
+@router.post(
+    "/from-template/{deal_id}",
+    response_model=ApiResponse[ProposalResponse],
+    status_code=201,
+)
+async def create_proposal_from_template(
+    deal_id: uuid.UUID,
+    user_id: CurrentUserId,
+    db: DBSession,
+    template_id: uuid.UUID | None = Query(default=None),
+) -> ApiResponse[ProposalResponse]:
+    """Soạn báo giá từ KHUNG mẫu — đường thứ hai, không đi qua AI.
+
+    CỐ Ý không có `AIFacadeDep` trong chữ ký: đây là điểm khác biệt duy nhất so với
+    `generate-from-deal` ngay trên, và cũng là lý do endpoint này tồn tại. Không tốn lượt AI,
+    chạy được với gói Free.
+
+    `template_id` để trống = "khung trắng": bản nháp rỗng với đủ ô để freelancer tự điền.  #Huynh
+    """
+    proposal = await ProposalsService(db=db).create_from_template(
+        user_id, deal_id, template_id=template_id
+    )
+    return ApiResponse.created(ProposalResponse.model_validate(proposal))
+
+
 @router.get("/term-templates", response_model=ApiResponse[list[TermTemplateOption]])
 async def list_proposal_term_templates(
     user_id: CurrentUserId,
@@ -86,7 +116,19 @@ async def list_proposal_term_templates(
     trước khi sinh báo giá.
     """
     templates = await ProposalsService(db=db).list_term_templates(user_id)
-    return ApiResponse.ok([TermTemplateOption(id=t.id, name=t.name) for t in templates])
+    return ApiResponse.ok(
+        [
+            TermTemplateOption(
+                id=t.id,
+                name=t.name,
+                profession=t.profession,
+                blocks=template_block_labels(t.content, "proposal"),
+                preview=template_preview(t.content, "proposal"),
+                skeleton_blocks=skeleton_block_labels(t.content, "proposal"),
+            )
+            for t in templates
+        ]
+    )
 
 
 @router.patch("/{proposal_id}/price", response_model=ApiResponse[ProposalResponse])
@@ -110,6 +152,10 @@ async def preview_proposal(
     proposal_id: uuid.UUID,
     user_id: CurrentUserId,
     db: DBSession,
+    editable: bool = Query(
+        default=False,
+        description="True: render thêm ô rỗng cho mục chưa có nội dung, để sửa tại chỗ (bản nháp).",
+    ),
 ) -> ApiResponse[ProposalPreviewResponse]:
     """HTML xem trước — CHÍNH XÁC bản PDF khách sẽ nhận.
 
@@ -117,7 +163,9 @@ async def preview_proposal(
     hai bên KHÔNG THỂ lệch nhau — đó là cái gốc khiến bản trên màn hình trước đây khác bản
     tải về, nhìn như lừa đảo.  #Huynh
     """
-    html = await ProposalsService(db=db).render_preview_html(user_id, proposal_id)
+    html = await ProposalsService(db=db).render_preview_html(
+        user_id, proposal_id, editable=editable
+    )
     return ApiResponse.ok(ProposalPreviewResponse(html=html))
 
 

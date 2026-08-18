@@ -21,14 +21,20 @@ PDF, dù frontend làm ĐÚNG hợp đồng.
 thiếu dữ liệu thì để trống chứ không nổ.  #Huynh
 """
 
-from dataclasses import dataclass, replace
-from decimal import Decimal, InvalidOperation
+from dataclasses import dataclass
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from typing import Any
 
 from src.ai.proposal_generator.schemas.proposal_document import (
     PaymentMilestone,
     PricingLineItem,
     ProposalDocument,
+)
+from src.shared.domain.template_blocks import (
+    collect_clause_texts,
+    collect_extra_sections,
+    collect_hidden_sections,
+    collect_section_titles,
 )
 
 # Thời điểm thu của một hạng mục — LOẠI có sẵn, không phải chữ tự do.
@@ -58,6 +64,24 @@ DUE_TYPE_LABELS = {
     DUE_CUSTOM: "Theo thoả thuận riêng",
 }
 DEFAULT_COST_ITEM_DUE = DUE_TYPE_LABELS[DUE_ON_COMPLETION]
+
+# PHÍ TRẢ TRƯỚC — một hạng mục hẳn hoi đứng đầu bảng mục 7, không phải một trường riêng.
+#
+# Vì sao là hạng mục chứ không phải khoản ngoài bảng: hạng mục chi phí đã là ĐƠN VỊ THU TIỀN
+# (một dòng = một task = một hoá đơn), và bất biến "tổng hạng mục = giá chào khách" đang được
+# ba nơi kiểm cùng lúc. Cọc nằm ngoài bảng là phải sửa cả ba, rồi mọi đường tiền phía sau
+# (guard đóng dự án, bảng doanh thu, xuất hoá đơn) im lặng thiếu mất khoản cọc.
+#
+# CẮT RA TỪ TỔNG, không cộng thêm: khách vẫn trả đúng giá đã chào, phần còn lại giãn theo tỷ
+# lệ cũ. Cộng thêm là tờ báo giá tự mâu thuẫn với chính dòng tổng của nó.
+#
+# 30%: đủ để freelancer không làm không công giai đoạn đầu, mà chưa tới mức khách chùn tay như
+# lịch 50/50 cũ. Freelancer đổi được, đặt 0 là bỏ hẳn hàng cọc.  #Huynh
+DEPOSIT_DEFAULT_PERCENT = 30
+DEPOSIT_LABEL = "Tạm ứng khi ký hợp đồng"
+# Mỗi hạng mục còn lại phải giữ được ít nhất một đơn vị làm tròn, nếu không sẽ có dòng 0 đ —
+# mà dòng 0 đ thì cổng gửi báo giá chặn, và deal kẹt vĩnh viễn nếu lọt.
+_MONEY_STEP = 1_000
 
 # Từ khoá nhận ra "thu trước khi làm" trong dữ liệu CŨ (khi thời điểm thu còn là chữ tự do).
 # CHỈ dùng làm cầu nối đọc dữ liệu cũ — đừng gọi nó ở đường ghi mới.  #Huynh
@@ -213,10 +237,23 @@ def _typed_cost_items(override: list[Any]) -> list[CostItem]:
     Tiền thiếu/hỏng tính là 0 chứ không loại bỏ dòng: mất hẳn một hạng mục khỏi báo giá gửi
     khách nguy hiểm hơn nhiều so với một dòng ghi 0đ mà freelancer nhìn thấy và sửa.
 
-    MẶC ĐỊNH GIỮ CỌC: chưa dòng nào được đặt loại thì dòng ĐẦU thành "khi ký hợp đồng". Bản
-    trước mặc định tất cả là "khi hoàn thành" — tức là freelancer làm xong sạch dự án mới nhận
-    đồng đầu tiên, TỆ HƠN hẳn lịch 50/50 của bản cũ. Freelancer đặt tay dòng nào thì tôn trọng
-    hết, không đè.  #Huynh
+    KHÔNG suy khoản cọc theo VỊ TRÍ nữa. Bản trước: chưa dòng nào đặt loại thì dòng ĐẦU thành
+    "khi ký hợp đồng". Ý tốt (đừng để freelancer làm xong sạch dự án mới nhận đồng đầu tiên)
+    nhưng đặt sai chỗ — nó lấy thứ tự bảng làm dữ liệu về TIỀN. Hai hậu quả:
+
+    - AI xếp hạng mục theo thứ tự tuỳ hứng, nên hạng mục đắt nhất hay vô tình thành khoản thu
+      trước, dù nghiệp vụ chẳng có lý do gì.
+    - Từ khi freelancer kéo đổi được thứ tự hạng mục, kéo một cái là khoản cọc NHẢY theo —
+      đổi trình bày mà đổi luôn dòng tiền.
+
+    Nay khoản cọc là một hạng mục hẳn hoi ở đầu bảng (freelancer đặt ở màn soạn báo giá), nên
+    ở đây mặc định "khi hoàn thành" cho tất cả và không đoán gì thêm.
+
+    KHOÁ `is_deposit` / `deposit_percent` / `id` LÀ TRẠNG THÁI GIAO DIỆN — cố ý KHÔNG đọc.
+    Với backend, hàng cọc chỉ là một hạng mục có `due_type = on_signing`, y hệt mọi hạng mục
+    khác: cùng sinh ra một task, một hoá đơn, cùng vào bảng doanh thu và guard đóng dự án.
+    Chính vì không đọc mà cả đường tiền phía sau không phải biết tới khái niệm "cọc". Ai định
+    parse mấy khoá này rồi rẽ nhánh riêng thì dừng lại — đó là làm hỏng chỗ rẻ nhất.  #Huynh
     """
     if not all(isinstance(item, dict) for item in override):
         return []
@@ -233,16 +270,14 @@ def _typed_cost_items(override: list[Any]) -> list[CostItem]:
         due_type, due_note = _coerce_due(item)
         parsed.append((label, max(amount, 0), due_type, due_note))
 
-    nobody_chose = all(due_type is None for _, _, due_type, _ in parsed)
     return [
         CostItem(
             label=label,
             amount=amount,
-            due_type=due_type
-            or (DUE_ON_SIGNING if nobody_chose and index == 0 else DUE_ON_COMPLETION),
+            due_type=due_type or DUE_ON_COMPLETION,
             due_note=due_note,
         )
-        for index, (label, amount, due_type, due_note) in enumerate(parsed)
+        for label, amount, due_type, due_note in parsed
     ]
 
 
@@ -251,17 +286,35 @@ def typed_pricing_items(override: list[Any]) -> list[tuple[str, int]]:
     return [(item.label, item.amount) for item in _typed_cost_items(override)]
 
 
-def _with_deposit_default(items: list[CostItem]) -> list[CostItem]:
-    """Dòng ĐẦU thu khi ký hợp đồng — dùng cho các bảng SUY RA (bộ định giá, shape DTO), nơi
-    chưa ai kịp chọn thời điểm thu.
+# `_with_deposit_default` đã BỎ (cùng lúc với nhánh đoán-theo-vị-trí trong `_typed_cost_items`).
+# Nó ép dòng ĐẦU của các bảng SUY RA thành "khi ký hợp đồng". Xem lý do đầy đủ ở docstring
+# `_typed_cost_items`: khoản cọc giờ là một hạng mục thật ở đầu bảng, không còn suy ra từ thứ
+# tự — nhất là khi thứ tự đã kéo đổi được.  #Huynh
 
-    Không có bước này thì mặc định là "thu khi hoàn thành" cho tất cả, tức freelancer làm xong
-    sạch dự án mới nhận đồng đầu tiên — tệ hơn hẳn lịch 50/50 của bản cũ. Freelancer vẫn đổi
-    được từng dòng ở màn soạn báo giá.  #Huynh"""
-    if not items:
-        return items
-    first = items[0]
-    return [replace(first, due_type=DUE_ON_SIGNING), *items[1:]]
+
+def deposit_amount(total: int, percent: int, rest_count: int) -> int:
+    """Tiền cọc, làm tròn xuống bội 1.000 ₫ và kẹp để mỗi hạng mục còn lại vẫn ≥ 1.000 ₫.
+
+    PHẢI khớp tuyệt đối với `depositAmount` bên web (`proposalHtml.ts`) — panel bên trái và tờ
+    báo giá bên phải là HAI bộ máy khác nhau cùng vẽ một bảng; lệch một đồng là khách hỏi ngay.
+
+    Dùng `ROUND_HALF_UP` chứ KHÔNG dùng `round()` của Python: `round()` là làm tròn ngân hàng
+    (`round(2.5) == 2`), còn `Math.round` bên JS là nửa-lên (`3`). Hai bên gặp đúng số .5 là ra
+    hai kết quả khác nhau, và lỗi kiểu đó chỉ hiện ra vài tháng một lần.  #Huynh
+    """
+    if total <= 0 or percent <= 0:
+        return 0
+    raw = (Decimal(total) * Decimal(percent) / Decimal(100) / _MONEY_STEP).quantize(
+        Decimal("1"), rounding=ROUND_HALF_UP
+    ) * _MONEY_STEP
+    ceiling = total - rest_count * _MONEY_STEP
+    return max(0, min(int(raw), ceiling))
+
+
+def _deposit_row(amount: int, currency: str = "VND") -> CostItem:
+    return CostItem(
+        label=DEPOSIT_LABEL, amount=amount, due_type=DUE_ON_SIGNING, currency=currency
+    )
 
 
 def _resolve_cost_items_with_total(content: dict[str, Any]) -> tuple[list[CostItem], int | None]:
@@ -289,16 +342,20 @@ def _resolve_cost_items_with_total(content: dict[str, Any]) -> tuple[list[CostIt
         total_int = _resolve_total_int(content)
         if labels and total_int > 0:
             items: list[CostItem] = []
-            allocated = 0
             n = len(labels)
+            deposit = deposit_amount(total_int, DEPOSIT_DEFAULT_PERCENT, n)
+            rest_total = total_int - deposit
+            allocated = 0
             for index, label in enumerate(labels):
                 if index == n - 1:
-                    amount = total_int - allocated  # dồn phần lẻ vào dòng cuối
+                    amount = rest_total - allocated  # dồn phần lẻ vào dòng cuối
                 else:
-                    amount = round(total_int / n / 1000) * 1000
+                    amount = round(rest_total / n / 1000) * 1000
                     allocated += amount
                 items.append(CostItem(label=label, amount=amount))
-            return _with_deposit_default(items), total_int
+            if deposit > 0:
+                items.insert(0, _deposit_row(deposit))
+            return items, total_int
 
     detail = content.get("pricing_detail")
     if isinstance(detail, dict):
@@ -314,12 +371,17 @@ def _resolve_cost_items_with_total(content: dict[str, Any]) -> tuple[list[CostIt
 
         if raw_items and suggested_int > 0 and total_int > 0:
             items = []
-            allocated = 0
-            ratio = total_int / suggested_int
             cleaned = [it for it in raw_items if isinstance(it, dict)]
+            # Cắt cọc TRƯỚC rồi mới giãn phần còn lại. Mẫu số vẫn là `suggested` (giá ĐỀ XUẤT)
+            # chứ không phải `rest_total` — đổi mẫu số là đổi luôn tỷ lệ giữa các hạng mục, mà
+            # tỷ lệ đó phản ánh công sức thật của bộ định giá.  #Huynh
+            deposit = deposit_amount(total_int, DEPOSIT_DEFAULT_PERCENT, len(cleaned))
+            rest_total = total_int - deposit
+            allocated = 0
+            ratio = rest_total / suggested_int
             for index, it in enumerate(cleaned):
                 if index == len(cleaned) - 1:
-                    amount = total_int - allocated  # dồn phần lẻ vào dòng cuối
+                    amount = rest_total - allocated  # dồn phần lẻ vào dòng cuối
                 else:
                     base = int(it.get("amount") or 0) * ratio
                     amount = round(base / 1000) * 1000
@@ -331,9 +393,15 @@ def _resolve_cost_items_with_total(content: dict[str, Any]) -> tuple[list[CostIt
                     )
                 )
             if items:
-                return _with_deposit_default(items), total_int
+                if deposit > 0:
+                    items.insert(0, _deposit_row(deposit))
+                return items, total_int
 
     # Shape hợp đồng (DTO): pricing là object có line_items sẵn.
+    #
+    # KHÔNG chèn hàng cọc ở nhánh này (khác hai nhánh trên). Tổng ở shape DTO được khai RIÊNG
+    # và có thể đã gồm thuế hoặc chiết khấu — cắt 30% khỏi một bảng mà mình không tự tính ra
+    # là đoán mò trên tiền của người khác.  #Huynh
     pricing = content.get("pricing")
     if isinstance(pricing, dict) and pricing.get("line_items"):
         currency = _text(pricing.get("currency")) or "VND"
@@ -359,7 +427,7 @@ def _resolve_cost_items_with_total(content: dict[str, Any]) -> tuple[list[CostIt
                 declared = int(Decimal(str(raw_total))) if raw_total is not None else None
             except (TypeError, ValueError, InvalidOperation):
                 declared = None
-            return _with_deposit_default(items), declared
+            return items, declared
 
     return [], None
 
@@ -540,4 +608,10 @@ def build_proposal_document(
         revision_policy=_text(content.get("revision_policy"))
         or _text(terms.get("revision_policy")),
         standard_terms=_text(content.get("standard_terms")),
+        # Đầu mục do admin tự soạn trong mẫu. Đi qua `collect_extra_sections` để mục không có
+        # tiêu đề bị loại — mục không tên in ra thành `<h2>9. </h2>`, số nhảy mà đầu đề trống.
+        extra_sections=collect_extra_sections(content),
+        section_titles=collect_section_titles(content, "proposal"),
+        clause_texts=collect_clause_texts(content, "proposal"),
+        hidden_sections=collect_hidden_sections(content, "proposal"),
     )

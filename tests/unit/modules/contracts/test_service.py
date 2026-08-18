@@ -164,6 +164,35 @@ class TestTransitionStatus:
             "project", wiring.project.id, contract.owner_user_id, payloads
         )
 
+    async def test_chua_co_bao_gia_duoc_chap_nhan_thi_khong_cho_ghi_nhan_da_ky(self) -> None:
+        """Ký hợp đồng là CHỐT CUỐI, và mọi đợt thu tiền đọc từ bản báo giá đã được chấp nhận.
+
+        Cửa `POST /contracts` hiện đã đòi báo giá `accepted` nên đường thường không tới được
+        đây — guard này là lớp thứ hai, đứng ngay chỗ SINH TASK. Không có nó thì trạng thái
+        "deal không còn báo giá được chấp nhận" trôi qua lặng ngắt: hợp đồng thành đang hiệu
+        lực, không một task nào được tạo, và guard đóng dự án cũng tắt theo vì nó chỉ chặn khi
+        `total > 0`.
+
+        `DealsService.transition_stage` đòi đúng điều kiện này khi vào "active" — luật nghiệp
+        vụ phải đứng ở mọi cửa, không chỉ cửa nào ai đó nhớ ra trước.  #Huynh
+        """
+        contract = _make_contract(status="pending_signatures")
+        db = AsyncMock()
+        # Lượt `scalar` đầu lấy hợp đồng, lượt sau đếm báo giá đã chấp nhận -> 0.
+        db.scalar.side_effect = [contract, 0]
+
+        with (
+            _payment_task_wiring([]) as wiring,
+            pytest.raises(BusinessRuleError, match="chấp nhận"),
+        ):
+            await ContractsService(db=db).transition_status(
+                contract.owner_user_id, contract.id, "active"
+            )
+
+        # Chặn là chặn HẲN: không đẻ ra project dở dang, không task nào.
+        wiring.get_or_create.assert_not_awaited()
+        wiring.create_many.assert_not_awaited()
+
     async def test_khong_co_moc_thi_khong_tao_task(self) -> None:
         # Báo giá chưa chốt / không có hạng mục nào -> không đẻ ra task rỗng.
         contract = _make_contract(status="pending_signatures")

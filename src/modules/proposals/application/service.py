@@ -31,6 +31,11 @@ from src.modules.proposals.infrastructure.repository import ProposalsRepository
 from src.modules.proposals.schemas.request import ProposalRequest
 from src.modules.subscriptions.application.ai_usage import AiUsageService
 from src.modules.tasks.application.service import PAYMENT_TASK_PREFIX, BillingTaskPayload
+from src.shared.domain.template_blocks import (
+    VALID_DAYS_KEY,
+    apply_template_blocks,
+    build_skeleton_content,
+)
 from src.shared.events.bus import event_bus
 from src.shared.exceptions.domain import (
     BusinessRuleError,
@@ -171,6 +176,31 @@ async def billing_task_payloads_for_deal(
     total = Decimal(getattr(deal, "estimated_value", None) or 0)
     milestones = extract_payment_milestones(content) or default_payment_milestones()
     return _milestones_to_payloads(milestones, total)
+
+
+def _apply_template_valid_days(content: dict, template_content: dict) -> dict:
+    """Mẫu gợi ý số ngày hiệu lực báo giá.
+
+    CHỈ áp khi freelancer chưa tự đặt hạn — mẫu là giá trị mặc định, không phải lệnh ghi đè
+    lên thứ người dùng đã gõ. Khác hẳn các khối văn bản (mẫu thắng AI), vì đây là thứ CON
+    NGƯỜI đặt chứ không phải AI sinh.  #Huynh
+    """
+    if not isinstance(template_content, dict):
+        return content
+    if str(content.get("valid_until") or "").strip():
+        return content
+
+    raw = template_content.get(VALID_DAYS_KEY)
+    try:
+        days = int(raw)
+    except (TypeError, ValueError):
+        return content
+    if days <= 0:
+        return content
+
+    out = dict(content)
+    out["valid_until"] = (datetime.now(UTC).date() + timedelta(days=days)).isoformat()
+    return out
 
 
 @dataclass
@@ -478,11 +508,55 @@ class ProposalsService:
         )
         if template is None:
             raise ValidationError("Mẫu điều khoản không hợp lệ hoặc không dùng được.")
-        body = template.content.get("body") if isinstance(template.content, dict) else None
-        if isinstance(body, str) and body.strip():
-            content = dict(content)
-            content["standard_terms"] = body.strip()
-        return content
+        content = apply_template_blocks(content, template.content, "proposal")
+        return _apply_template_valid_days(content, template.content)
+
+    async def create_from_template(  # type: ignore[no-untyped-def]
+        self,
+        user_id: uuid.UUID,
+        deal_id: uuid.UUID,
+        *,
+        template_id: uuid.UUID | None = None,
+    ):
+        """Tạo bản nháp báo giá từ KHUNG mẫu — KHÔNG gọi AI, KHÔNG tốn lượt.
+
+        Đường soạn thứ hai, dành cho freelancer không muốn nhờ AI (và cho gói Free vốn bị chặn
+        402 ở mọi endpoint AI). Trước đây thư viện mẫu chỉ với được từ trong bụng hai hàm
+        `generate_*`, tức là muốn dùng mẫu thì bắt buộc phải tiêu một lượt AI — dù
+        `build_skeleton_content` không cần LLM một chút nào.
+
+        CỐ Ý không gọi `_apply_pricing`: bộ định giá đọc `complexity`/`scale`/`line_item_weights`
+        do AI vừa sinh, không có AI thì không có mấy trường đó. Freelancer tự chốt giá qua
+        `PATCH /proposals/{id}/price`, và cổng gửi chỉ đòi một con số > 0 nên đường này đi lọt
+        mà không phải nới cổng nào.
+
+        `template_id = None` là hợp lệ: "khung trắng", tờ giấy trống với đủ ô để tự điền.  #Huynh
+        """
+        deal = await self.repo.get_deal(deal_id)
+        if deal is None or deal.owner_user_id != user_id:
+            raise NotFoundError(f"Deal {deal_id} not found")
+
+        content: dict = {}
+        if template_id is not None:
+            user = await self.repo.get_user(user_id)
+            profession = getattr(user, "profession", None) if user else None
+            template = await self.repo.get_template_for_use(
+                template_id, template_type="proposal", profession=profession
+            )
+            if template is None:
+                raise ValidationError("Mẫu điều khoản không hợp lệ hoặc không dùng được.")
+            content = build_skeleton_content(template.content, "proposal")
+            content = _apply_template_valid_days(content, template.content)
+
+        version_number = await self.repo.count_by_deal(deal_id) + 1
+        return await self.repo.create(
+            deal_id=deal_id,
+            owner_user_id=user_id,
+            version_number=version_number,
+            status="draft",
+            content=content,
+            ai_generated=False,
+        )
 
     async def generate_from_deal(  # type: ignore[no-untyped-def]
         self,
@@ -632,10 +706,16 @@ class ProposalsService:
             valid_until=_vn_date(valid_until),
         )
 
-    async def render_preview_html(self, user_id: uuid.UUID, proposal_id: uuid.UUID) -> str:
-        """HTML xem trước — CHÍNH XÁC những gì PDF sẽ in ra. Frontend nhúng vào card."""
+    async def render_preview_html(
+        self, user_id: uuid.UUID, proposal_id: uuid.UUID, *, editable: bool = False
+    ) -> str:
+        """HTML xem trước — CHÍNH XÁC những gì PDF sẽ in ra. Frontend nhúng vào card.
+
+        `editable=True` chỉ dùng cho bản nháp đang soạn: thêm ô rỗng cho các mục chưa có chữ để
+        freelancer bấm vào nhập. Mặc định tắt, nên mọi đường khác vẫn ra đúng bản khách nhận.
+        """
         document = await self._build_document(user_id, proposal_id)
-        return ProposalPdfRenderer().render_html(document)
+        return ProposalPdfRenderer().render_html(document, editable=editable)
 
     async def generate_pdf(
         self,
@@ -697,6 +777,25 @@ class ProposalsService:
             cost_items = resolve_cost_items(content)
             agreed = int(final_price or dto_total or 0)
 
+            # KHÔNG có hạng mục nào: cổng dưới viết `if cost_items and agreed > 0` nên báo giá
+            # trắng hạng mục ĐI LỌT toàn bộ khối kiểm này.
+            #
+            # Lọt rồi thì cuối đường `resolve_cost_items` trả rỗng, bộ sinh task rơi xuống nhánh
+            # chia mốc % nhân `deal.estimated_value` và đẻ ra HAI task chung chung ("đặt cọc 50%
+            # / bàn giao 50%") — trái hẳn quy tắc mỗi hạng mục là một đợt thu tiền và một hoá
+            # đơn, mà freelancer không hề được báo là mình vừa nhận kiểu task khác.
+            #
+            # Đường KHUNG (không AI) rơi vào đây mặc định: mẫu tuyệt đối không mang tiền nên
+            # bảng mục 7 mở ra trống trơn. Đường AI thường không dính vì bảng đã dựng sẵn từ
+            # `pricing_detail.line_items` — trừ khi AI không trả tỉ trọng công sức, và khi đó
+            # chặn cũng đúng chứ không oan.  #Huynh
+            if not cost_items:
+                raise BusinessRuleError(
+                    "Chưa có hạng mục chi phí nào. Mỗi hạng mục ở mục 'Hạng mục chi phí' là một "
+                    "đợt thu tiền — hệ thống dựa vào đó để tạo task và hoá đơn sau khi ký hợp "
+                    "đồng. Hãy thêm ít nhất một hạng mục trước khi gửi."
+                )
+
             # Hạng mục 0 đồng: lọt qua được vì cổng dưới chỉ kiểm TỔNG. Hậu quả là một task
             # thu tiền 0 đồng — bắt buộc tick xong mới đóng được dự án, nhưng bấm xuất hoá đơn
             # thì bị từ chối ("Mốc này đang là 0 đồng"). Deal kẹt vĩnh viễn, không lối ra.
@@ -723,7 +822,8 @@ class ProposalsService:
             # KHÔNG cho gửi khi tổng các hạng mục ≠ giá chào khách: khách cầm tờ báo giá tự
             # cộng cột "Thành tiền" ra một số, rồi đọc dòng "Tổng báo giá" ra số khác. Mất uy
             # tín ngay tại bàn, và không cãi được.
-            if cost_items and agreed > 0:
+            # Không cần `if cost_items` nữa — cổng ngay trên đã bảo đảm có ít nhất một hạng mục.
+            if agreed > 0:
                 items_total = sum(item.amount for item in cost_items)
                 if items_total != agreed:
                     raise BusinessRuleError(

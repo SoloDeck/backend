@@ -144,9 +144,9 @@ class TestListClients:
             resp = await client.get(f"/api/v1/clients?status={status}", headers=headers)
             assert resp.status_code == 200
             data = resp.json()["data"]
-            assert all(c["status"] == status for c in data), (
-                f"Expected only '{status}' clients, got statuses: {[c['status'] for c in data]}"
-            )
+            assert all(
+                c["status"] == status for c in data
+            ), f"Expected only '{status}' clients, got statuses: {[c['status'] for c in data]}"
 
     async def test_no_filter_returns_all_statuses(self, client: AsyncClient) -> None:
         headers = await _auth_headers(client)
@@ -287,7 +287,16 @@ async def _create_contract(http, headers: dict, client_id: str) -> dict:
         "/api/v1/proposals",
         json={
             "deal_id": deal_id,
-            "content": {"body": "test", "pricing": {"total": 5_000_000, "currency": "VND"}},
+            "content": {
+                "body": "test",
+                "pricing": {
+                    "total": 5_000_000,
+                    "currency": "VND",
+                    # Cổng gửi đòi ít nhất một hạng mục chi phí: mỗi hạng mục là một
+                    # đợt thu tiền, và bộ sinh task đọc đúng bảng này.
+                    "line_items": [{"description": "Trọn gói", "amount": 5_000_000}],
+                },
+            },
         },
         headers=headers,
     )
