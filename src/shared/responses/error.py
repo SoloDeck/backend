@@ -23,6 +23,15 @@ class ErrorCode(StrEnum):
     # Frontend nhận biết bằng MÃ NÀY, không so khớp câu tiếng Việt: đổi câu chữ mà làm gãy
     # luồng xử lý lỗi thì lần sau không ai dám sửa câu chữ nữa.  #Huynh
     EMAIL_DELIVERY_FAILED = "EMAIL_DELIVERY_FAILED"
+    # Nhà cung cấp mô hình (Groq / Gemini / OpenAI) từ chối lời gọi: quá hạn mức token mỗi
+    # phút, khoá sai, model bị gỡ... Tách khỏi INTERNAL_SERVER_ERROR theo đúng lý do đã tách
+    # EMAIL_DELIVERY_FAILED ở trên — "bên thứ ba từ chối" KHÁC "hệ thống mình sập", và người
+    # dùng cần hai câu khác nhau.
+    #
+    # Có thật: Groq trả 413 "TPM Limit 8000, Requested 8462" thì màn hình lại hiện "Bạn cần
+    # nâng cấp gói để dùng AI" — quy oan cho gói dịch vụ, còn nguyên nhân thật thì mất sạch,
+    # người trực demo không biết đường nào mà giải thích.  #Huynh
+    AI_PROVIDER_ERROR = "AI_PROVIDER_ERROR"
     INTERNAL_SERVER_ERROR = "INTERNAL_SERVER_ERROR"
 
 

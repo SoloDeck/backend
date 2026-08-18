@@ -80,3 +80,65 @@ class TestToJobError:
         assert error.retryable is False
         # Raw message is never leaked for unmapped exceptions.
         assert error.message == "An unexpected error occurred"
+
+
+class TestProviderErrors:
+    """Lỗi do nhà cung cấp mô hình trả về, nhận biết qua `status_code` / `code`.
+
+    Có thật: Groq trả 413 "TPM Limit 8000, Requested 8462" thì màn hình lại hiện "Bạn cần
+    nâng cấp gói để dùng AI" — vì mọi lỗi lạ đều thành INTERNAL_SERVER_ERROR + retryable
+    False, và giao diện dịch retryable False thành "phải nâng gói".
+    """
+
+    def test_groq_token_limit_keeps_the_real_reason(self) -> None:
+        class GroqAPIError(Exception):
+            status_code = 413
+
+        error = to_job_error(
+            GroqAPIError(
+                "Error code: 413 - Request too large ... tokens per minute (TPM): "
+                "Limit 8000, Requested 8462"
+            )
+        )
+        assert error.code == ErrorCode.AI_PROVIDER_ERROR.value
+        # Chờ một lát là hết — đừng khuyên người dùng đi nâng gói.
+        assert error.retryable is True
+        assert "hạn mức token" in error.message
+        # Nguyên văn của nhà cung cấp phải còn lại: đây là thứ duy nhất chỉ đúng thủ phạm.
+        assert "Requested 8462" in error.message
+
+    def test_genai_style_code_attribute_is_recognised(self) -> None:
+        """google-genai gắn mã HTTP vào `code` chứ không phải `status_code`."""
+
+        class GenaiAPIError(Exception):
+            code = 429
+
+        error = to_job_error(GenaiAPIError("resource exhausted"))
+        assert error.code == ErrorCode.AI_PROVIDER_ERROR.value
+        assert error.retryable is True
+
+    def test_bad_api_key_is_not_retryable(self) -> None:
+        class GroqAPIError(Exception):
+            status_code = 401
+
+        error = to_job_error(GroqAPIError("invalid api key"))
+        assert error.code == ErrorCode.AI_PROVIDER_ERROR.value
+        # Sai khoá thì gọi lại bao nhiêu lần cũng thế.
+        assert error.retryable is False
+
+    def test_long_provider_detail_is_truncated(self) -> None:
+        class GroqAPIError(Exception):
+            status_code = 500
+
+        error = to_job_error(GroqAPIError("x" * 5000))
+        assert error.code == ErrorCode.AI_PROVIDER_ERROR.value
+        assert len(error.message) < 500
+
+    def test_non_http_attribute_is_ignored(self) -> None:
+        """`code` kiểu chuỗi (vd errno tên) không phải mã HTTP — đừng nhận nhầm."""
+
+        class SocketError(Exception):
+            code = "ECONNRESET"
+
+        error = to_job_error(SocketError("boom"))
+        assert error.code == ErrorCode.INTERNAL_SERVER_ERROR.value
