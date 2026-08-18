@@ -26,45 +26,98 @@
     /* Nhãn tiếng Anh phụ dưới tiêu đề song ngữ — kín đáo, in nghiêng. */
     .en { display: block; font-weight: normal; font-size: 0.72em; font-style: italic; color: #888; letter-spacing: 0; text-transform: none; margin-top: 1px; }
     .eni { font-weight: normal; font-style: italic; color: #888; font-size: 0.85em; }
+    /* Mục admin đã TẮT — chỉ hiện ở màn soạn, không bao giờ ra bản gửi khách. */
+    h2[data-tat] { opacity: .45; }
+    h2[data-tat] .tat-badge { display: block; font-size: .62em; font-weight: normal;
+        font-style: italic; color: #b45309; text-transform: none; letter-spacing: 0; }
 </style>
 </head>
 <body>
 
+{# Chữ trong các điều CÓ SẴN = dữ liệu, không phải chữ cứng.
+   `clause_defaults` do Python truyền xuống (một nguồn duy nhất), `clause_texts` là phần admin
+   đã sửa. Trước đây admin đổi được TÊN điều mà không đổi được một chữ nào bên trong — bấm vào
+   tiêu đề thì sửa được, bấm vào đoạn ngay dưới thì không.  #Huynh #}
+{% macro dieu_khoan(key, css, nhan) %}
+{%- set noi_dung = clause_texts.get(key) or clause_defaults.get(key) -%}
+<p{% if css %} class="{{ css }}"{% endif %} data-field="clause_{{ key }}" data-label="{{ nhan }}" style="white-space:pre-line">{{ noi_dung }}</p>
+{%- endmacro %}
+
+{% macro dieu_khoan_ds(key, nhan) %}
+{%- set muc = clause_texts.get(key) or clause_defaults.get(key) or [] -%}
+<ul data-field="clause_{{ key }}" data-kind="list" data-label="{{ nhan }}">
+    {% for item in muc %}<li>{{ item }}</li>{% endfor %}
+</ul>
+{%- endmacro %}
+
+
+{# Tiêu đề mục = DỮ LIỆU, không phải chữ cứng trong template.
+   `section_defaults` do Python truyền xuống (một nguồn duy nhất), `section_titles` là phần admin
+   đã đổi. Dòng tiếng Anh phụ chỉ hiện khi tên CHƯA bị đổi — đổi rồi mà vẫn để nhãn Anh cũ là
+   tiêu đề nói một đằng, chú thích nói một nẻo.  #Huynh #}
+{% macro tieu_de(num, key, tat=false) %}
+{%- set mac_dinh = section_defaults.get(key, {}) -%}
+{%- set rieng = section_titles.get(key) -%}
+<h2{% if tat %} data-tat="1"{% endif %}>{{ num }}. <span data-field="title_{{ key }}" data-label="Tên đầu mục">{{ rieng or mac_dinh.vi }}</span>{% if not rieng %}<span class="en">{{ mac_dinh.en }}</span>{% endif %}{% if tat %}<span class="tat-badge">đã tắt — không hiện trên bản gửi khách</span>{% endif %}</h2>
+{%- endmacro %}
+
+
 <h1>ĐỀ XUẤT DỊCH VỤ<span class="en">Service Proposal</span></h1>
 <div class="subtitle">{{ project_type }}</div>
 
-<h2>1. Bên Cung Cấp Dịch Vụ<span class="en">Service Provider (Party A)</span></h2>
+{# Số mục ĐỘNG từ mục 1. Trước đây mục 1-7 đánh số CỨNG nên không mục nào bỏ đi được: bỏ một
+   cái là tờ giấy nhảy số, khách đọc tưởng bị cắt bớt. Đánh số bằng bộ đếm thì admin thêm/bớt
+   thoải mái, số vẫn liền.  #Huynh #}
+{% set ns = namespace(n=0) %}
+{% set ns.n = ns.n + 1 %}
+{{ tieu_de(ns.n, 'party_a') }}
 <table class="info-table">
     <tr><td class="label">Họ và tên <span class="eni">/ Full name</span>:</td><td>{{ freelancer_name }}</td></tr>
     {% if freelancer_email %}<tr><td class="label">Email:</td><td>{{ freelancer_email }}</td></tr>{% endif %}
     {% if freelancer_phone %}<tr><td class="label">Điện thoại <span class="eni">/ Phone</span>:</td><td>{{ freelancer_phone }}</td></tr>{% endif %}
 </table>
 
-<h2>2. Khách Hàng<span class="en">Client (Party B)</span></h2>
+{% set ns.n = ns.n + 1 %}
+{{ tieu_de(ns.n, 'party_b') }}
 <table class="info-table">
     <tr><td class="label">{% if company_name %}Tên công ty <span class="eni">/ Company</span>{% else %}Người nhận <span class="eni">/ Recipient</span>{% endif %}:</td><td>{{ company_name or client_name }}</td></tr>
     {% if company_name %}<tr><td class="label">Người liên hệ <span class="eni">/ Contact</span>:</td><td>{{ client_name }}</td></tr>{% endif %}
     {% if client_email %}<tr><td class="label">Email:</td><td>{{ client_email }}</td></tr>{% endif %}
     {% if client_phone %}<tr><td class="label">Điện thoại <span class="eni">/ Phone</span>:</td><td>{{ client_phone }}</td></tr>{% endif %}
     <tr><td class="label">Ngày đề xuất <span class="eni">/ Proposal date</span>:</td><td>{{ proposal_date }}</td></tr>
-    {% if valid_until %}<tr><td class="label">Hiệu lực đến <span class="eni">/ Valid until</span>:</td><td><span data-field="valid_until" data-kind="date" data-label="Hiệu lực đến">{{ valid_until }}</span></td></tr>{% endif %}
+    {% if valid_until or editable %}<tr><td class="label">Hiệu lực đến <span class="eni">/ Valid until</span>:</td><td><span data-field="valid_until" data-kind="date" data-label="Hiệu lực đến">{{ valid_until }}</span></td></tr>{% endif %}
 </table>
 
-<h2>3. Tổng Quan Dự Án<span class="en">Project Overview</span></h2>
+{# Mục TẦNG 3 — admin tắt được. Bản soạn (`editable`) VẪN render mục bị tắt, chỉ làm mờ,
+   bằng không admin không có chỗ bấm để bật lại. Cùng tinh thần `keep_untitled`.  #Huynh #}
+{% set an_project_overview = 'project_overview' in hidden_sections %}
+{% if editable or ((project_overview) and not an_project_overview) %}
+{% set ns.n = ns.n + 1 %}
+{{ tieu_de(ns.n, 'project_overview', editable and an_project_overview) }}
 <p data-field="project_overview" data-label="Tổng quan dự án">{{ project_overview }}</p>
+{% endif %}
 
-<h2>4. Phạm Vi Công Việc<span class="en">Scope of Work</span></h2>
+{% if scope_of_work or editable %}
+{% set ns.n = ns.n + 1 %}
+{{ tieu_de(ns.n, 'scope_of_work') }}
 <ul data-field="scope_of_work" data-kind="list" data-label="Phạm vi công việc">
     {% for item in scope_of_work %}<li>{{ item }}</li>{% endfor %}
 </ul>
+{% endif %}
 
-<h2>5. Sản Phẩm Bàn Giao<span class="en">Deliverables</span></h2>
+{% if deliverables or editable %}
+{% set ns.n = ns.n + 1 %}
+{{ tieu_de(ns.n, 'deliverables') }}
 <ul data-field="deliverables" data-kind="list" data-label="Sản phẩm bàn giao">
     {% for item in deliverables %}<li>{{ item }}</li>{% endfor %}
 </ul>
+{% endif %}
 
-<h2>6. Thời Gian Thực Hiện<span class="en">Timeline</span></h2>
+{% if timeline or editable %}
+{% set ns.n = ns.n + 1 %}
+{{ tieu_de(ns.n, 'timeline') }}
 <p data-field="timeline" data-label="Thời gian thực hiện">{{ timeline }}</p>
+{% endif %}
 
 {# MỘT mục cho cả chi phí lẫn thanh toán. Trước đây tách "7. Chi Phí Dự Kiến" và "8. Điều Khoản
    Thanh Toán", nhưng từ khi thu tiền theo hạng mục thì mỗi hạng mục VỪA là công việc VỪA là một
@@ -73,7 +126,8 @@
 
    Báo giá CŨ (không có hạng mục nào) vẫn hiện bảng mốc % ngay trong mục này, để bản đã gửi
    trước đây mở lại không mất bảng thanh toán.  #Huynh #}
-<h2>7. Chi Phí &amp; Thanh Toán<span class="en">Cost &amp; Payment</span></h2>
+{% set ns.n = ns.n + 1 %}
+{{ tieu_de(ns.n, 'pricing') }}
 {% if pricing_line_items %}
 <table class="data-table">
     <thead><tr><th>Hạng mục <span class="eni">/ Item</span></th><th class="amount">Thành tiền <span class="eni">/ Amount</span></th><th>Thời điểm thu <span class="eni">/ When</span></th></tr></thead>
@@ -98,29 +152,54 @@
 {% else %}
 <div class="pricing-box"><strong>Tổng chi phí dự án <span class="eni">/ Total project cost</span>:</strong> {{ pricing }}</div>
 {% endif %}
-{% if payment_terms %}<p data-field="payment_terms" data-label="Điều khoản thanh toán">{{ payment_terms }}</p>{% endif %}
+{% if payment_terms or editable %}<p data-field="payment_terms" data-label="Điều khoản thanh toán">{{ payment_terms }}</p>{% endif %}
 
-{% if out_of_scope or revision_policy %}
-<h2>8. Điều Khoản Bổ Sung<span class="en">Additional Terms</span></h2>
-{% if out_of_scope %}
+{# Mục TẦNG 3 — admin tắt được. Bản soạn (`editable`) VẪN render mục bị tắt, chỉ làm mờ,
+   bằng không admin không có chỗ bấm để bật lại. Cùng tinh thần `keep_untitled`.  #Huynh #}
+{% set an_additional_terms = 'additional_terms' in hidden_sections %}
+{% if editable or ((out_of_scope or revision_policy) and not an_additional_terms) %}
+{% set ns.n = ns.n + 1 %}
+{{ tieu_de(ns.n, 'additional_terms', editable and an_additional_terms) }}
+{% if out_of_scope or editable %}
 <p><strong>Phạm vi KHÔNG bao gồm <span class="eni">/ Out of scope</span>:</strong></p>
 <ul data-field="out_of_scope" data-kind="list" data-label="Phạm vi không bao gồm">
     {% for item in out_of_scope %}<li>{{ item }}</li>{% endfor %}
 </ul>
 {% endif %}
-{% if revision_policy %}<p><strong>Chính sách chỉnh sửa <span class="eni">/ Revision policy</span>:</strong> <span data-field="revision_policy" data-label="Chính sách chỉnh sửa">{{ revision_policy }}</span></p>{% endif %}
+{% if revision_policy or editable %}<p><strong>Chính sách chỉnh sửa <span class="eni">/ Revision policy</span>:</strong> <span data-field="revision_policy" data-label="Chính sách chỉnh sửa">{{ revision_policy }}</span></p>{% endif %}
 {% endif %}
 
-<h2>9. Ghi Chú &amp; Giả Định<span class="en">Notes &amp; Assumptions</span></h2>
+{# Mục TẦNG 3 — admin tắt được. Bản soạn (`editable`) VẪN render mục bị tắt, chỉ làm mờ,
+   bằng không admin không có chỗ bấm để bật lại. Cùng tinh thần `keep_untitled`.  #Huynh #}
+{% set an_assumptions = 'assumptions' in hidden_sections %}
+{% if editable or ((assumptions) and not an_assumptions) %}
+{% set ns.n = ns.n + 1 %}
+{{ tieu_de(ns.n, 'assumptions', editable and an_assumptions) }}
 <p data-field="assumptions" data-label="Ghi chú và giả định">{{ assumptions }}</p>
+{% endif %}
 
-{% if standard_terms %}
-<h2>10. Điều Khoản Chuẩn Theo Lĩnh Vực<span class="en">Standard Terms</span></h2>
+{# Mục TẦNG 3 — admin tắt được. Bản soạn (`editable`) VẪN render mục bị tắt, chỉ làm mờ,
+   bằng không admin không có chỗ bấm để bật lại. Cùng tinh thần `keep_untitled`.  #Huynh #}
+{% set an_standard_terms = 'standard_terms' in hidden_sections %}
+{% if editable or ((standard_terms) and not an_standard_terms) %}
+{% set ns.n = ns.n + 1 %}
+{{ tieu_de(ns.n, 'standard_terms', editable and an_standard_terms) }}
 <p data-field="standard_terms" data-label="Điều khoản chuẩn theo lĩnh vực" style="white-space:pre-line">{{ standard_terms }}</p>
 {% endif %}
 
-<h2>{% if standard_terms %}11{% else %}10{% endif %}. Xác Nhận<span class="en">Confirmation</span></h2>
-<p>{% if valid_until %}Đề xuất này có hiệu lực đến {{ valid_until }}. {% endif %}Vui lòng xác nhận đồng ý để bắt đầu triển khai dự án.<span class="eni"> / Please confirm to proceed.</span></p>
+{# ĐẦU MỤC DO ADMIN TỰ SOẠN. Bộ mục cứng của tờ giấy không thể phủ hết mọi nghề — nhiếp ảnh
+   cần "Quyền sử dụng hình ảnh", dịch thuật cần "Quy tắc thuật ngữ". Tên mục do admin đặt, nên
+   nó nằm trong dữ liệu chứ không nằm trong template.  #Huynh #}
+{% for muc in extra_sections %}
+{% set ns.n = ns.n + 1 %}
+<h2>{{ ns.n }}. <span data-field="extra_title_{{ loop.index0 }}" data-label="Tên đầu mục">{{ muc.title }}</span></h2>
+<p data-field="extra_body_{{ loop.index0 }}" data-label="Nội dung đầu mục" style="white-space:pre-line">{{ muc.body }}</p>
+{% endfor %}
+
+{% set ns.n = ns.n + 1 %}
+{{ tieu_de(ns.n, 'confirmation') }}
+{% if valid_until %}<p>Đề xuất này có hiệu lực đến {{ valid_until }}.</p>{% endif %}
+{{ dieu_khoan('confirmation', '', 'Lời mời xác nhận') }}
 
 <table class="signature">
     <tr>

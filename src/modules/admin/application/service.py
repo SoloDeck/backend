@@ -559,7 +559,12 @@ class AdminService:
             raise NotFoundError(f"Template {template_id} not found")
         if payload.name is not None:
             template.name = payload.name
-        if payload.profession is not None:
+        # `in model_fields_set` chứ không phải `is not None`: với trường nullable, hai chuyện
+        # "không gửi lên" và "gửi lên đúng null" khác hẳn nhau, mà `is not None` gộp chúng làm
+        # một. Hệ quả: admin mở mẫu đang gắn nghề, chọn "Dùng chung cho mọi nghề", bấm Lưu, nhận
+        # toast "Đã cập nhật mẫu." — nhưng cột giữ nguyên nghề cũ, và freelancer nghề khác vẫn
+        # không thấy mẫu đó. Mở lại form thì select hiện đúng nghề cũ, không dấu vết gì.  #Huynh
+        if "profession" in payload.model_fields_set:
             template.profession = self._clean_profession(payload.profession)
         if payload.content is not None:
             template.content = payload.content
