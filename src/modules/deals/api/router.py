@@ -2,7 +2,7 @@
 
 import uuid
 from io import BytesIO
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, File, Query, UploadFile
 from fastapi.responses import StreamingResponse
@@ -61,11 +61,33 @@ async def list_deals(
     client_id: uuid.UUID | None = Query(
         default=None, description="Filter by client ID"
     ),
+    archived: bool | None = Query(
+        default=None,
+        description=(
+            "Kho lưu trữ (dự án hoàn thành đã đóng quá 90 ngày). "
+            "Bỏ trống = trả HẾT · false = chỉ dự án còn trên bảng · true = chỉ dự án trong kho."
+        ),
+    ),
+    sort_by: Literal["updated_at", "closed_at"] = Query(default="updated_at"),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
 ) -> PaginatedResponse[DealResponse]:
+    """Danh sách deal của freelancer.
+
+    `archived` bỏ trống mặc định trả HẾT, cố ý — không phải quên đặt mặc định. Đây là đường
+    DUY NHẤT lấy dự án của một khách (`?client_id=`, không có `GET /clients/{id}/deals`), nên
+    mặc định lọc bỏ kho là hồ sơ khách hàng mất sạch lịch sử hợp tác — đúng thứ freelancer cần
+    nhất lúc khách cũ quay lại.  #Huynh
+    """
     deals, total = await DealsService(db=db).list_all(
-        user_id, title=title, stage=stage, client_id=client_id, page=page, page_size=page_size
+        user_id,
+        title=title,
+        stage=stage,
+        client_id=client_id,
+        archived=archived,
+        sort_by=sort_by,
+        page=page,
+        page_size=page_size,
     )
     return PaginatedResponse.ok(
         [DealResponse.model_validate(d) for d in deals], total=total, page=page, page_size=page_size

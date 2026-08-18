@@ -388,11 +388,20 @@ class DealsService:
         title: str | None = None,
         stage: str | None = None,
         client_id: uuid.UUID | None = None,
+        archived: bool | None = None,
+        sort_by: str = "updated_at",
         page: int = 1,
         page_size: int = 20,
     ) -> tuple[list, int]:
         return await self.repo.list_all(
-            user_id, title=title, stage=stage, client_id=client_id, page=page, page_size=page_size
+            user_id,
+            title=title,
+            stage=stage,
+            client_id=client_id,
+            archived=archived,
+            sort_by=sort_by,
+            page=page,
+            page_size=page_size,
         )
 
     async def list_intakes(
