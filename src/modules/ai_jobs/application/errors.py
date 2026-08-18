@@ -86,7 +86,12 @@ _PROVIDER_HTTP_MESSAGES: dict[int, str] = {
 
 # Sai cấu hình thì gọi lại bao nhiêu lần cũng thế — đừng để worker thử lại 3 lần cho phí,
 # và đừng để màn hình khuyên người dùng "bấm thử lại sau ít phút".
-_PROVIDER_NOT_RETRYABLE: frozenset[int] = frozenset({400, 401, 403, 404})
+#
+# 413 nằm ở đây dù nhà cung cấp gắn nhãn `rate_limit_exceeded`: lời gọi bị chặn vì bản thân
+# nó đã lớn hơn hạn mức mỗi phút (thật: Limit 8000, Requested 8462), nên chờ bao lâu rồi gửi
+# lại y nguyên vẫn vượt. Để retryable thì Celery quay đủ 3 vòng cách nhau 15 giây, người
+# dùng ngồi nhìn vòng xoay gần một phút mới thấy lỗi.
+_PROVIDER_NOT_RETRYABLE: frozenset[int] = frozenset({400, 401, 403, 404, 413})
 
 _PROVIDER_DETAIL_LIMIT = 300
 

@@ -101,8 +101,8 @@ class TestProviderErrors:
             )
         )
         assert error.code == ErrorCode.AI_PROVIDER_ERROR.value
-        # Chờ một lát là hết — đừng khuyên người dùng đi nâng gói.
-        assert error.retryable is True
+        # Gửi lại y nguyên thì vẫn vượt hạn mức — đừng để Celery quay 3 vòng rồi mới báo.
+        assert error.retryable is False
         assert "hạn mức token" in error.message
         # Nguyên văn của nhà cung cấp phải còn lại: đây là thứ duy nhất chỉ đúng thủ phạm.
         assert "Requested 8462" in error.message
