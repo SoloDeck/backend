@@ -35,6 +35,23 @@ class ContractsRepository:
     async def get_client(self, client_id: uuid.UUID):
         return await self.db.scalar(select(ClientModel).where(ClientModel.id == client_id))
 
+    async def has_accepted_proposal(self, deal_id: uuid.UUID, owner_user_id: uuid.UUID) -> bool:
+        """Deal này đã có báo giá được khách chấp nhận chưa.
+
+        Cùng câu hỏi và cùng câu truy vấn với `DealsRepository.has_accepted_proposal` — cố ý
+        lặp thay vì gọi chéo sang module deals, giữ ranh giới module như các repo khác đang làm.
+        """
+        count = await self.db.scalar(
+            select(func.count())
+            .select_from(ProposalModel)
+            .where(
+                ProposalModel.deal_id == deal_id,
+                ProposalModel.owner_user_id == owner_user_id,
+                ProposalModel.status == "accepted",
+            )
+        )
+        return bool(count)
+
     async def count_by_deal(self, deal_id: uuid.UUID) -> int:
         return (
             await self.db.scalar(
@@ -99,8 +116,12 @@ class ContractsRepository:
                     SystemTemplateModel.profession.is_(None),
                 )
             )
-        else:
-            conditions.append(SystemTemplateModel.profession.is_(None))
+        # Freelancer CHƯA đặt chuyên môn: trả TẤT CẢ mẫu đang bật, không chỉ mẫu dùng chung.
+        #
+        # Bản trước lọc `profession IS NULL` nên mọi mẫu gắn nghề biến mất sạch — im lặng, và
+        # đúng lúc người dùng mới nhất (chưa kịp điền hồ sơ) cần mẫu nhất. Thà cho họ thấy đủ
+        # kèm nhãn nghề để tự chọn, còn hơn đưa ra một danh sách rỗng rồi để họ kết luận là
+        # admin chưa soạn mẫu nào.  #Huynh
         return conditions
 
     async def list_active_templates(self, *, template_type: str, profession: str | None) -> list:

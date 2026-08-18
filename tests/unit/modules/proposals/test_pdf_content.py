@@ -112,14 +112,20 @@ class TestPricingItemsOverride:
             "pricing_items": ["Thiet ke UI", "Lap trinh", "Kiem thu"],
         }
         doc = build_proposal_document(content, **META)
+        # Hàng cọc đứng đầu — bảng SUY RA thì backend dựng sẵn, để tờ báo giá do server vẽ
+        # không lệch với panel bên trái màn soạn.
         assert [i.description for i in doc.pricing_line_items] == [
+            "Tạm ứng khi ký hợp đồng",
             "Thiet ke UI",
             "Lap trinh",
             "Kiem thu",
         ]
+        assert doc.pricing_line_items[0].due == "Khi ký hợp đồng"
         assert doc.pricing_total == "200.000.000 VND"
-        # Tổng các dòng phải cộng ĐÚNG bằng giá chốt (dòng cuối gánh phần lẻ).
+        # Tổng các dòng phải cộng ĐÚNG bằng giá chốt (dòng cuối gánh phần lẻ). Cọc CẮT RA TỪ
+        # tổng nên con số này không đổi dù có thêm một dòng.
         nums = [int(i.amount.replace(".", "").replace(" VND", "")) for i in doc.pricing_line_items]
+        assert nums[0] == 60_000_000  # 30% của 200tr
         assert sum(nums) == 200_000_000
 
     def test_override_ignored_when_no_price(self):

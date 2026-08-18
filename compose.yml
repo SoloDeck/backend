@@ -158,6 +158,20 @@ services:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
+    # Tự nạp lại khi mã nguồn đổi — CHỈ dành cho môi trường dev (`compose.deploy.yml` giữ
+    # nguyên lệnh gốc).
+    #
+    # Không có dòng này thì worker ôm bản code cũ trong RAM cho tới khi ai đó khởi động lại
+    # bằng tay. Kéo code mới về xong: API chạy `uvicorn --reload` nên thấy bản mới, còn
+    # worker vẫn chạy bản cũ. Task AI khi đó nạp module mới lẫn module cũ cùng lúc rồi chết
+    # bằng `ImportError` — mà dòng job trong DB không hề được đánh dấu hỏng, nên màn hình
+    # quay vô hạn và không báo gì cả. Mất một buổi mới lần ra đúng chuyện này.  #Huynh
+    command:
+      - watchfiles
+      - --filter
+      - python
+      - celery -A src.infrastructure.celery.app.celery_app worker --loglevel=info --concurrency=4
+      - src
     volumes:
       - ./src:/app/src
       - ./contracts:/app/contracts:ro
@@ -206,8 +220,18 @@ services:
     image: minio/minio:latest
     restart: always
     environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin
+      # PHẢI đọc cùng cặp biến mà ứng dụng đọc, không được ghi cứng.
+      #
+      # Trước đây chỗ này ghi cứng `minioadmin` trong khi app đọc STORAGE_ACCESS_KEY từ
+      # `.env` (mà `.env.example` khai `solodesk`) — hai nguồn sự thật cho cùng một cặp
+      # khoá. Hậu quả: MinIO chạy bình thường, bucket đúng, nhưng mọi lượt tải file lên đều
+      # bị từ chối với `InvalidAccessKeyId`, và lỗi đó chỉ lộ ra trong log container chứ
+      # màn hình không nói gì. Ai kéo repo về chạy local cũng dính.
+      #
+      # `compose.deploy.yml` vốn đã làm đúng cách này từ lâu; bản local bị lệch sau lần dọn
+      # hai khối `minio` trùng nhau.  #Huynh
+      MINIO_ROOT_USER: ${STORAGE_ACCESS_KEY:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${STORAGE_SECRET_KEY:-minioadmin}
     ports:
       - "127.0.0.1:9000:9000"   # S3 API
       - "127.0.0.1:9001:9001"   # Web console

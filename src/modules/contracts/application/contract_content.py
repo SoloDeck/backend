@@ -17,6 +17,12 @@ from src.ai.contract_generator.schemas.contract_document import (
     ContractDocument,
     ContractMilestoneLine,
 )
+from src.shared.domain.template_blocks import (
+    collect_clause_texts,
+    collect_extra_sections,
+    collect_hidden_sections,
+    collect_section_titles,
+)
 
 
 def _text(value: Any) -> str:
@@ -151,6 +157,12 @@ def build_contract_document(
         governing_law=governing_law,
         custom_clauses=_text(content.get("custom_clauses")),
         standard_terms=_text(content.get("standard_terms")),
+        # Đầu mục do admin tự soạn trong mẫu. Đi qua `collect_extra_sections` để mục không có
+        # tiêu đề bị loại — mục không tên in ra thành `<h2>9. </h2>`, số nhảy mà đầu đề trống.
+        extra_sections=collect_extra_sections(content),
+        section_titles=collect_section_titles(content, "contract"),
+        clause_texts=collect_clause_texts(content, "contract"),
+        hidden_sections=collect_hidden_sections(content, "contract"),
         milestones=lines,
         total_amount=total_amount,
         effective_date=_vn_date(getattr(contract, "effective_date", None)),

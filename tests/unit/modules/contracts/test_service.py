@@ -2,6 +2,7 @@
 
 import uuid
 from contextlib import contextmanager
+from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -9,7 +10,7 @@ import pytest
 
 from src.modules.contracts.application.service import ContractsService
 from src.modules.contracts.schemas.request import ContractRequest
-from src.modules.tasks.schemas.request import CreateTaskRequest
+from src.modules.tasks.application.service import BillingTaskPayload
 from src.shared.exceptions.domain import (
     BusinessRuleError,
     EntitlementError,
@@ -19,9 +20,9 @@ from src.shared.exceptions.domain import (
 
 
 @contextmanager
-def _payment_task_wiring(payloads: list[CreateTaskRequest] | None = None):
-    """Giả lập ba collaborator mà việc GHI NHẬN ĐÃ KÝ kéo theo: tạo project cho deal, lấy mốc
-    thanh toán của báo giá đã chốt, và sinh task "Thu tiền:".
+def _payment_task_wiring(payloads: list[BillingTaskPayload] | None = None):
+    """Giả lập ba collaborator mà việc GHI NHẬN ĐÃ KÝ kéo theo: tạo project cho deal, lấy hạng
+    mục chi phí của báo giá đã chốt, và sinh task thu tiền.
 
     Ba thứ đó được import CỤC BỘ bên trong `transition_status` (tránh vòng import), nên phải
     patch tại chính module gốc chứ không phải chỗ dùng.  #Huynh
@@ -33,13 +34,13 @@ def _payment_task_wiring(payloads: list[CreateTaskRequest] | None = None):
     with (
         patch("src.modules.projects.application.service.ProjectService") as project_service,
         patch(
-            "src.modules.proposals.application.service.payment_task_payloads_for_deal",
+            "src.modules.proposals.application.service.billing_task_payloads_for_deal",
             AsyncMock(return_value=payloads if payloads is not None else []),
         ),
         patch("src.modules.tasks.application.service.TaskService") as task_service,
     ):
         project_service.return_value.get_or_create_for_deal = get_or_create
-        task_service.return_value.create_many_for_entity = create_many
+        task_service.return_value.create_billing_tasks_for_entity = create_many
         yield SimpleNamespace(
             project=project, get_or_create=get_or_create, create_many=create_many
         )
@@ -138,18 +139,18 @@ class TestTransitionStatus:
         assert result.signed_by_freelancer_at is not None
 
     async def test_ghi_nhan_da_ky_thi_sinh_task_thu_tien_ngay(self) -> None:
-        """Ký xong là phải thấy ngay mốc thu tiền.
+        """Ký xong là phải thấy ngay khoản phải thu.
 
-        Mốc đợt 1 của mọi báo giá ghi "Khi ký hợp đồng / trước khi bắt đầu". Trước đây task
-        "Thu tiền:" chỉ sinh khi deal chuyển "active" (bấm "Bắt đầu triển khai") — tức MỘT
-        NHỊP SAU thời điểm phải thu: đã bắt tay làm rồi hệ thống mới nhắc đi đòi cọc.  #Huynh
+        Hạng mục đầu của báo giá thường ghi "Khi ký hợp đồng". Trước đây task thu tiền chỉ
+        sinh khi deal chuyển "active" (bấm "Bắt đầu triển khai") — tức MỘT NHỊP SAU thời điểm
+        phải thu: đã bắt tay làm rồi hệ thống mới nhắc đi đòi cọc.  #Huynh
         """
         contract = _make_contract(status="pending_signatures")
         db = AsyncMock()
         db.scalar.return_value = contract
         payloads = [
-            CreateTaskRequest(title="Thu tiền: Đặt cọc khi ký hợp đồng"),
-            CreateTaskRequest(title="Thu tiền: Thanh toán khi nghiệm thu & bàn giao"),
+            BillingTaskPayload(title="Trang đăng nhập", amount=Decimal(76_000_000)),
+            BillingTaskPayload(title="Tích hợp ngân hàng", amount=Decimal(63_500_000)),
         ]
 
         with _payment_task_wiring(payloads) as wiring:
@@ -163,8 +164,37 @@ class TestTransitionStatus:
             "project", wiring.project.id, contract.owner_user_id, payloads
         )
 
+    async def test_chua_co_bao_gia_duoc_chap_nhan_thi_khong_cho_ghi_nhan_da_ky(self) -> None:
+        """Ký hợp đồng là CHỐT CUỐI, và mọi đợt thu tiền đọc từ bản báo giá đã được chấp nhận.
+
+        Cửa `POST /contracts` hiện đã đòi báo giá `accepted` nên đường thường không tới được
+        đây — guard này là lớp thứ hai, đứng ngay chỗ SINH TASK. Không có nó thì trạng thái
+        "deal không còn báo giá được chấp nhận" trôi qua lặng ngắt: hợp đồng thành đang hiệu
+        lực, không một task nào được tạo, và guard đóng dự án cũng tắt theo vì nó chỉ chặn khi
+        `total > 0`.
+
+        `DealsService.transition_stage` đòi đúng điều kiện này khi vào "active" — luật nghiệp
+        vụ phải đứng ở mọi cửa, không chỉ cửa nào ai đó nhớ ra trước.  #Huynh
+        """
+        contract = _make_contract(status="pending_signatures")
+        db = AsyncMock()
+        # Lượt `scalar` đầu lấy hợp đồng, lượt sau đếm báo giá đã chấp nhận -> 0.
+        db.scalar.side_effect = [contract, 0]
+
+        with (
+            _payment_task_wiring([]) as wiring,
+            pytest.raises(BusinessRuleError, match="chấp nhận"),
+        ):
+            await ContractsService(db=db).transition_status(
+                contract.owner_user_id, contract.id, "active"
+            )
+
+        # Chặn là chặn HẲN: không đẻ ra project dở dang, không task nào.
+        wiring.get_or_create.assert_not_awaited()
+        wiring.create_many.assert_not_awaited()
+
     async def test_khong_co_moc_thi_khong_tao_task(self) -> None:
-        # Báo giá chưa chốt / không có mốc nào -> không đẻ ra task rỗng.
+        # Báo giá chưa chốt / không có hạng mục nào -> không đẻ ra task rỗng.
         contract = _make_contract(status="pending_signatures")
         db = AsyncMock()
         db.scalar.return_value = contract

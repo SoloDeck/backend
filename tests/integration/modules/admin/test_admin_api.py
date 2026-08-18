@@ -1628,6 +1628,203 @@ class TestAdminCreateTemplate:
         assert resp.status_code == 201
         assert resp.json()["data"]["profession"] is None
 
+    async def test_xem_truoc_dung_to_giay_that(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """Admin soạn mẫu mà nhìn thấy ngay tờ giấy khách sẽ đọc.
+
+        Trước bản này admin soạn trong một form toàn ô chữ, còn tờ báo giá thì chỉ freelancer
+        mới thấy — người soạn ra nội dung gửi khách hàng chưa từng nhìn thấy nội dung đó nằm
+        trên giấy.  #Huynh
+        """
+        headers = await _admin_headers(client, db_session)
+        resp = await client.post(
+            "/api/v1/admin/templates/preview",
+            json={
+                "template_type": "proposal",
+                "content": {
+                    "project_overview": "Thiết kế bộ nhận diện thương hiệu.",
+                    "scope_of_work": ["Khảo sát", "Phác thảo"],
+                    "standard_terms": "Bàn giao file nguồn.",
+                },
+            },
+            headers=headers,
+        )
+        assert resp.status_code == 200, resp.text
+        html = resp.json()["data"]["html"]
+
+        assert "Thiết kế bộ nhận diện thương hiệu." in html
+        assert "Khảo sát" in html
+        # Chế độ sửa: MỌI mục hiện ra kể cả khi trống, bằng không admin không có chỗ bấm vào.
+        for field in ("payment_terms", "out_of_scope", "revision_policy", "assumptions"):
+            assert f'data-field="{field}"' in html, field
+
+    async def test_xem_truoc_khong_cho_mau_cham_tien(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """Màn soạn của admin KHÔNG được thành lối vòng để nhét khoá tiền vào tài liệu.
+
+        Cổng gửi báo giá, `resolve_cost_items` và bộ sinh task thu tiền cùng dựa trên bất biến
+        "tổng hạng mục = giá chào khách".
+        """
+        headers = await _admin_headers(client, db_session)
+        resp = await client.post(
+            "/api/v1/admin/templates/preview",
+            json={
+                "template_type": "proposal",
+                "content": {
+                    "standard_terms": "Điều khoản thật",
+                    "pricing_items": [{"label": "Mẫu chèn bậy", "amount": 999}],
+                    "pricing": "999 VND",
+                },
+            },
+            headers=headers,
+        )
+        html = resp.json()["data"]["html"]
+        assert "Điều khoản thật" in html
+        assert "Mẫu chèn bậy" not in html
+        assert "999" not in html
+
+    async def test_xem_truoc_hop_dong_dung_bo_dieu_rieng(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        headers = await _admin_headers(client, db_session)
+        resp = await client.post(
+            "/api/v1/admin/templates/preview",
+            json={
+                "template_type": "contract",
+                "content": {"ip_ownership": "Bàn giao toàn bộ quyền sau thanh toán."},
+            },
+            headers=headers,
+        )
+        assert resp.status_code == 200, resp.text
+        html = resp.json()["data"]["html"]
+        assert "Bàn giao toàn bộ quyền sau thanh toán." in html
+        assert 'data-field="custom_clauses"' in html
+
+    async def test_xem_truoc_hien_dau_muc_tu_soan_va_giu_so_lien_mach(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """Admin tự thêm đầu mục — bộ mục cứng không phủ hết mọi nghề.
+
+        Số mục phải LIỀN MẠCH sau khi chèn: tờ giấy nhảy số là khách đọc tưởng bị cắt bớt.
+        """
+        import re
+
+        headers = await _admin_headers(client, db_session)
+        resp = await client.post(
+            "/api/v1/admin/templates/preview",
+            json={
+                "template_type": "proposal",
+                "content": {
+                    "standard_terms": "Điều khoản chuẩn",
+                    "extra_sections": [
+                        {"title": "Quyền sử dụng hình ảnh", "body": "Bên B dùng thương mại."},
+                        {"title": "Bảo hành sản phẩm", "body": "30 ngày."},
+                    ],
+                },
+            },
+            headers=headers,
+        )
+        assert resp.status_code == 200, resp.text
+        html = resp.json()["data"]["html"]
+
+        assert "Quyền sử dụng hình ảnh" in html
+        assert "Bảo hành sản phẩm" in html
+        so_muc = [int(n) for n in re.findall(r"<h2>(\d+)\.", html)]
+        assert so_muc == list(range(1, len(so_muc) + 1)), so_muc
+
+    async def test_xem_truoc_giu_muc_chua_dat_ten_de_admin_go_vao(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        # Vừa bấm "Thêm đầu mục" thì mục đó chưa có tên; lọc đi ngay là nó không hiện lên giấy
+        # và admin không có chỗ nào để gõ tên vào.
+        headers = await _admin_headers(client, db_session)
+        resp = await client.post(
+            "/api/v1/admin/templates/preview",
+            json={
+                "template_type": "proposal",
+                "content": {"extra_sections": [{"title": "", "body": ""}]},
+            },
+            headers=headers,
+        )
+        html = resp.json()["data"]["html"]
+        assert 'data-field="extra_title_0"' in html
+        assert 'data-field="extra_body_0"' in html
+
+    async def test_muc_trong_bien_khoi_ban_gui_khach(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """Xoá nội dung một mục CỨNG = mục đó không hiện trên bản khách nhận.
+
+        Mục cứng không bỏ khỏi cấu trúc được, nhưng bỏ trống là nó biến mất — đúng thứ admin
+        muốn khi bấm xoá. Trước bản này mục 3-6 render vô điều kiện nên để trống là khách nhận
+        một tiêu đề rỗng.
+        """
+        import re
+
+        from src.ai.proposal_generator.application.render import ProposalPdfRenderer
+        from src.modules.admin.application.template_preview import _proposal_document
+
+        html = ProposalPdfRenderer().render_html(
+            _proposal_document({"standard_terms": "Chỉ có điều khoản"}), editable=False
+        )
+        assert "Tổng Quan Dự Án" not in html
+        assert "Sản Phẩm Bàn Giao" not in html
+        so_muc = [int(n) for n in re.findall(r"<h2>(\d+)\.", html)]
+        assert so_muc == list(range(1, len(so_muc) + 1)), so_muc
+
+    async def test_xem_truoc_chi_danh_cho_admin(self, client: AsyncClient) -> None:
+        headers = await _user_headers(client)
+        resp = await client.post(
+            "/api/v1/admin/templates/preview",
+            json={"template_type": "proposal", "content": {}},
+            headers=headers,
+        )
+        assert resp.status_code == 403
+
+    async def test_go_mau_ve_dung_chung_duoc(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """Gỡ nghề khỏi một mẫu đang gắn nghề.
+
+        `if payload.profession is not None` gộp hai chuyện khác hẳn nhau: "không gửi trường
+        này" và "gửi lên đúng null". Hệ quả: admin mở mẫu ra, chọn "Dùng chung cho mọi nghề",
+        bấm Lưu, nhận toast thành công — mà cột giữ nguyên nghề cũ, freelancer nghề khác vẫn
+        không thấy mẫu đó. Mở lại form thì select hiện đúng nghề cũ, không dấu vết gì.  #Huynh
+        """
+        headers = await _admin_headers(client, db_session)
+        tao = await client.post(
+            "/api/v1/admin/templates",
+            json=self._template_payload(profession="ui-ux-design"),
+            headers=headers,
+        )
+        tid = tao.json()["data"]["id"]
+
+        sua = await client.patch(
+            f"/api/v1/admin/templates/{tid}", json={"profession": None}, headers=headers
+        )
+        assert sua.status_code == 200, sua.text
+        assert sua.json()["data"]["profession"] is None
+
+    async def test_khong_gui_profession_thi_giu_nguyen_nghe(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        # Mặt còn lại của cùng một bất biến: sửa mỗi tên thì đừng đụng tới nghề.
+        headers = await _admin_headers(client, db_session)
+        tao = await client.post(
+            "/api/v1/admin/templates",
+            json=self._template_payload(profession="ui-ux-design"),
+            headers=headers,
+        )
+        tid = tao.json()["data"]["id"]
+
+        sua = await client.patch(
+            f"/api/v1/admin/templates/{tid}", json={"name": "Tên mới"}, headers=headers
+        )
+        assert sua.status_code == 200, sua.text
+        assert sua.json()["data"]["profession"] == "ui-ux-design"
+
     async def test_loc_thu_vien_theo_nghe(
         self, client: AsyncClient, db_session: AsyncSession
     ) -> None:

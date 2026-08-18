@@ -120,8 +120,12 @@ class ProposalsRepository:
                     SystemTemplateModel.profession.is_(None),
                 )
             )
-        else:
-            conditions.append(SystemTemplateModel.profession.is_(None))
+        # Freelancer CHƯA đặt chuyên môn: trả TẤT CẢ mẫu đang bật, không chỉ mẫu dùng chung.
+        #
+        # Bản trước lọc `profession IS NULL` nên mọi mẫu gắn nghề biến mất sạch — im lặng, và
+        # đúng lúc người dùng mới nhất (chưa kịp điền hồ sơ) cần mẫu nhất. Thà cho họ thấy đủ
+        # kèm nhãn nghề để tự chọn, còn hơn đưa ra một danh sách rỗng rồi để họ kết luận là
+        # admin chưa soạn mẫu nào.  #Huynh
         return conditions
 
     async def list_active_templates(self, *, template_type: str, profession: str | None) -> list:
