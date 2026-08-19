@@ -43,7 +43,16 @@ async def _create_proposal(
         json={
             "deal_id": deal_id,
             "content": content
-            or {"summary": "Proposal text", "pricing": {"total": 5_000_000, "currency": "VND"}},
+            or {
+                "summary": "Proposal text",
+                "pricing": {
+                    "total": 5_000_000,
+                    "currency": "VND",
+                    # Cổng gửi đòi ít nhất một hạng mục chi phí: mỗi hạng mục là một
+                    # đợt thu tiền, và bộ sinh task đọc đúng bảng này.
+                    "line_items": [{"description": "Trọn gói", "amount": 5_000_000}],
+                },
+            },
         },
         headers=headers,
     )

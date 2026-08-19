@@ -102,7 +102,9 @@ class InvoicesService:
     async def get_one(self, user_id: uuid.UUID, invoice_id: uuid.UUID):  # type: ignore[return]
         return await self._get_invoice(user_id, invoice_id)
 
-    async def update(self, user_id: uuid.UUID, invoice_id: uuid.UUID, payload: InvoiceUpdateRequest):  # type: ignore[return]
+    async def update(
+        self, user_id: uuid.UUID, invoice_id: uuid.UUID, payload: InvoiceUpdateRequest
+    ):  # type: ignore[return]
         invoice = await self._get_invoice(user_id, invoice_id)
         if invoice.status != "draft":
             raise BusinessRuleError("Only draft invoices can be updated")
@@ -124,16 +126,149 @@ class InvoicesService:
         return await self.repo.save(invoice)
 
     async def delete(self, user_id: uuid.UUID, invoice_id: uuid.UUID) -> None:
+        """Xoá một hoá đơn NHÁP tạo nhầm.
+
+        Phải dọn `invoice_line_items` trước: khoá ngoại
+        ``fk_invoice_line_items_invoice`` đặt ``NO ACTION`` và model không khai
+        ``relationship``, nên không ai xoá hộ. Mà hoá đơn nào cũng có ít nhất một dòng hạng
+        mục, nên trước đây nút Xoá KHÔNG BAO GIỜ chạy được — Postgres chặn, IntegrityError
+        bay lên thành 500 và màn hình chỉ nói được "An unexpected error occurred".
+
+        Hai cửa chặn thêm, vì xoá là mất hẳn: chỉ bản nháp mới được xoá, và đã ghi nhận đồng
+        nào của khách thì thôi — chứng từ thu tiền không phải thứ để dọn cho gọn mắt.  #Huynh
+        """
         invoice = await self._get_invoice(user_id, invoice_id)
+
+        if invoice.status != "draft":
+            raise BusinessRuleError(
+                "Chỉ xoá được hoá đơn còn ở dạng nháp. Hoá đơn đã gửi cho khách thì huỷ "
+                "chứ không xoá, để còn dấu vết đối soát."
+            )
+
+        payments = await self.repo.list_payments(invoice_id)
+        if payments:
+            raise BusinessRuleError("Hoá đơn này đã có ghi nhận thanh toán nên không xoá được.")
+
+        # Truyền danh sách rỗng = xoá sạch dòng hạng mục mà không thêm lại gì.
+        await self.repo.replace_line_items(invoice_id, [])
         await self.repo.delete(invoice)
 
-    async def send(self, user_id: uuid.UUID, invoice_id: uuid.UUID):
+    async def _build_invoice_email(self, invoice, attachments: list[dict[str, str]] | None):
+        """Dựng lá thư gửi khách. Trả `(EmailContent, ảnh_nhúng, email_khách)`.
+
+        Dùng lại nguyên đường ống của lời nhắc thanh toán thay vì dựng bộ thứ hai:
+        `payment_info_from_owner` + `build_payment_block` (đã sinh QR VietQR kèm sẵn số tiền
+        và nội dung chuyển khoản), và `parse_attachments`/`load_image_bytes` cho ảnh
+        freelancer tự đính. Hai bộ dựng thư song song là kiểu gì cũng có ngày lệch nhau, mà
+        lệch ở đây nghĩa là khách chuyển tiền nhầm chỗ.  #Huynh
+        """
+        from src.infrastructure.storage.object_storage import object_storage
+        from src.modules.invoices.application.emails import build_invoice_email
+        from src.modules.reminders.application.attachments import (
+            images_html,
+            load_image_bytes,
+            parse_attachments,
+        )
+        from src.modules.reminders.application.delivery_service import build_footer
+        from src.modules.reminders.application.payment_block import (
+            build_payment_block,
+            payment_info_from_owner,
+        )
+
+        client = await self.repo.get_client_by_id(invoice.client_id, invoice.owner_user_id)
+        owner = await self.repo.get_owner(invoice.owner_user_id)
+        items = await self.repo.list_line_items(invoice.id)
+
+        if client is None or not (client.email or "").strip():
+            raise BusinessRuleError(
+                "Khách hàng của hóa đơn này chưa có email, chưa gửi được. "
+                "Bổ sung email cho khách rồi gửi lại."
+            )
+
+        amount_due = Decimal(invoice.total or 0) - Decimal(invoice.amount_paid or 0)
+
+        # Ảnh freelancer tự đính. Có ảnh riêng thì KHÔNG kèm QR tự sinh nữa: hai mã QR cạnh
+        # nhau là khách phải phân vân quét cái nào, mà đoán sai thì tiền đi nhầm chỗ.
+        images = parse_attachments(attachments or [])
+        inline_images = await load_image_bytes(object_storage, images) if images else {}
+
+        payment_html, payment_plain, qr_png = build_payment_block(
+            payment_info_from_owner(owner),
+            amount=amount_due,
+            memo=invoice.invoice_number,
+            with_qr=not inline_images,
+        )
+        if qr_png is not None:
+            inline_images["vietqr"] = qr_png
+
+        content = build_invoice_email(
+            client_name=client.name,
+            freelancer_name=getattr(owner, "full_name", None),
+            invoice_number=invoice.invoice_number,
+            line_items=[(i.description, Decimal(i.quantity) * Decimal(i.unit_price)) for i in items]
+            or [("Thanh toán theo hợp đồng", Decimal(invoice.subtotal or 0))],
+            total=Decimal(invoice.total or 0),
+            amount_due=amount_due,
+            issue_date=invoice.issue_date,
+            due_date=invoice.due_date,
+            notes=invoice.notes,
+            payment_html=payment_html,
+            payment_plain=payment_plain,
+            images_html=images_html(images, {f"img{i}": f"cid:img{i}" for i in range(len(images))}),
+            footer=build_footer(
+                getattr(owner, "full_name", None),
+                getattr(owner, "email", None),
+                f"Hóa đơn {invoice.invoice_number}",
+            ),
+        )
+        return content, inline_images, client.email
+
+    async def send(
+        self,
+        user_id: uuid.UUID,
+        invoice_id: uuid.UUID,
+        *,
+        notify: bool = True,
+        attachments: list[dict[str, str]] | None = None,
+    ):
+        """Gửi hóa đơn cho khách và đánh dấu đã gửi.
+
+        `notify=False` chỉ ĐÁNH DẤU, không gửi thư — dành cho freelancer đã tự gửi tay qua
+        Zalo/Messenger rồi chỉ muốn hệ thống ghi nhận.
+
+        **Gửi hỏng thì KHÔNG đánh dấu đã gửi.** Trước đây hàm này chỉ đổi trạng thái và
+        không hề gửi thư, nên nút "Gửi cho khách" là một lời nói dối: khách không nhận được
+        gì mà hệ thống vẫn ghi "đã gửi". Nay nếu thư không đi được thì hóa đơn ở nguyên
+        `draft` và lỗi nổi lên kèm lý do (`EmailDeliveryError`) — thà để freelancer biết mà
+        gửi lại, còn hơn để họ yên tâm ngồi đợi một khoản tiền mà khách không biết là phải
+        trả.  #Huynh
+        """
+        from src.shared.email.smtp import send_email
+
         invoice = await self._get_invoice(user_id, invoice_id)
         if invoice.status != "draft":
             raise BusinessRuleError("Only draft invoices can be sent")
+
+        # Token sinh TRƯỚC khi gửi: nếu sau này thân thư có kèm link xem hóa đơn thì link đó
+        # phải có sẵn lúc dựng thư, không thể vá vào sau.
+        share_token = invoice.share_token or secrets.token_urlsafe(32)
+
+        if notify:
+            content, inline_images, to_email = await self._build_invoice_email(invoice, attachments)
+            owner = await self.repo.get_owner(invoice.owner_user_id)
+            await send_email(
+                to=to_email,
+                subject=content.subject,
+                html=content.html,
+                plain=content.plain,
+                from_name=getattr(owner, "full_name", None),
+                reply_to=getattr(owner, "email", None),
+                inline_images=inline_images or None,
+            )
+
         invoice.status = "sent"
         invoice.sent_at = datetime.now(UTC)
-        invoice.share_token = secrets.token_urlsafe(32)
+        invoice.share_token = share_token
         return await self.repo.save(invoice)
 
     async def void(self, user_id: uuid.UUID, invoice_id: uuid.UUID):

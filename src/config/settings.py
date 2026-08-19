@@ -83,12 +83,18 @@ class Settings(BaseSettings):
     groq_api_key: str = ""
 
     # -----------------------------------------------------------------------
+    # Ollama
+    # -----------------------------------------------------------------------
+    ollama_base_url: str = "http://localhost:11434"
+
+    # -----------------------------------------------------------------------
     # OpenAI
     # -----------------------------------------------------------------------
     openai_api_key: str = ""
     openai_model: str = "gpt-4o"
     openai_max_retries: int = 3
     openai_timeout: int = 60
+
 
     # -----------------------------------------------------------------------
     # Stripe
@@ -122,6 +128,19 @@ class Settings(BaseSettings):
     # env var needs a real value (or to be unset) in every deployed environment.
     momo_redirect_url: str = "https://api.solodesk.space/api/v1/payments/webhooks/momo/result"
     momo_timeout_seconds: float = 15.0
+    # Khoảng số tiền MoMo nhận cho MỘT giao dịch (amount kiểu Long, 1.000đ–50tr):
+    # https://developers.momo.vn/v3/docs/payment/api/wallet/onetime/
+    #
+    # Gửi ra ngoài khoảng này MoMo trả HTTP 400 — KHÔNG phải một từ chối nghiệp vụ có
+    # `resultCode` để đọc. Đó là lý do một gói giá 200đ từng hiện ra thành "Could not
+    # reach MoMo": lỗi 400 rơi vào nhánh bắt lỗi mạng của client.
+    #
+    # Để ở settings thay vì hằng số vì đây là hạn mức của MoMo theo hợp đồng merchant,
+    # không phải luật kinh doanh của SoloDesk — merchant thật có thể được nâng trần, và
+    # lúc đó chỉ cần sửa env. Mặc định phải khớp hằng cùng tên trong
+    # integrations/momo/client.py (bản đó phục vụ MockMomoClient và test).
+    momo_min_amount: int = 1_000
+    momo_max_amount: int = 50_000_000
 
     # -----------------------------------------------------------------------
     # Storage
@@ -143,6 +162,18 @@ class Settings(BaseSettings):
     smtp_from_name: str = "SoloDesk"
     smtp_tls: bool = False  # True → SMTP_SSL (port 465)
     smtp_starttls: bool = False  # True → STARTTLS after connect (port 587)
+    # Hết giờ chờ cho MỘT lần gửi thư. `smtplib` mặc định KHÔNG có timeout, nên máy chủ
+    # thư im lặng (nhà cung cấp chặn cổng 587, hoặc gói tin bị nuốt) là treo tới tận
+    # timeout TCP của hệ điều hành — cỡ 2 phút — và giữ luôn một thread trong pool.
+    #
+    # 10 giây không phải số tuỳ tiện: axios của web bỏ cuộc ở 15 giây
+    # (`web/src/configs/axios.ts`). Backend phải trả lời TRƯỚC mốc đó, không thì mọi lỗi
+    # SMTP đều hiện thành "mất mạng" ở phía người dùng và cả phần phân loại lỗi bên dưới
+    # thành vô dụng vì câu trả lời không bao giờ về kịp. Sửa số này thì phải xem lại số kia.
+    #
+    # Đo thật trên staging 04/08: một lần gửi qua Gmail mất 3,7–4,4 giây, nên 10 giây còn
+    # dư gấp đôi cho lúc mạng chậm.  #Huynh
+    smtp_timeout_seconds: float = 10.0
 
     # -----------------------------------------------------------------------
     # CORS

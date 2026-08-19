@@ -1,5 +1,6 @@
 import uuid
 from decimal import Decimal
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -7,7 +8,14 @@ from pydantic import BaseModel, Field
 class ProposalRequest(BaseModel):
     deal_id: uuid.UUID
     content: dict
-    status: str = "draft"
+    # CỐ Ý khoá về đúng "draft". Trước đây đây là `str` tự do và `create()` ghi thẳng vào DB, nên
+    # `POST /proposals {"status": "accepted"}` tạo ngay một báo giá ĐÃ CHẤP NHẬN — bỏ qua toàn bộ
+    # `transition_status`: cổng chưa-chốt-giá, cổng hạng mục 0đ, cổng tổng-lệch-giá-chào và cả
+    # bảng chuyển trạng thái hợp lệ. Từ đó tạo hợp đồng được luôn.
+    #
+    # Mọi chuyển trạng thái phải đi qua `PATCH /proposals/{id}/status`, nơi các cổng đó sống.
+    # Siết bây giờ vì đường tạo thủ công vừa trở thành lối đi CHÍNH, không còn là ngách.  #Huynh
+    status: Literal["draft"] = "draft"
 
 
 class ProposalStatusRequest(BaseModel):

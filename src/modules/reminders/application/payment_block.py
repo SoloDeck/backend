@@ -142,6 +142,7 @@ def build_payment_block(
     amount: Decimal | int | None = None,
     memo: str | None = None,
     qr_src: str = "cid:vietqr",
+    with_qr: bool = True,
 ) -> tuple[str, str, bytes | None]:
     """Trả `(html, plain, qr_png)`.
 
@@ -149,7 +150,11 @@ def build_payment_block(
     khai gì cả thì trả rỗng và thư gửi y như cũ, KHÔNG chèn một khung trống.
 
     Phần chữ LUÔN được in song song với mã QR: rất nhiều trình đọc mail chặn ảnh theo mặc
-    định, mà thư chỉ có mỗi cái ảnh thì coi như không nói gì.  #Huynh
+    định, mà thư chỉ có mỗi cái ảnh thì coi như không nói gì.
+
+    `with_qr=False` giữ nguyên phần chữ nhưng bỏ hẳn ảnh QR. Dùng khi freelancer đã tự đính
+    ảnh mã QR của mình vào thư: hai mã QR cạnh nhau là khách phải phân vân quét cái nào, mà
+    đoán sai thì tiền đi nhầm chỗ.  #Huynh
     """
     if not info.has_anything:
         return "", "", None
@@ -162,14 +167,15 @@ def build_payment_block(
 
     if info.has_bank:
         assert info.bank_code and info.account_number
-        qr_png = render_qr_png(
-            vietqr_payload(
-                bank_code=info.bank_code,
-                account_number=info.account_number,
-                amount=amount,
-                memo=memo,
+        if with_qr:
+            qr_png = render_qr_png(
+                vietqr_payload(
+                    bank_code=info.bank_code,
+                    account_number=info.account_number,
+                    amount=amount,
+                    memo=memo,
+                )
             )
-        )
         rows.append(("Ngân hàng", info.bank_name or info.bank_code))
         rows.append(("Số tài khoản", info.account_number))
         if info.account_holder:

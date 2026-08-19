@@ -54,7 +54,13 @@ async def _create_accepted_proposal(http: AsyncClient, headers: dict, deal_id: s
             "deal_id": deal_id,
             "content": {
                 "body": "proposal body",
-                "pricing": {"total": 5_000_000, "currency": "VND"},
+                "pricing": {
+                    "total": 5_000_000,
+                    "currency": "VND",
+                    # Cổng gửi đòi ít nhất một hạng mục chi phí: mỗi hạng mục là một
+                    # đợt thu tiền, và bộ sinh task đọc đúng bảng này.
+                    "line_items": [{"description": "Trọn gói", "amount": 5_000_000}],
+                },
             },
         },
         headers=headers,

@@ -5,18 +5,20 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 from httpx import AsyncClient
-from sqlalchemy import insert, update
+from sqlalchemy import insert, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.ai.shared.constants import SUPPORTED_LLM_PROVIDERS
+from src.ai.shared.constants import SUPPORTED_LLM_MODELS, SUPPORTED_LLM_PROVIDERS
 from src.config.settings import settings
 from src.infrastructure.database.models import (
     AiCostRecordModel,
     AIProviderConfigurationModel,
     FeatureFlagModel,
+    PlanModel,
     SubscriptionModel,
     UserModel,
 )
+from src.infrastructure.database.seeders.plans import PlansSeeder
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -66,6 +68,17 @@ async def _admin_headers_with_id(client: AsyncClient, db_session: AsyncSession) 
     return headers, me.json()["data"]["id"]
 
 
+# Nhà cung cấp có xác thực bằng API key (ollama thì không — nó dùng base_url).
+_PROVIDERS_WITH_API_KEY = sorted(
+    name for name in SUPPORTED_LLM_PROVIDERS
+    if f"{name}_api_key" in type(settings).model_fields
+)
+
+
+def _a_model_for(provider: str) -> str:
+    return sorted(SUPPORTED_LLM_MODELS[provider])[0]
+
+
 @pytest.fixture
 def all_provider_keys_set(monkeypatch: pytest.MonkeyPatch) -> None:
     """Giả lập môi trường ĐÃ cấu hình đủ API key cho mọi nhà cung cấp LLM.
@@ -75,17 +88,23 @@ def all_provider_keys_set(monkeypatch: pytest.MonkeyPatch) -> None:
     GROQ_API_KEY/GEMINI_API_KEY (xem job "Test / Integration" trong ci.yml),
     còn máy dev thì thường có trong `.env` — không ghim lại thì cùng một test sẽ
     xanh ở máy và đỏ trên CI.
+
+    Chỉ ghim nhà cung cấp NÀO có trường khoá: Settings là pydantic model nên gán
+    một tên lạ (vd `ollama_api_key`) ném ValueError, `raising=False` không đỡ được.
+    Ollama xác thực bằng `ollama_base_url`.
     """
-    for name in SUPPORTED_LLM_PROVIDERS:
-        monkeypatch.setattr(settings, f"{name}_api_key", f"test-{name}-key", raising=False)
+    for name in _PROVIDERS_WITH_API_KEY:
+        monkeypatch.setattr(settings, f"{name}_api_key", f"test-{name}-key")
 
 
 def _plan_payload(**overrides: object) -> dict:
     return {
         "name": f"Plan {uuid.uuid4().hex[:6]}",
         "slug": f"plan-{uuid.uuid4().hex[:6]}",
-        "price_monthly": "9.99",
-        "currency": "USD",
+        # Giá theo thang VND thật, không phải "9.99" kiểu USD: gói có phí phải nằm trong
+        # hạn mức MoMo (1.000đ – 50.000.000đ), nếu không AdminService trả 422.
+        "price_monthly": "199000",
+        "currency": "VND",
         "can_use_ai": False,
         "can_export_pdf": False,
         "max_clients": None,
@@ -817,7 +836,7 @@ class TestAdminCreatePlan:
         payload = _plan_payload(
             name="Pro Plan",
             slug="pro-plan",
-            price_monthly="29.99",
+            price_monthly="290000",
             can_use_ai=True,
             can_export_pdf=True,
             max_clients=500,
@@ -869,6 +888,76 @@ class TestAdminCreatePlan:
         assert resp.status_code == 201
         assert resp.json()["data"]["is_active"] is True
 
+    async def test_price_below_momo_minimum_returns_422(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """200đ — con số đã tạo ra gói "abc" không ai mua được trên bản deploy.
+
+        Lý do phải nằm trong `error.message` chứ không phải `details`: giao diện quản trị
+        đổ thẳng `error.message` ra toast, nên đó là chuỗi duy nhất admin thật sự đọc được.
+        """
+        headers = await _admin_headers(client, db_session)
+        resp = await client.post(
+            "/api/v1/admin/plans", json=_plan_payload(price_monthly="200"), headers=headers
+        )
+        assert resp.status_code == 422
+        error = resp.json()["error"]
+        assert error["code"] == "VALIDATION_FAILED"
+        assert "1.000" in error["message"]
+
+    async def test_price_above_momo_maximum_returns_422(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        headers = await _admin_headers(client, db_session)
+        resp = await client.post(
+            "/api/v1/admin/plans", json=_plan_payload(price_monthly="50000001"), headers=headers
+        )
+        assert resp.status_code == 422
+        assert "50.000.000" in resp.json()["error"]["message"]
+
+    async def test_zero_price_free_plan_returns_201(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        headers = await _admin_headers(client, db_session)
+        resp = await client.post(
+            "/api/v1/admin/plans", json=_plan_payload(price_monthly="0"), headers=headers
+        )
+        assert resp.status_code == 201
+        assert resp.json()["data"]["price_monthly"] == "0.00"
+
+    async def test_non_vnd_currency_returns_422(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """Gói không phải VND là gói không mua được — chết tận `_to_whole_vnd`."""
+        headers = await _admin_headers(client, db_session)
+        resp = await client.post(
+            "/api/v1/admin/plans", json=_plan_payload(currency="USD"), headers=headers
+        )
+        assert resp.status_code == 422
+
+    async def test_currency_defaults_to_vnd_when_omitted(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """Bỏ trống tiền tệ phải ra VND, không phải USD như mặc định cũ."""
+        headers = await _admin_headers(client, db_session)
+        payload = _plan_payload()
+        payload.pop("currency")
+
+        resp = await client.post("/api/v1/admin/plans", json=payload, headers=headers)
+
+        assert resp.status_code == 201
+        assert resp.json()["data"]["currency"] == "VND"
+
+    async def test_negative_price_returns_422_not_500(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """Trước khi có `Field(ge=0)`, giá âm lọt xuống Postgres và nổ thành 500 trần."""
+        headers = await _admin_headers(client, db_session)
+        resp = await client.post(
+            "/api/v1/admin/plans", json=_plan_payload(price_monthly="-5"), headers=headers
+        )
+        assert resp.status_code == 422
+
 
 # ---------------------------------------------------------------------------
 # PATCH /admin/plans/{plan_id}
@@ -884,7 +973,7 @@ class TestAdminUpdatePlan:
             await client.post("/api/v1/admin/plans", json=_plan_payload(), headers=headers)
         ).json()["data"]["id"]
 
-        updated = _plan_payload(name="Renamed Plan", slug="renamed-plan", price_monthly="49.99")
+        updated = _plan_payload(name="Renamed Plan", slug="renamed-plan", price_monthly="490000")
         resp = await client.patch(f"/api/v1/admin/plans/{plan_id}", json=updated, headers=headers)
         assert resp.status_code == 200
         data = resp.json()["data"]
@@ -898,7 +987,7 @@ class TestAdminUpdatePlan:
         created = (
             await client.post(
                 "/api/v1/admin/plans",
-                json=_plan_payload(name="Stable Name", slug="stable-slug", price_monthly="9.99"),
+                json=_plan_payload(name="Stable Name", slug="stable-slug", price_monthly="99000"),
                 headers=headers,
             )
         ).json()["data"]
@@ -914,6 +1003,75 @@ class TestAdminUpdatePlan:
         assert data["slug"] == "stable-slug"
         assert data["price_monthly"] == "199000.00"
         assert data["currency"] == "VND"
+
+    async def test_lowering_price_below_momo_minimum_returns_422(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        headers = await _admin_headers(client, db_session)
+        created = (
+            await client.post("/api/v1/admin/plans", json=_plan_payload(), headers=headers)
+        ).json()["data"]
+
+        resp = await client.patch(
+            f"/api/v1/admin/plans/{created['id']}",
+            json={"price_monthly": "200"},
+            headers=headers,
+        )
+
+        assert resp.status_code == 422
+        assert "1.000" in resp.json()["error"]["message"]
+
+    async def test_renaming_plan_does_not_revalidate_price(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """Payload không đụng tới giá thì không bị soi giá.
+
+        Gói cũ trong DB có thể đang để một mức giá không còn hợp lệ; chặn cả những lần
+        sửa không liên quan là khoá luôn đường duy nhất để đi dọn nó.
+        """
+        headers = await _admin_headers(client, db_session)
+        created = (
+            await client.post("/api/v1/admin/plans", json=_plan_payload(), headers=headers)
+        ).json()["data"]
+
+        resp = await client.patch(
+            f"/api/v1/admin/plans/{created['id']}",
+            json={"name": "Đổi tên thôi"},
+            headers=headers,
+        )
+
+        assert resp.status_code == 200
+        assert resp.json()["data"]["name"] == "Đổi tên thôi"
+
+    async def test_cannot_deactivate_the_free_plan(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        await PlansSeeder(db_session).run()
+        headers = await _admin_headers(client, db_session)
+        free = await db_session.scalar(select(PlanModel).where(PlanModel.slug == "free"))
+
+        resp = await client.patch(
+            f"/api/v1/admin/plans/{free.id}", json={"is_active": False}, headers=headers
+        )
+
+        assert resp.status_code == 409
+        assert "Free" in resp.json()["error"]["message"]
+
+    async def test_can_still_rename_the_free_plan(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """Tên để hiển thị, mã là khoá code — đổi tên phải luôn được."""
+        await PlansSeeder(db_session).run()
+        headers = await _admin_headers(client, db_session)
+        free = await db_session.scalar(select(PlanModel).where(PlanModel.slug == "free"))
+
+        resp = await client.patch(
+            f"/api/v1/admin/plans/{free.id}", json={"name": "Miễn phí"}, headers=headers
+        )
+
+        assert resp.status_code == 200
+        assert resp.json()["data"]["slug"] == "free"
+
 
     async def test_deactivate_plan(self, client: AsyncClient, db_session: AsyncSession) -> None:
         headers = await _admin_headers(client, db_session)
@@ -967,7 +1125,7 @@ class TestAdminUpdatePlan:
 
         resp = await client.patch(
             f"/api/v1/admin/plans/{created['id']}",
-            json={"slug": "self-plan-slug", "price_monthly": 15.0},
+            json={"slug": "self-plan-slug", "price_monthly": 150000},
             headers=headers,
         )
         assert resp.status_code == 200
@@ -993,6 +1151,83 @@ class TestAdminUpdatePlan:
     async def test_unauthenticated_returns_401(self, client: AsyncClient) -> None:
         resp = await client.patch(f"/api/v1/admin/plans/{uuid.uuid4()}", json=_plan_payload())
         assert resp.status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# DELETE /admin/plans/{plan_id}
+# ---------------------------------------------------------------------------
+
+
+class TestAdminDeletePlan:
+    async def test_deletes_a_plan_nobody_ever_used(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """Ca "lỡ tay tạo nhầm" — đúng tình huống gói "abc" 200đ."""
+        headers = await _admin_headers(client, db_session)
+        created = (
+            await client.post("/api/v1/admin/plans", json=_plan_payload(), headers=headers)
+        ).json()["data"]
+
+        resp = await client.delete(f"/api/v1/admin/plans/{created['id']}", headers=headers)
+
+        assert resp.status_code == 204
+        gone = await client.get(f"/api/v1/admin/plans/{created['id']}", headers=headers)
+        assert gone.status_code == 404
+
+    async def test_refuses_when_the_plan_has_subscribers(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        headers = await _admin_headers(client, db_session)
+        plan = (
+            await client.post("/api/v1/admin/plans", json=_plan_payload(), headers=headers)
+        ).json()["data"]
+
+        user_h = await _user_headers(client)
+        user_id = (await client.get("/api/v1/users/me", headers=user_h)).json()["data"]["id"]
+        await _create_subscription(db_session, user_id, plan["id"])
+
+        resp = await client.delete(f"/api/v1/admin/plans/{plan['id']}", headers=headers)
+
+        assert resp.status_code == 409
+        message = resp.json()["error"]["message"]
+        assert "NGỪNG BÁN" in message
+
+        still_there = await client.get(f"/api/v1/admin/plans/{plan['id']}", headers=headers)
+        assert still_there.status_code == 200
+
+    async def test_refuses_to_delete_the_free_plan(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        await PlansSeeder(db_session).run()
+        headers = await _admin_headers(client, db_session)
+        free = await db_session.scalar(select(PlanModel).where(PlanModel.slug == "free"))
+
+        resp = await client.delete(f"/api/v1/admin/plans/{free.id}", headers=headers)
+
+        assert resp.status_code == 409
+        assert "Free" in resp.json()["error"]["message"]
+
+    async def test_nonexistent_plan_returns_404(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        headers = await _admin_headers(client, db_session)
+
+        resp = await client.delete(f"/api/v1/admin/plans/{uuid.uuid4()}", headers=headers)
+
+        assert resp.status_code == 404
+
+    async def test_non_admin_returns_403(self, client: AsyncClient) -> None:
+        headers = await _user_headers(client)
+
+        resp = await client.delete(f"/api/v1/admin/plans/{uuid.uuid4()}", headers=headers)
+
+        assert resp.status_code == 403
+
+    async def test_unauthenticated_returns_401(self, client: AsyncClient) -> None:
+        resp = await client.delete(f"/api/v1/admin/plans/{uuid.uuid4()}")
+
+        assert resp.status_code == 401
+
 
 
 # ---------------------------------------------------------------------------
@@ -1173,7 +1408,7 @@ class TestAdminAiCosts:
                 id=uuid.uuid4(),
                 user_id=uuid.UUID(admin_id),
                 ai_module="lead_qualifier",
-                model_used="llama-3.3-70b-versatile",
+                model_used="openai/gpt-oss-120b",
                 input_tokens=100,
                 output_tokens=20,
                 estimated_cost_usd=0,
@@ -1270,7 +1505,7 @@ class TestAdminUpdateAiProvider:
 
         resp = await client.patch(
             "/api/v1/admin/ai-provider",
-            json={"llm_provider": target},
+            json={"llm_provider": target, "llm_model": _a_model_for(target)},
             headers=headers,
         )
         assert resp.status_code == 200, resp.text
@@ -1323,15 +1558,18 @@ class TestAdminUpdateAiProvider:
 
         before = await client.get("/api/v1/admin/ai-provider", headers=headers)
         active = before.json()["data"]["llm_provider"]
-        target = next(p for p in sorted(SUPPORTED_LLM_PROVIDERS) if p != active)
+        # Chỉ xét nhà cung cấp DÙNG key — ollama không có key nên không dựng được
+        # kịch bản "thiếu key" với nó.
+        target = next(p for p in _PROVIDERS_WITH_API_KEY if p != active)
 
         # Nhà cung cấp đích không có key; nhà cung cấp đang dùng thì có.
-        monkeypatch.setattr(settings, f"{target}_api_key", "", raising=False)
-        monkeypatch.setattr(settings, f"{active}_api_key", f"test-{active}-key", raising=False)
+        monkeypatch.setattr(settings, f"{target}_api_key", "")
+        if f"{active}_api_key" in type(settings).model_fields:
+            monkeypatch.setattr(settings, f"{active}_api_key", f"test-{active}-key")
 
         resp = await client.patch(
             "/api/v1/admin/ai-provider",
-            json={"llm_provider": target},
+            json={"llm_provider": target, "llm_model": _a_model_for(target)},
             headers=headers,
         )
         assert resp.status_code == 422, resp.text
@@ -1441,7 +1679,7 @@ class TestAdminAuditLogs:
 
         patch = await client.patch(
             "/api/v1/admin/ai-provider",
-            json={"llm_provider": target},
+            json={"llm_provider": target, "llm_model": _a_model_for(target)},
             headers=headers,
         )
         assert patch.status_code == 200, patch.text
@@ -1600,6 +1838,203 @@ class TestAdminCreateTemplate:
         )
         assert resp.status_code == 201
         assert resp.json()["data"]["profession"] is None
+
+    async def test_xem_truoc_dung_to_giay_that(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """Admin soạn mẫu mà nhìn thấy ngay tờ giấy khách sẽ đọc.
+
+        Trước bản này admin soạn trong một form toàn ô chữ, còn tờ báo giá thì chỉ freelancer
+        mới thấy — người soạn ra nội dung gửi khách hàng chưa từng nhìn thấy nội dung đó nằm
+        trên giấy.  #Huynh
+        """
+        headers = await _admin_headers(client, db_session)
+        resp = await client.post(
+            "/api/v1/admin/templates/preview",
+            json={
+                "template_type": "proposal",
+                "content": {
+                    "project_overview": "Thiết kế bộ nhận diện thương hiệu.",
+                    "scope_of_work": ["Khảo sát", "Phác thảo"],
+                    "standard_terms": "Bàn giao file nguồn.",
+                },
+            },
+            headers=headers,
+        )
+        assert resp.status_code == 200, resp.text
+        html = resp.json()["data"]["html"]
+
+        assert "Thiết kế bộ nhận diện thương hiệu." in html
+        assert "Khảo sát" in html
+        # Chế độ sửa: MỌI mục hiện ra kể cả khi trống, bằng không admin không có chỗ bấm vào.
+        for field in ("payment_terms", "out_of_scope", "revision_policy", "assumptions"):
+            assert f'data-field="{field}"' in html, field
+
+    async def test_xem_truoc_khong_cho_mau_cham_tien(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """Màn soạn của admin KHÔNG được thành lối vòng để nhét khoá tiền vào tài liệu.
+
+        Cổng gửi báo giá, `resolve_cost_items` và bộ sinh task thu tiền cùng dựa trên bất biến
+        "tổng hạng mục = giá chào khách".
+        """
+        headers = await _admin_headers(client, db_session)
+        resp = await client.post(
+            "/api/v1/admin/templates/preview",
+            json={
+                "template_type": "proposal",
+                "content": {
+                    "standard_terms": "Điều khoản thật",
+                    "pricing_items": [{"label": "Mẫu chèn bậy", "amount": 999}],
+                    "pricing": "999 VND",
+                },
+            },
+            headers=headers,
+        )
+        html = resp.json()["data"]["html"]
+        assert "Điều khoản thật" in html
+        assert "Mẫu chèn bậy" not in html
+        assert "999" not in html
+
+    async def test_xem_truoc_hop_dong_dung_bo_dieu_rieng(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        headers = await _admin_headers(client, db_session)
+        resp = await client.post(
+            "/api/v1/admin/templates/preview",
+            json={
+                "template_type": "contract",
+                "content": {"ip_ownership": "Bàn giao toàn bộ quyền sau thanh toán."},
+            },
+            headers=headers,
+        )
+        assert resp.status_code == 200, resp.text
+        html = resp.json()["data"]["html"]
+        assert "Bàn giao toàn bộ quyền sau thanh toán." in html
+        assert 'data-field="custom_clauses"' in html
+
+    async def test_xem_truoc_hien_dau_muc_tu_soan_va_giu_so_lien_mach(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """Admin tự thêm đầu mục — bộ mục cứng không phủ hết mọi nghề.
+
+        Số mục phải LIỀN MẠCH sau khi chèn: tờ giấy nhảy số là khách đọc tưởng bị cắt bớt.
+        """
+        import re
+
+        headers = await _admin_headers(client, db_session)
+        resp = await client.post(
+            "/api/v1/admin/templates/preview",
+            json={
+                "template_type": "proposal",
+                "content": {
+                    "standard_terms": "Điều khoản chuẩn",
+                    "extra_sections": [
+                        {"title": "Quyền sử dụng hình ảnh", "body": "Bên B dùng thương mại."},
+                        {"title": "Bảo hành sản phẩm", "body": "30 ngày."},
+                    ],
+                },
+            },
+            headers=headers,
+        )
+        assert resp.status_code == 200, resp.text
+        html = resp.json()["data"]["html"]
+
+        assert "Quyền sử dụng hình ảnh" in html
+        assert "Bảo hành sản phẩm" in html
+        so_muc = [int(n) for n in re.findall(r"<h2>(\d+)\.", html)]
+        assert so_muc == list(range(1, len(so_muc) + 1)), so_muc
+
+    async def test_xem_truoc_giu_muc_chua_dat_ten_de_admin_go_vao(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        # Vừa bấm "Thêm đầu mục" thì mục đó chưa có tên; lọc đi ngay là nó không hiện lên giấy
+        # và admin không có chỗ nào để gõ tên vào.
+        headers = await _admin_headers(client, db_session)
+        resp = await client.post(
+            "/api/v1/admin/templates/preview",
+            json={
+                "template_type": "proposal",
+                "content": {"extra_sections": [{"title": "", "body": ""}]},
+            },
+            headers=headers,
+        )
+        html = resp.json()["data"]["html"]
+        assert 'data-field="extra_title_0"' in html
+        assert 'data-field="extra_body_0"' in html
+
+    async def test_muc_trong_bien_khoi_ban_gui_khach(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """Xoá nội dung một mục CỨNG = mục đó không hiện trên bản khách nhận.
+
+        Mục cứng không bỏ khỏi cấu trúc được, nhưng bỏ trống là nó biến mất — đúng thứ admin
+        muốn khi bấm xoá. Trước bản này mục 3-6 render vô điều kiện nên để trống là khách nhận
+        một tiêu đề rỗng.
+        """
+        import re
+
+        from src.ai.proposal_generator.application.render import ProposalPdfRenderer
+        from src.modules.admin.application.template_preview import _proposal_document
+
+        html = ProposalPdfRenderer().render_html(
+            _proposal_document({"standard_terms": "Chỉ có điều khoản"}), editable=False
+        )
+        assert "Tổng Quan Dự Án" not in html
+        assert "Sản Phẩm Bàn Giao" not in html
+        so_muc = [int(n) for n in re.findall(r"<h2>(\d+)\.", html)]
+        assert so_muc == list(range(1, len(so_muc) + 1)), so_muc
+
+    async def test_xem_truoc_chi_danh_cho_admin(self, client: AsyncClient) -> None:
+        headers = await _user_headers(client)
+        resp = await client.post(
+            "/api/v1/admin/templates/preview",
+            json={"template_type": "proposal", "content": {}},
+            headers=headers,
+        )
+        assert resp.status_code == 403
+
+    async def test_go_mau_ve_dung_chung_duoc(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """Gỡ nghề khỏi một mẫu đang gắn nghề.
+
+        `if payload.profession is not None` gộp hai chuyện khác hẳn nhau: "không gửi trường
+        này" và "gửi lên đúng null". Hệ quả: admin mở mẫu ra, chọn "Dùng chung cho mọi nghề",
+        bấm Lưu, nhận toast thành công — mà cột giữ nguyên nghề cũ, freelancer nghề khác vẫn
+        không thấy mẫu đó. Mở lại form thì select hiện đúng nghề cũ, không dấu vết gì.  #Huynh
+        """
+        headers = await _admin_headers(client, db_session)
+        tao = await client.post(
+            "/api/v1/admin/templates",
+            json=self._template_payload(profession="ui-ux-design"),
+            headers=headers,
+        )
+        tid = tao.json()["data"]["id"]
+
+        sua = await client.patch(
+            f"/api/v1/admin/templates/{tid}", json={"profession": None}, headers=headers
+        )
+        assert sua.status_code == 200, sua.text
+        assert sua.json()["data"]["profession"] is None
+
+    async def test_khong_gui_profession_thi_giu_nguyen_nghe(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        # Mặt còn lại của cùng một bất biến: sửa mỗi tên thì đừng đụng tới nghề.
+        headers = await _admin_headers(client, db_session)
+        tao = await client.post(
+            "/api/v1/admin/templates",
+            json=self._template_payload(profession="ui-ux-design"),
+            headers=headers,
+        )
+        tid = tao.json()["data"]["id"]
+
+        sua = await client.patch(
+            f"/api/v1/admin/templates/{tid}", json={"name": "Tên mới"}, headers=headers
+        )
+        assert sua.status_code == 200, sua.text
+        assert sua.json()["data"]["profession"] == "ui-ux-design"
 
     async def test_loc_thu_vien_theo_nghe(
         self, client: AsyncClient, db_session: AsyncSession
@@ -1840,4 +2275,152 @@ class TestAdminPlatformMetrics:
 
     async def test_unauthenticated_returns_401(self, client: AsyncClient) -> None:
         resp = await client.get("/api/v1/admin/platform-metrics")
+        assert resp.status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# GET / PATCH /admin/ai-provider
+# ---------------------------------------------------------------------------
+
+
+class TestGetAiProviderEndpoint:
+    async def test_returns_provider_and_model(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        headers = await _admin_headers(client, db_session)
+        resp = await client.get("/api/v1/admin/ai-provider", headers=headers)
+
+        assert resp.status_code == 200, resp.text
+        data = resp.json()["data"]
+        assert data["llm_provider"]
+        assert data["llm_model"]
+
+    async def test_non_admin_returns_403(self, client: AsyncClient) -> None:
+        headers = await _user_headers(client)
+        resp = await client.get("/api/v1/admin/ai-provider", headers=headers)
+        assert resp.status_code == 403
+
+    async def test_unauthenticated_returns_401(self, client: AsyncClient) -> None:
+        resp = await client.get("/api/v1/admin/ai-provider")
+        assert resp.status_code == 401
+
+
+class TestUpdateAiProviderEndpoint:
+    @pytest.fixture(autouse=True)
+    def _keys(self, all_provider_keys_set: None) -> None:
+        """Đổi nhà cung cấp giờ đòi dựng thử provider, nên phải có key."""
+
+    @pytest.mark.parametrize(
+        ("provider", "model"),
+        [
+            ("groq", "openai/gpt-oss-120b"),
+            ("gemini", "gemini-2.5-flash"),
+            ("ollama", "qwen3:4b"),
+        ],
+    )
+    async def test_switching_to_each_supported_pair_persists(
+        self, client: AsyncClient, db_session: AsyncSession, provider: str, model: str
+    ) -> None:
+        """Every supported pair can be selected, and reads back as what was just set.
+
+        `ollama` used to be blocked by the request schema's `Literal`, making it
+        unselectable even though every layer underneath supported it — this case
+        keeps that regression from coming back.
+        """
+        headers = await _admin_headers(client, db_session)
+
+        resp = await client.patch(
+            "/api/v1/admin/ai-provider",
+            json={"llm_provider": provider, "llm_model": model},
+            headers=headers,
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["data"] == {"llm_provider": provider, "llm_model": model}
+
+        again = await client.get("/api/v1/admin/ai-provider", headers=headers)
+        assert again.json()["data"] == {"llm_provider": provider, "llm_model": model}
+
+    @pytest.mark.parametrize(
+        ("provider", "model"),
+        [
+            ("groq", "gemini-2.5-flash"),
+            ("gemini", "openai/gpt-oss-120b"),
+            ("ollama", "gemini-2.5-flash"),
+        ],
+    )
+    async def test_model_from_another_provider_returns_422(
+        self, client: AsyncClient, db_session: AsyncSession, provider: str, model: str
+    ) -> None:
+        headers = await _admin_headers(client, db_session)
+        resp = await client.patch(
+            "/api/v1/admin/ai-provider",
+            json={"llm_provider": provider, "llm_model": model},
+            headers=headers,
+        )
+        assert resp.status_code == 422, resp.text
+
+    @pytest.mark.parametrize("provider", ["openai", "anthropic", "GROQ"])
+    async def test_unsupported_provider_returns_422(
+        self, client: AsyncClient, db_session: AsyncSession, provider: str
+    ) -> None:
+        headers = await _admin_headers(client, db_session)
+        resp = await client.patch(
+            "/api/v1/admin/ai-provider",
+            json={"llm_provider": provider, "llm_model": "openai/gpt-oss-120b"},
+            headers=headers,
+        )
+        assert resp.status_code == 422, resp.text
+
+    async def test_unknown_model_returns_422(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        headers = await _admin_headers(client, db_session)
+        resp = await client.patch(
+            "/api/v1/admin/ai-provider",
+            json={"llm_provider": "groq", "llm_model": "not-a-real-model"},
+            headers=headers,
+        )
+        assert resp.status_code == 422, resp.text
+
+    async def test_missing_llm_model_returns_422(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        headers = await _admin_headers(client, db_session)
+        resp = await client.patch(
+            "/api/v1/admin/ai-provider",
+            json={"llm_provider": "groq"},
+            headers=headers,
+        )
+        assert resp.status_code == 422, resp.text
+
+    async def test_writes_an_audit_log(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        headers = await _admin_headers(client, db_session)
+        await client.patch(
+            "/api/v1/admin/ai-provider",
+            json={"llm_provider": "gemini", "llm_model": "gemini-2.5-flash"},
+            headers=headers,
+        )
+
+        logs = await client.get("/api/v1/admin/audit-logs", headers=headers)
+        entries = logs.json()["data"]["data"]
+        updated = [e for e in entries if e["event_type"] == "ai_provider.updated"]
+        assert updated, entries
+        assert "gemini/gemini-2.5-flash" in updated[0]["description"]
+
+    async def test_non_admin_returns_403(self, client: AsyncClient) -> None:
+        headers = await _user_headers(client)
+        resp = await client.patch(
+            "/api/v1/admin/ai-provider",
+            json={"llm_provider": "groq", "llm_model": "openai/gpt-oss-120b"},
+            headers=headers,
+        )
+        assert resp.status_code == 403
+
+    async def test_unauthenticated_returns_401(self, client: AsyncClient) -> None:
+        resp = await client.patch(
+            "/api/v1/admin/ai-provider",
+            json={"llm_provider": "groq", "llm_model": "openai/gpt-oss-120b"},
+        )
         assert resp.status_code == 401

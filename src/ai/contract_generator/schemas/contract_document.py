@@ -21,6 +21,18 @@ class ContractMilestoneLine(BaseModel):
     due_date: str = ""
 
 
+class ExtraSection(BaseModel):
+    """Một đầu mục do ADMIN tự soạn — tên mục nằm trong dữ liệu, không nằm trong template.
+
+    Bộ mục cứng của tờ giấy không thể phủ hết mọi nghề: nhiếp ảnh cần "Quyền sử dụng hình ảnh",
+    dịch thuật cần "Quy tắc thuật ngữ". Đánh số tự động theo bộ đếm chung nên chèn bao nhiêu
+    mục thì số vẫn liền mạch.  #Huynh
+    """
+
+    title: str = ""
+    body: str = ""
+
+
 class ContractDocument(BaseModel):
     # --- Đầu trang ---
     project_name: str = ""
@@ -67,3 +79,18 @@ class ContractDocument(BaseModel):
     effective_date: str = ""
     end_date: str = ""
     version_number: int = 1
+
+    # Đầu mục admin tự thêm, render ngay trước phần cuối tờ giấy.
+    extra_sections: list[ExtraSection] = []
+
+    # Tên đầu mục admin đã đổi. Khoá vắng mặt = dùng tên mặc định
+    # (xem `*_SECTION_DEFAULTS`).
+    section_titles: dict[str, str] = {}
+
+    # Chữ admin đã sửa trong các điều CÓ SẴN. Khoá vắng mặt = dùng bản mặc định
+    # (xem `*_CLAUSE_DEFAULTS`).
+    clause_texts: dict = {}
+
+    # Mục admin CHỦ Ý tắt khỏi mẫu này. Khác hẳn "mục trống": trống là chưa ai
+    # điền, tắt là quyết định mục đó không thuộc về tài liệu.
+    hidden_sections: list[str] = []

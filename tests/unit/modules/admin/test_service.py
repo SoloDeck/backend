@@ -21,7 +21,12 @@ from src.modules.admin.schemas.request import (
     AdminUpdateTemplateRequest,
     AdminUpdateUserRequest,
 )
-from src.shared.exceptions.domain import AlreadyExistsError, NotFoundError
+from src.shared.exceptions.domain import (
+    AlreadyExistsError,
+    BusinessRuleError,
+    NotFoundError,
+    ValidationError,
+)
 
 
 @dataclass
@@ -426,6 +431,227 @@ class TestUpdatePlan:
 
 
 # ---------------------------------------------------------------------------
+# Hạn mức giá gói
+#
+# Một gói có phí nhưng để giá ngoài khoảng MoMo nhận là gói BÀY RA ĐỂ BÁN MÀ KHÔNG MUA
+# ĐƯỢC: người dùng bấm "Nâng cấp qua MoMo" và chắc chắn ăn lỗi, lần nào cũng vậy. Chặn ở
+# đây — chỗ duy nhất giá gói được ghi vào DB.
+# ---------------------------------------------------------------------------
+
+
+class TestPlanPriceGuard:
+    async def test_create_rejects_price_below_momo_minimum(self) -> None:
+        """200đ — đúng con số đã gây ra sự cố trên bản deploy."""
+        repo = _repo(get_plan_by_name=None, get_plan_by_slug=None)
+        service = AdminService(db=AsyncMock(), repo=repo)
+
+        with pytest.raises(ValidationError) as excinfo:
+            await service.create_plan(_plan_payload(price_monthly=Decimal("200")))
+
+        assert "1.000" in excinfo.value.message
+
+    async def test_create_rejects_price_above_momo_maximum(self) -> None:
+        repo = _repo(get_plan_by_name=None, get_plan_by_slug=None)
+        service = AdminService(db=AsyncMock(), repo=repo)
+
+        with pytest.raises(ValidationError) as excinfo:
+            await service.create_plan(_plan_payload(price_monthly=Decimal("50000001")))
+
+        assert "50.000.000" in excinfo.value.message
+
+    async def test_create_allows_zero_price_free_plan(self) -> None:
+        """Gói miễn phí không đi qua cổng thanh toán nên không chịu hạn mức nào."""
+        created = PlanStub(id=uuid.uuid4())
+        repo = _repo(get_plan_by_name=None, get_plan_by_slug=None, create_plan=created)
+        service = AdminService(db=AsyncMock(), repo=repo)
+
+        result = await service.create_plan(
+            _plan_payload(name="Free", slug="free", price_monthly=Decimal("0"))
+        )
+
+        assert result is created
+
+    @pytest.mark.parametrize("price", ["1000", "50000000"])
+    async def test_create_allows_exact_boundaries(self, price: str) -> None:
+        created = PlanStub(id=uuid.uuid4())
+        repo = _repo(get_plan_by_name=None, get_plan_by_slug=None, create_plan=created)
+        service = AdminService(db=AsyncMock(), repo=repo)
+
+        result = await service.create_plan(_plan_payload(price_monthly=Decimal(price)))
+
+        assert result is created
+
+    async def test_create_rejects_before_touching_the_repository(self) -> None:
+        """Giá sai thì dừng ngay, đừng tốn hai lượt truy vấn trùng tên/mã."""
+        repo = _repo(get_plan_by_name=None, get_plan_by_slug=None)
+        service = AdminService(db=AsyncMock(), repo=repo)
+
+        with pytest.raises(ValidationError):
+            await service.create_plan(_plan_payload(price_monthly=Decimal("200")))
+
+        repo.get_plan_by_name.assert_not_awaited()
+
+    async def test_update_rejects_price_below_momo_minimum(self) -> None:
+        plan = PlanStub(id=uuid.uuid4())
+        repo = _repo(get_plan=plan)
+        service = AdminService(db=AsyncMock(), repo=repo)
+
+        with pytest.raises(ValidationError):
+            await service.update_plan(
+                plan.id, AdminUpdatePlanRequest(price_monthly=Decimal("200"))
+            )
+
+    async def test_update_without_price_field_is_unaffected(self) -> None:
+        """Gói cũ đang để giá xấu vẫn phải đổi tên / tắt được.
+
+        Chặn cả những lần sửa không đụng tới giá là khoá luôn con đường duy nhất để đi
+        dọn đúng cái gói hỏng đó.
+        """
+        plan = PlanStub(id=uuid.uuid4(), name="abc", slug="abc", price_monthly=Decimal("200"))
+        repo = _repo(get_plan=plan)
+        service = AdminService(db=AsyncMock(), repo=repo)
+
+        result = await service.update_plan(plan.id, AdminUpdatePlanRequest(is_active=False))
+
+        assert result.is_active is False
+        assert result.price_monthly == Decimal("200")
+
+
+# ---------------------------------------------------------------------------
+# Xoá gói
+#
+# Một gói là hai thứ cùng lúc: mặt hàng đang bày bán, và sự thật lịch sử gắn vào hoá đơn.
+# Bỏ khỏi quầy thì lúc nào cũng được; xoá sự thật lịch sử thì không bao giờ.
+# ---------------------------------------------------------------------------
+
+
+class TestDeletePlan:
+    async def test_deletes_a_plan_nobody_ever_used(self) -> None:
+        """Ca "lỡ tay tạo nhầm" — không có lịch sử nào để phá."""
+        plan = PlanStub(id=uuid.uuid4(), name="abc", slug="abc")
+        repo = _repo(get_plan=plan, count_plan_usage=(0, 0))
+        service = AdminService(db=AsyncMock(), repo=repo)
+
+        await service.delete_plan(plan.id)
+
+        repo.delete_plan.assert_awaited_once_with(plan)
+
+    async def test_writes_audit_log_before_deleting(self) -> None:
+        """Nhật ký phải sống sót sau khi gói biến mất — đó là toàn bộ điểm của nó."""
+        plan = PlanStub(id=uuid.uuid4(), name="abc", slug="abc")
+        repo = _repo(get_plan=plan, count_plan_usage=(0, 0))
+        service = AdminService(db=AsyncMock(), repo=repo)
+
+        await service.delete_plan(plan.id, admin_id=uuid.uuid4())
+
+        repo.create_audit_log.assert_awaited_once()
+        assert repo.create_audit_log.await_args.kwargs["event_type"] == "plan.deleted"
+
+    async def test_refuses_when_someone_is_subscribed(self) -> None:
+        plan = PlanStub(id=uuid.uuid4(), name="Pro", slug="pro")
+        repo = _repo(get_plan=plan, count_plan_usage=(3, 0))
+        service = AdminService(db=AsyncMock(), repo=repo)
+
+        with pytest.raises(BusinessRuleError) as excinfo:
+            await service.delete_plan(plan.id)
+
+        assert "3" in excinfo.value.message
+        repo.delete_plan.assert_not_awaited()
+
+    async def test_refuses_when_plan_has_payment_history_even_with_no_subscribers(self) -> None:
+        """Không còn ai dùng, nhưng từng có người trả tiền → hoá đơn cũ vẫn trỏ về đây."""
+        plan = PlanStub(id=uuid.uuid4(), name="Pro cũ", slug="pro-cu")
+        repo = _repo(get_plan=plan, count_plan_usage=(0, 5))
+        service = AdminService(db=AsyncMock(), repo=repo)
+
+        with pytest.raises(BusinessRuleError):
+            await service.delete_plan(plan.id)
+
+        repo.delete_plan.assert_not_awaited()
+
+    async def test_refuses_to_delete_the_free_plan(self) -> None:
+        """Free là gói hệ thống: đích đăng ký mới VÀ đích hạ gói khi hết hạn."""
+        plan = PlanStub(id=uuid.uuid4(), name="Free", slug="free")
+        repo = _repo(get_plan=plan, count_plan_usage=(0, 0))
+        service = AdminService(db=AsyncMock(), repo=repo)
+
+        with pytest.raises(BusinessRuleError) as excinfo:
+            await service.delete_plan(plan.id)
+
+        assert "Free" in excinfo.value.message
+        repo.delete_plan.assert_not_awaited()
+
+    async def test_checks_system_plan_before_counting_usage(self) -> None:
+        """Gói Free bị chặn vì nó LÀ gói Free, không phải vì tình cờ có người dùng."""
+        plan = PlanStub(id=uuid.uuid4(), name="Free", slug="free")
+        repo = _repo(get_plan=plan, count_plan_usage=(0, 0))
+        service = AdminService(db=AsyncMock(), repo=repo)
+
+        with pytest.raises(BusinessRuleError):
+            await service.delete_plan(plan.id)
+
+        repo.count_plan_usage.assert_not_awaited()
+
+    async def test_not_found_raises(self) -> None:
+        repo = _repo(get_plan=None)
+        service = AdminService(db=AsyncMock(), repo=repo)
+
+        with pytest.raises(NotFoundError):
+            await service.delete_plan(uuid.uuid4())
+
+
+class TestSystemPlanGuards:
+    """Gói Free vẫn đổi tên / đổi quyền lợi được — chỉ cấm hai thứ khiến code không
+    tìm thấy nó nữa."""
+
+    async def test_cannot_deactivate_the_free_plan(self) -> None:
+        plan = PlanStub(id=uuid.uuid4(), name="Free", slug="free")
+        repo = _repo(get_plan=plan)
+        service = AdminService(db=AsyncMock(), repo=repo)
+
+        with pytest.raises(BusinessRuleError):
+            await service.update_plan(plan.id, AdminUpdatePlanRequest(is_active=False))
+
+    async def test_cannot_change_the_free_plan_slug(self) -> None:
+        plan = PlanStub(id=uuid.uuid4(), name="Free", slug="free")
+        repo = _repo(get_plan=plan, get_plan_by_slug=None)
+        service = AdminService(db=AsyncMock(), repo=repo)
+
+        with pytest.raises(BusinessRuleError):
+            await service.update_plan(plan.id, AdminUpdatePlanRequest(slug="mien-phi"))
+
+    async def test_can_still_rename_the_free_plan(self) -> None:
+        """Tên là để hiển thị — đổi thoải mái. Mã mới là khoá code."""
+        plan = PlanStub(id=uuid.uuid4(), name="Free", slug="free")
+        repo = _repo(get_plan=plan, get_plan_by_name=None)
+        service = AdminService(db=AsyncMock(), repo=repo)
+
+        result = await service.update_plan(plan.id, AdminUpdatePlanRequest(name="Miễn phí"))
+
+        assert result.name == "Miễn phí"
+        assert result.slug == "free"
+
+    async def test_can_reactivate_the_free_plan(self) -> None:
+        """Chỉ chặn TẮT, không chặn bật lại."""
+        plan = PlanStub(id=uuid.uuid4(), name="Free", slug="free", is_active=False)
+        repo = _repo(get_plan=plan)
+        service = AdminService(db=AsyncMock(), repo=repo)
+
+        result = await service.update_plan(plan.id, AdminUpdatePlanRequest(is_active=True))
+
+        assert result.is_active is True
+
+    async def test_other_plans_can_still_be_deactivated(self) -> None:
+        plan = PlanStub(id=uuid.uuid4(), name="Pro", slug="pro")
+        repo = _repo(get_plan=plan)
+        service = AdminService(db=AsyncMock(), repo=repo)
+
+        result = await service.update_plan(plan.id, AdminUpdatePlanRequest(is_active=False))
+
+        assert result.is_active is False
+
+
+# ---------------------------------------------------------------------------
 # list_subscriptions_paginated
 # ---------------------------------------------------------------------------
 
@@ -668,3 +894,159 @@ async def test_get_platform_metrics_returns_repo_result() -> None:
     service = AdminService(db=AsyncMock(), repo=repo)
 
     assert await service.get_platform_metrics() == metrics
+
+
+# ---------------------------------------------------------------------------
+# AI provider configuration
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class AIProviderConfigStub:
+    id: uuid.UUID = field(default_factory=uuid.uuid4)
+    llm_provider: str = "groq"
+    llm_model: str = "openai/gpt-oss-120b"
+    updated_by: uuid.UUID | None = None
+
+
+def _ai_repo(configuration: AIProviderConfigStub | None) -> AsyncMock:
+    repo = _repo(get_ai_provider_configuration=configuration)
+    repo.update_ai_provider_configuration.side_effect = lambda obj: obj
+    return repo
+
+
+class TestGetAiProviderConfiguration:
+    async def test_returns_configuration(self) -> None:
+        configuration = AIProviderConfigStub()
+        service = AdminService(db=AsyncMock(), repo=_ai_repo(configuration))
+
+        assert await service.get_ai_provider_configuration() is configuration
+
+    async def test_missing_configuration_raises(self) -> None:
+        service = AdminService(db=AsyncMock(), repo=_ai_repo(None))
+
+        with pytest.raises(NotFoundError):
+            await service.get_ai_provider_configuration()
+
+
+class TestUpdateAiProviderConfiguration:
+    @pytest.fixture(autouse=True)
+    def _provider_api_keys(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Ghim khoá API giả cho mọi nhà cung cấp có dùng khoá.
+
+        `update_ai_provider_configuration` giờ DỰNG THỬ provider trước khi ghi, mà
+        GroqProvider/GeminiProvider ném RuntimeError khi khoá trống. Không ghim thì
+        các test này xanh ở máy dev (có `.env`) và đỏ trên CI — job test không đặt
+        GROQ_API_KEY/GEMINI_API_KEY. Ollama xác thực bằng `ollama_base_url`, không
+        có trường khoá, nên phải kiểm tra trước khi gán: Settings là pydantic model
+        và gán tên lạ sẽ lỗi.
+        """
+        from src.ai.shared.constants import SUPPORTED_LLM_PROVIDERS
+        from src.config.settings import settings
+
+        for name in SUPPORTED_LLM_PROVIDERS:
+            field = f"{name}_api_key"
+            if field in type(settings).model_fields:
+                monkeypatch.setattr(settings, field, f"test-{name}-key")
+
+    @pytest.mark.parametrize(
+        ("provider", "model"),
+        [
+            ("groq", "openai/gpt-oss-120b"),
+            ("gemini", "gemini-2.5-flash"),
+            ("ollama", "qwen3:4b"),
+        ],
+    )
+    async def test_every_supported_pair_is_accepted(self, provider: str, model: str) -> None:
+        """Every pair in SUPPORTED_LLM_MODELS must be accepted — ollama included."""
+        configuration = AIProviderConfigStub()
+        repo = _ai_repo(configuration)
+        admin_id = uuid.uuid4()
+        service = AdminService(db=AsyncMock(), repo=repo)
+
+        result = await service.update_ai_provider_configuration(
+            llm_provider=provider, llm_model=model, admin_id=admin_id
+        )
+
+        assert result.llm_provider == provider
+        assert result.llm_model == model
+        assert result.updated_by == admin_id
+        repo.create_audit_log.assert_awaited_once()
+
+    async def test_audit_log_records_provider_and_model(self) -> None:
+        repo = _ai_repo(AIProviderConfigStub())
+        service = AdminService(db=AsyncMock(), repo=repo)
+
+        await service.update_ai_provider_configuration(
+            llm_provider="gemini", llm_model="gemini-2.5-flash", admin_id=uuid.uuid4()
+        )
+
+        kwargs = repo.create_audit_log.await_args.kwargs
+        assert kwargs["event_type"] == "ai_provider.updated"
+        assert "gemini/gemini-2.5-flash" in kwargs["description"]
+
+    async def test_unsupported_provider_raises(self) -> None:
+        repo = _ai_repo(AIProviderConfigStub())
+        service = AdminService(db=AsyncMock(), repo=repo)
+
+        with pytest.raises(ValidationError):
+            await service.update_ai_provider_configuration(
+                llm_provider="openai", llm_model="gpt-4o", admin_id=uuid.uuid4()
+            )
+
+        repo.update_ai_provider_configuration.assert_not_awaited()
+        repo.create_audit_log.assert_not_awaited()
+
+    @pytest.mark.parametrize(
+        ("provider", "model"),
+        [
+            ("groq", "gemini-2.5-flash"),
+            ("gemini", "openai/gpt-oss-120b"),
+            ("ollama", "gemini-2.5-flash"),
+        ],
+    )
+    async def test_model_belonging_to_another_provider_raises(
+        self, provider: str, model: str
+    ) -> None:
+        repo = _ai_repo(AIProviderConfigStub())
+        service = AdminService(db=AsyncMock(), repo=repo)
+
+        with pytest.raises(ValidationError):
+            await service.update_ai_provider_configuration(
+                llm_provider=provider, llm_model=model, admin_id=uuid.uuid4()
+            )
+
+        repo.update_ai_provider_configuration.assert_not_awaited()
+
+    async def test_unknown_model_raises(self) -> None:
+        repo = _ai_repo(AIProviderConfigStub())
+        service = AdminService(db=AsyncMock(), repo=repo)
+
+        with pytest.raises(ValidationError):
+            await service.update_ai_provider_configuration(
+                llm_provider="groq", llm_model="not-a-real-model", admin_id=uuid.uuid4()
+            )
+
+    async def test_provider_and_model_are_normalised(self) -> None:
+        """The service lowercases the provider and strips padding off the model."""
+        configuration = AIProviderConfigStub()
+        service = AdminService(db=AsyncMock(), repo=_ai_repo(configuration))
+
+        result = await service.update_ai_provider_configuration(
+            llm_provider="  GROQ  ".strip(),
+            llm_model="  openai/gpt-oss-120b  ",
+            admin_id=uuid.uuid4(),
+        )
+
+        assert result.llm_provider == "groq"
+        assert result.llm_model == "openai/gpt-oss-120b"
+
+    async def test_missing_configuration_raises(self) -> None:
+        service = AdminService(db=AsyncMock(), repo=_ai_repo(None))
+
+        with pytest.raises(NotFoundError):
+            await service.update_ai_provider_configuration(
+                llm_provider="groq",
+                llm_model="openai/gpt-oss-120b",
+                admin_id=uuid.uuid4(),
+            )

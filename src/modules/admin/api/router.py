@@ -5,19 +5,21 @@ from datetime import datetime
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Query, Response
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.infrastructure.database.session import get_db_session
 from src.modules.admin.application.service import AdminService
+from src.modules.admin.application.template_preview import render_template_preview
 from src.modules.admin.schemas.request import (
     AdminCreateTemplateRequest,
     AdminPlanRequest,
     AdminSubscriptionOverrideRequest,
     AdminUpdateFeatureFlagRequest,
+    AdminUpdateLLMProviderRequest,
     AdminUpdatePlanRequest,
     AdminUpdateTemplateRequest,
     AdminUpdateUserRequest,
-    AdminUpdateLLMProviderRequest,
 )
 from src.modules.admin.schemas.response import (
     AdminAiCostPagedResponse,
@@ -25,13 +27,13 @@ from src.modules.admin.schemas.response import (
     AdminAiCostTotals,
     AdminAuditLogResponse,
     AdminFeatureFlagResponse,
+    AdminLLMProviderResponse,
     AdminPlanResponse,
     AdminPlatformMetricsResponse,
     AdminSubscriptionResponse,
     AdminTemplateResponse,
     AdminUserResponse,
     Paginated,
-    AdminLLMProviderResponse,
 )
 from src.shared.dependencies.auth import AdminUser
 from src.shared.responses.response import ApiResponse
@@ -205,6 +207,17 @@ async def update_plan(
     return ApiResponse.ok(AdminPlanResponse.model_validate(plan))
 
 
+@router.delete("/plans/{plan_id}", status_code=204)
+async def delete_plan(
+    plan_id: uuid.UUID,
+    admin: AdminUser,
+    db: DBSession,
+) -> None:
+    """Xoá hẳn một gói chưa từng được dùng. Gói đã có người dùng → 409, kèm lý do và
+    hướng dẫn ngừng bán thay vì xoá."""
+    await AdminService(db=db).delete_plan(plan_id, admin_id=uuid.UUID(admin.sub))
+
+
 # ---------------------------------------------------------------------------
 # Subscriptions
 # ---------------------------------------------------------------------------
@@ -329,13 +342,19 @@ async def get_ai_provider(
     _: AdminUser,
     db: DBSession,
 ) -> ApiResponse[AdminLLMProviderResponse]:
-    configuration = await AdminService(db=db).get_ai_provider_configuration()
+
+    configuration = await (
+        AdminService(db=db)
+        .get_ai_provider_configuration()
+    )
 
     return ApiResponse.ok(
         AdminLLMProviderResponse(
             llm_provider=configuration.llm_provider,
+            llm_model=configuration.llm_model,
         )
     )
+
 
 @router.patch(
     "/ai-provider",
@@ -346,14 +365,20 @@ async def update_ai_provider(
     admin: AdminUser,
     db: DBSession,
 ) -> ApiResponse[AdminLLMProviderResponse]:
-    configuration = await AdminService(db=db).update_ai_provider_configuration(
-        llm_provider=payload.llm_provider,
-        admin_id=uuid.UUID(admin.sub),
+
+    configuration = await (
+        AdminService(db=db)
+        .update_ai_provider_configuration(
+            llm_provider=payload.llm_provider,
+            llm_model=payload.llm_model,
+            admin_id=uuid.UUID(admin.sub),
+        )
     )
 
     return ApiResponse.ok(
         AdminLLMProviderResponse(
             llm_provider=configuration.llm_provider,
+            llm_model=configuration.llm_model,
         )
     )
 
@@ -440,6 +465,32 @@ async def create_template(
         payload, admin_id=uuid.UUID(admin.sub)
     )
     return ApiResponse.created(AdminTemplateResponse.model_validate(template))
+
+
+class TemplatePreviewRequest(BaseModel):
+    template_type: Literal["proposal", "contract"] = "proposal"
+    content: dict = {}
+
+
+class TemplatePreviewResponse(BaseModel):
+    html: str
+
+
+@router.post("/templates/preview", response_model=ApiResponse[TemplatePreviewResponse])
+async def preview_template(
+    payload: TemplatePreviewRequest,
+    _: AdminUser,
+) -> ApiResponse[TemplatePreviewResponse]:
+    """Dựng TỜ GIẤY THẬT từ nội dung mẫu — để admin soạn mà nhìn thấy ngay kết quả.
+
+    Nhận `content` thẳng từ màn soạn chứ không đọc DB: admin cần thấy bản đang gõ dở, trước cả
+    khi bấm Lưu. Vì vậy endpoint này KHÔNG chạm database và không cần `template_id`.
+
+    Cùng một template Jinja với bản freelancer nhận và với PDF, nên cái admin thấy đúng là cái
+    khách sẽ đọc — không có đường nào để hai bên lệch nhau.  #Huynh
+    """
+    html = render_template_preview(payload.template_type, payload.content)
+    return ApiResponse.ok(TemplatePreviewResponse(html=html))
 
 
 @router.patch("/templates/{template_id}", response_model=ApiResponse[AdminTemplateResponse])

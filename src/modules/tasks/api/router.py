@@ -17,6 +17,8 @@ from typing import Annotated
 
 from fastapi import APIRouter, Query, status
 
+from src.modules.invoices.schemas.response import InvoiceResponse
+from src.modules.tasks.application.payment_invoice import create_invoice_for_payment_task
 from src.modules.tasks.application.service import TaskService
 from src.modules.tasks.domain.value_objects.task_status import TaskStatus
 from src.modules.tasks.schemas.request import (
@@ -174,6 +176,30 @@ async def update_task(
 ) -> ApiResponse[TaskResponse]:
     task = await TaskService(db=db).update(task_id, user_id, payload)
     return ApiResponse.ok(TaskResponse.model_validate(task))
+
+
+@router.post(
+    "/tasks/{task_id}/invoice",
+    response_model=ApiResponse[InvoiceResponse],
+    status_code=201,
+    summary="Xuất hóa đơn cho một mốc thu tiền",
+)
+async def create_task_invoice(
+    task_id: uuid.UUID,
+    user_id: CurrentUserId,
+    db: DBSession,
+) -> ApiResponse[InvoiceResponse]:
+    """Tạo hóa đơn cho task "Thu tiền:" từ đúng mốc thanh toán của báo giá đã chốt.
+
+    **Không nhận số tiền từ client.** Server tự tính bằng đúng bộ tính của bảng doanh thu, để
+    hóa đơn gửi khách và số liệu nội bộ không bao giờ kể hai câu chuyện khác nhau.
+
+    Task đã có hóa đơn thì trả về chính hóa đơn đó (201 → vẫn là hóa đơn của mốc này), KHÔNG
+    tạo cái thứ hai — nút này nằm trong hộp thoại xác nhận nên bấm hai lần là chuyện chắc
+    chắn xảy ra.  #Huynh
+    """
+    invoice = await create_invoice_for_payment_task(db, task_id, user_id)
+    return ApiResponse.ok(InvoiceResponse.model_validate(invoice))
 
 
 @router.delete("/tasks/{task_id}", status_code=status.HTTP_204_NO_CONTENT)

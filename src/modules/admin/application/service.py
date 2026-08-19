@@ -3,11 +3,16 @@
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from decimal import Decimal
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.ai.shared.constants import SUPPORTED_LLM_PROVIDERS
+from src.ai.shared.constants import (
+    SUPPORTED_LLM_MODELS,
+    SUPPORTED_LLM_PROVIDERS,
+)
 from src.ai.shared.llm_provider import get_llm_provider
+from src.config.settings import settings
 from src.infrastructure.database.models import AIProviderConfigurationModel, PlanModel, SubscriptionModel, UserModel
 from src.modules.admin.domain.entities import AdminUser, FeatureFlagRollout, SubscriptionOverride
 from src.modules.admin.infrastructure.repository import AdminRepository
@@ -22,9 +27,27 @@ from src.modules.admin.schemas.request import (
 )
 from src.shared.exceptions.domain import (
     AlreadyExistsError,
+    BusinessRuleError,
     NotFoundError,
     ValidationError,
 )
+
+
+# Gói miễn phí là gói HỆ THỐNG, không phải một mặt hàng trong bảng giá: người đăng ký mới
+# được gán vào nó (`auth`), và job hết hạn hạ mọi gói trả phí về nó (`subscriptions`). Cả
+# hai chỗ đều tra theo MÃ này. Mất nó, hoặc đổi mã nó, là gãy cả hai luồng — im lặng, vì
+# cả hai đều `if free_plan is None` rồi bỏ qua.  #Huynh
+_SYSTEM_PLAN_SLUG = "free"
+
+
+def _vnd(amount: Decimal | int) -> str:
+    """``50000000`` → ``"50.000.000"``.
+
+    Cố ý nhân đôi một dòng với `integrations/momo/client.py` thay vì dựng một module tiền
+    tệ dùng chung: chỉ hai nơi cần, và để `modules/admin` import `integrations/momo` chỉ
+    vì một hàm định dạng là một ràng buộc đắt hơn thứ nó tiết kiệm.
+    """
+    return f"{int(amount):,}".replace(",", ".")
 
 
 @dataclass
@@ -175,7 +198,42 @@ class AdminService:
             raise NotFoundError(f"Plan {plan_id} not found")
         return plan
 
+    @staticmethod
+    def _assert_price_is_payable(price: Decimal) -> None:
+        """Gói phải hoặc miễn phí, hoặc có giá mà cổng thanh toán nhận được.
+
+        0đ = gói miễn phí, KHÔNG đi qua cổng thanh toán nên không bị ràng buộc gì. Còn
+        lại thì phải nằm trong hạn mức MoMo, nếu không admin vừa tạo ra một gói BÀY RA
+        ĐỂ BÁN NHƯNG KHÔNG MUA ĐƯỢC: người dùng bấm "Nâng cấp qua MoMo" và chắc chắn ăn
+        lỗi, lần nào cũng vậy — trong khi chỗ hỏng thật nằm ở màn hình quản trị từ tuần
+        trước.
+
+        Chặn ở đây, chỗ DUY NHẤT giá gói được ghi vào DB, rẻ hơn nhiều so với để phát
+        hiện lúc người dùng đang cầm ví.  #Huynh
+        """
+        if price == 0:
+            return
+        if not settings.momo_min_amount <= price <= settings.momo_max_amount:
+            raise ValidationError(
+                f"Giá gói phải là 0đ (gói miễn phí) hoặc nằm trong khoảng "
+                f"{_vnd(settings.momo_min_amount)}đ – {_vnd(settings.momo_max_amount)}đ "
+                f"— đây là hạn mức MoMo nhận cho một giao dịch. Giá vừa nhập: "
+                f"{_vnd(price)}đ."
+            )
+
+    @staticmethod
+    def _assert_not_system_plan(plan, *, action: str) -> None:
+        """Gói Free không được xoá, không được ngừng bán, không được đổi mã."""
+        if plan.slug != _SYSTEM_PLAN_SLUG:
+            return
+        raise BusinessRuleError(
+            f"Không {action} được gói Free. Đây là gói gán cho mọi người đăng ký mới và "
+            f"là đích hạ gói khi một gói trả phí hết hạn — mất nó là gãy cả hai luồng, "
+            f"mà không có lỗi nào hiện ra."
+        )
+
     async def create_plan(self, payload: AdminPlanRequest, *, admin_id: uuid.UUID | None = None):
+        self._assert_price_is_payable(payload.price_monthly)
         if await self.repo.get_plan_by_name(payload.name) is not None:
             raise AlreadyExistsError(f"Plan name '{payload.name}' is already in use")
         if await self.repo.get_plan_by_slug(payload.slug) is not None:
@@ -212,6 +270,20 @@ class AdminService:
             raise NotFoundError(f"Plan {plan_id} not found")
 
         fields = payload.model_fields_set
+        # Chỉ soi giá khi payload THẬT SỰ đụng tới giá. Gói cũ trong DB có thể đang để
+        # một mức giá không còn hợp lệ; chặn cả những lần sửa không liên quan (đổi tên,
+        # tắt gói) là khoá luôn đường duy nhất để đi sửa nó.  #Huynh
+        # `is not None` chứ không chỉ kiểm tra có mặt: kiểu là `PlanPrice | None`, nên
+        # `{"price_monthly": null}` vẫn nằm trong `model_fields_set`. So `None` với số sẽ
+        # ném TypeError và biến một payload sai thành 500 trần.
+        if "price_monthly" in fields and payload.price_monthly is not None:
+            self._assert_price_is_payable(payload.price_monthly)
+        # Gói Free vẫn đổi tên / đổi quyền lợi được — chỉ hai thứ khiến code không tìm
+        # thấy nó nữa là bị cấm: tắt nó đi, và đổi mã của nó.
+        if "is_active" in fields and payload.is_active is False:
+            self._assert_not_system_plan(plan, action="ngừng bán")
+        if "slug" in fields and payload.slug != plan.slug:
+            self._assert_not_system_plan(plan, action="đổi mã")
         if "name" in fields and payload.name != plan.name:
             if await self.repo.get_plan_by_name(payload.name, exclude_plan_id=plan_id) is not None:
                 raise AlreadyExistsError(f"Plan name '{payload.name}' is already in use")
@@ -231,6 +303,48 @@ class AdminService:
             description=f"Admin sửa gói '{plan.name}': {', '.join(sorted(fields))}",
         )
         return plan
+
+    async def delete_plan(self, plan_id: uuid.UUID, *, admin_id: uuid.UUID | None = None) -> None:
+        """Xoá HẲN một gói — chỉ dành cho gói chưa từng được dùng.
+
+        Một gói là hai thứ khác nhau cùng lúc: một mặt hàng đang bày bán, và một sự thật
+        lịch sử gắn vào hoá đơn ("tháng 7 người này trả 199.000đ cho gói Pro"). Bỏ mặt
+        hàng khỏi quầy thì lúc nào cũng được; xoá sự thật lịch sử thì không bao giờ.
+
+        Nên xoá thật CHỈ hợp lệ khi không có sự thật nào để xoá — chưa ai đăng ký và chưa
+        có giao dịch nào. Đó đúng là ca "lỡ tay tạo nhầm", cũng là ca duy nhất admin thật
+        sự cần xoá. Gói đã có người dùng thì đường đúng là `is_active = false`: nó biến
+        khỏi bảng giá, không ai mua mới được, còn người đang dùng giữ nguyên quyền lợi
+        tới hết kỳ đã trả tiền rồi mới bị hạ về Free.
+
+        Đây cũng là cách Stripe/Paddle làm: một mức giá đã từng dùng thì không xoá được,
+        chỉ lưu trữ.  #Huynh
+        """
+        plan = await self.repo.get_plan(plan_id)
+        if plan is None:
+            raise NotFoundError(f"Plan {plan_id} not found")
+
+        self._assert_not_system_plan(plan, action="xoá")
+
+        subscribers, payments = await self.repo.count_plan_usage(plan_id)
+        if subscribers or payments:
+            raise BusinessRuleError(
+                f"Không xoá được gói '{plan.name}' vì đã có người dùng "
+                f"({subscribers} lượt đăng ký, {payments} giao dịch). Xoá là hoá đơn cũ "
+                f"mất chỗ trỏ về. Hãy NGỪNG BÁN gói này: nó sẽ biến khỏi bảng giá và "
+                f"không ai mua mới được, còn người đang dùng vẫn giữ quyền lợi tới hết kỳ."
+            )
+
+        # Ghi nhật ký TRƯỚC khi xoá. `target_id` cố ý không có khoá ngoại (xem models.py),
+        # nên bản ghi này sống sót sau khi gói biến mất — đó là toàn bộ điểm của nó.
+        await self.repo.create_audit_log(
+            event_type="plan.deleted",
+            actor_user_id=admin_id,
+            target_type="plan",
+            target_id=plan.id,
+            description=f"Admin xoá gói '{plan.name}' ({plan.slug})",
+        )
+        await self.repo.delete_plan(plan)
 
     # -------------------------------------------------------------------------
     # Subscriptions
@@ -368,11 +482,16 @@ class AdminService:
     # AI Provider Configuration
     # -------------------------------------------------------------------------
 
-    async def get_ai_provider_configuration(self) -> AIProviderConfigurationModel:
+    async def get_ai_provider_configuration(
+            self,
+    ) -> AIProviderConfigurationModel:
+
         configuration = await self.repo.get_ai_provider_configuration()
 
         if configuration is None:
-            raise NotFoundError("AI provider configuration not found")
+            raise NotFoundError(
+                "AI provider configuration not found"
+            )
 
         return configuration
 
@@ -380,13 +499,36 @@ class AdminService:
             self,
             *,
             llm_provider: str,
+            llm_model: str,
             admin_id: uuid.UUID,
     ) -> AIProviderConfigurationModel:
+
         configuration = await self.get_ai_provider_configuration()
 
+        # Normalize input
+        llm_provider = llm_provider.strip().lower()
+        llm_model = llm_model.strip()
+
+        # Validate provider
         if llm_provider not in SUPPORTED_LLM_PROVIDERS:
             raise ValidationError(
                 f"Unsupported LLM provider: {llm_provider}"
+            )
+
+        # Validate model belongs to provider
+        supported_models = SUPPORTED_LLM_MODELS.get(
+            llm_provider,
+        )
+
+        if supported_models is None:
+            raise ValidationError(
+                f"No models configured for provider: {llm_provider}"
+            )
+
+        if llm_model not in supported_models:
+            raise ValidationError(
+                f"Unsupported model '{llm_model}' "
+                f"for provider '{llm_provider}'"
             )
 
         # Dựng thử provider TRƯỚC khi ghi. Tên hợp lệ không có nghĩa là dùng
@@ -397,25 +539,33 @@ class AdminService:
         # có người đổi ngược lại — mất toàn bộ tính năng AI vì một thao tác
         # tưởng như đã thành công.
         try:
-            get_llm_provider(llm_provider)
+            get_llm_provider(llm_provider, llm_model)
         except Exception as err:  # noqa: BLE001 — mọi lỗi khởi tạo đều KHÔNG được ghi
             raise ValidationError(
-                f"LLM provider '{llm_provider}' is not usable: {err}"
+                f"LLM provider '{llm_provider}/{llm_model}' is not usable: {err}"
             ) from err
 
+        # Update configuration
         configuration.llm_provider = llm_provider
+        configuration.llm_model = llm_model
         configuration.updated_by = admin_id
 
-        configuration = await self.repo.update_ai_provider_configuration(
-            configuration
+        configuration = await (
+            self.repo.update_ai_provider_configuration(
+                configuration
+            )
         )
 
+        # Audit log
         await self.repo.create_audit_log(
             event_type="ai_provider.updated",
             actor_user_id=admin_id,
             target_type="ai_provider_configuration",
             target_id=configuration.id,
-            description=f"Admin changed AI provider to '{llm_provider}'",
+            description=(
+                f"Admin changed AI configuration to "
+                f"'{llm_provider}/{llm_model}'"
+            ),
         )
 
         return configuration
@@ -463,7 +613,12 @@ class AdminService:
             raise NotFoundError(f"Template {template_id} not found")
         if payload.name is not None:
             template.name = payload.name
-        if payload.profession is not None:
+        # `in model_fields_set` chứ không phải `is not None`: với trường nullable, hai chuyện
+        # "không gửi lên" và "gửi lên đúng null" khác hẳn nhau, mà `is not None` gộp chúng làm
+        # một. Hệ quả: admin mở mẫu đang gắn nghề, chọn "Dùng chung cho mọi nghề", bấm Lưu, nhận
+        # toast "Đã cập nhật mẫu." — nhưng cột giữ nguyên nghề cũ, và freelancer nghề khác vẫn
+        # không thấy mẫu đó. Mở lại form thì select hiện đúng nghề cũ, không dấu vết gì.  #Huynh
+        if "profession" in payload.model_fields_set:
             template.profession = self._clean_profession(payload.profession)
         if payload.content is not None:
             template.content = payload.content
