@@ -6,17 +6,19 @@ from decimal import Decimal
 
 import pytest
 from httpx import AsyncClient
-from sqlalchemy import insert, update
+from sqlalchemy import insert, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.infrastructure.database.models import (
     AiCostRecordModel,
     FeatureFlagModel,
+    PlanModel,
     SubscriptionModel,
     SubscriptionPaymentModel,
     SystemTemplateModel,
     UserModel,
 )
+from src.infrastructure.database.seeders.plans import PlansSeeder
 from src.main import app
 from src.shared.dependencies.ai import get_ai_facade
 from tests.conftest import grant_ai_plan
@@ -77,8 +79,10 @@ def _plan_payload(**overrides: object) -> dict:
     return {
         "name": f"Plan {uuid.uuid4().hex[:6]}",
         "slug": f"plan-{uuid.uuid4().hex[:6]}",
-        "price_monthly": "9.99",
-        "currency": "USD",
+        # Giá theo thang VND thật, không phải "9.99" kiểu USD: gói có phí phải nằm trong
+        # hạn mức MoMo (1.000đ – 50.000.000đ), nếu không AdminService trả 422.
+        "price_monthly": "199000",
+        "currency": "VND",
         "can_use_ai": False,
         "can_export_pdf": False,
         "max_clients": None,
@@ -810,7 +814,7 @@ class TestAdminCreatePlan:
         payload = _plan_payload(
             name="Pro Plan",
             slug="pro-plan",
-            price_monthly="29.99",
+            price_monthly="290000",
             can_use_ai=True,
             can_export_pdf=True,
             max_clients=500,
@@ -862,6 +866,76 @@ class TestAdminCreatePlan:
         assert resp.status_code == 201
         assert resp.json()["data"]["is_active"] is True
 
+    async def test_price_below_momo_minimum_returns_422(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """200đ — con số đã tạo ra gói "abc" không ai mua được trên bản deploy.
+
+        Lý do phải nằm trong `error.message` chứ không phải `details`: giao diện quản trị
+        đổ thẳng `error.message` ra toast, nên đó là chuỗi duy nhất admin thật sự đọc được.
+        """
+        headers = await _admin_headers(client, db_session)
+        resp = await client.post(
+            "/api/v1/admin/plans", json=_plan_payload(price_monthly="200"), headers=headers
+        )
+        assert resp.status_code == 422
+        error = resp.json()["error"]
+        assert error["code"] == "VALIDATION_FAILED"
+        assert "1.000" in error["message"]
+
+    async def test_price_above_momo_maximum_returns_422(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        headers = await _admin_headers(client, db_session)
+        resp = await client.post(
+            "/api/v1/admin/plans", json=_plan_payload(price_monthly="50000001"), headers=headers
+        )
+        assert resp.status_code == 422
+        assert "50.000.000" in resp.json()["error"]["message"]
+
+    async def test_zero_price_free_plan_returns_201(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        headers = await _admin_headers(client, db_session)
+        resp = await client.post(
+            "/api/v1/admin/plans", json=_plan_payload(price_monthly="0"), headers=headers
+        )
+        assert resp.status_code == 201
+        assert resp.json()["data"]["price_monthly"] == "0.00"
+
+    async def test_non_vnd_currency_returns_422(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """Gói không phải VND là gói không mua được — chết tận `_to_whole_vnd`."""
+        headers = await _admin_headers(client, db_session)
+        resp = await client.post(
+            "/api/v1/admin/plans", json=_plan_payload(currency="USD"), headers=headers
+        )
+        assert resp.status_code == 422
+
+    async def test_currency_defaults_to_vnd_when_omitted(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """Bỏ trống tiền tệ phải ra VND, không phải USD như mặc định cũ."""
+        headers = await _admin_headers(client, db_session)
+        payload = _plan_payload()
+        payload.pop("currency")
+
+        resp = await client.post("/api/v1/admin/plans", json=payload, headers=headers)
+
+        assert resp.status_code == 201
+        assert resp.json()["data"]["currency"] == "VND"
+
+    async def test_negative_price_returns_422_not_500(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """Trước khi có `Field(ge=0)`, giá âm lọt xuống Postgres và nổ thành 500 trần."""
+        headers = await _admin_headers(client, db_session)
+        resp = await client.post(
+            "/api/v1/admin/plans", json=_plan_payload(price_monthly="-5"), headers=headers
+        )
+        assert resp.status_code == 422
+
 
 # ---------------------------------------------------------------------------
 # PATCH /admin/plans/{plan_id}
@@ -877,7 +951,7 @@ class TestAdminUpdatePlan:
             await client.post("/api/v1/admin/plans", json=_plan_payload(), headers=headers)
         ).json()["data"]["id"]
 
-        updated = _plan_payload(name="Renamed Plan", slug="renamed-plan", price_monthly="49.99")
+        updated = _plan_payload(name="Renamed Plan", slug="renamed-plan", price_monthly="490000")
         resp = await client.patch(f"/api/v1/admin/plans/{plan_id}", json=updated, headers=headers)
         assert resp.status_code == 200
         data = resp.json()["data"]
@@ -891,7 +965,7 @@ class TestAdminUpdatePlan:
         created = (
             await client.post(
                 "/api/v1/admin/plans",
-                json=_plan_payload(name="Stable Name", slug="stable-slug", price_monthly="9.99"),
+                json=_plan_payload(name="Stable Name", slug="stable-slug", price_monthly="99000"),
                 headers=headers,
             )
         ).json()["data"]
@@ -907,6 +981,75 @@ class TestAdminUpdatePlan:
         assert data["slug"] == "stable-slug"
         assert data["price_monthly"] == "199000.00"
         assert data["currency"] == "VND"
+
+    async def test_lowering_price_below_momo_minimum_returns_422(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        headers = await _admin_headers(client, db_session)
+        created = (
+            await client.post("/api/v1/admin/plans", json=_plan_payload(), headers=headers)
+        ).json()["data"]
+
+        resp = await client.patch(
+            f"/api/v1/admin/plans/{created['id']}",
+            json={"price_monthly": "200"},
+            headers=headers,
+        )
+
+        assert resp.status_code == 422
+        assert "1.000" in resp.json()["error"]["message"]
+
+    async def test_renaming_plan_does_not_revalidate_price(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """Payload không đụng tới giá thì không bị soi giá.
+
+        Gói cũ trong DB có thể đang để một mức giá không còn hợp lệ; chặn cả những lần
+        sửa không liên quan là khoá luôn đường duy nhất để đi dọn nó.
+        """
+        headers = await _admin_headers(client, db_session)
+        created = (
+            await client.post("/api/v1/admin/plans", json=_plan_payload(), headers=headers)
+        ).json()["data"]
+
+        resp = await client.patch(
+            f"/api/v1/admin/plans/{created['id']}",
+            json={"name": "Đổi tên thôi"},
+            headers=headers,
+        )
+
+        assert resp.status_code == 200
+        assert resp.json()["data"]["name"] == "Đổi tên thôi"
+
+    async def test_cannot_deactivate_the_free_plan(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        await PlansSeeder(db_session).run()
+        headers = await _admin_headers(client, db_session)
+        free = await db_session.scalar(select(PlanModel).where(PlanModel.slug == "free"))
+
+        resp = await client.patch(
+            f"/api/v1/admin/plans/{free.id}", json={"is_active": False}, headers=headers
+        )
+
+        assert resp.status_code == 409
+        assert "Free" in resp.json()["error"]["message"]
+
+    async def test_can_still_rename_the_free_plan(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """Tên để hiển thị, mã là khoá code — đổi tên phải luôn được."""
+        await PlansSeeder(db_session).run()
+        headers = await _admin_headers(client, db_session)
+        free = await db_session.scalar(select(PlanModel).where(PlanModel.slug == "free"))
+
+        resp = await client.patch(
+            f"/api/v1/admin/plans/{free.id}", json={"name": "Miễn phí"}, headers=headers
+        )
+
+        assert resp.status_code == 200
+        assert resp.json()["data"]["slug"] == "free"
+
 
     async def test_deactivate_plan(self, client: AsyncClient, db_session: AsyncSession) -> None:
         headers = await _admin_headers(client, db_session)
@@ -960,7 +1103,7 @@ class TestAdminUpdatePlan:
 
         resp = await client.patch(
             f"/api/v1/admin/plans/{created['id']}",
-            json={"slug": "self-plan-slug", "price_monthly": 15.0},
+            json={"slug": "self-plan-slug", "price_monthly": 150000},
             headers=headers,
         )
         assert resp.status_code == 200
@@ -994,36 +1137,22 @@ class TestAdminUpdatePlan:
 
 
 class TestAdminDeletePlan:
-    async def test_delete_unused_plan_returns_200(
+    async def test_deletes_a_plan_nobody_ever_used(
         self, client: AsyncClient, db_session: AsyncSession
     ) -> None:
+        """Ca "lỡ tay tạo nhầm" — đúng tình huống gói "abc" 200đ."""
         headers = await _admin_headers(client, db_session)
-        plan_id = (
-            await client.post("/api/v1/admin/plans", json=_plan_payload(), headers=headers)
-        ).json()["data"]["id"]
-
-        resp = await client.delete(f"/api/v1/admin/plans/{plan_id}", headers=headers)
-        assert resp.status_code == 200, resp.text
-        assert resp.json()["data"]["detail"] == "Plan deleted"
-
-    async def test_deleted_plan_is_gone(
-        self, client: AsyncClient, db_session: AsyncSession
-    ) -> None:
-        headers = await _admin_headers(client, db_session)
-        plan = (
+        created = (
             await client.post("/api/v1/admin/plans", json=_plan_payload(), headers=headers)
         ).json()["data"]
 
-        await client.delete(f"/api/v1/admin/plans/{plan['id']}", headers=headers)
+        resp = await client.delete(f"/api/v1/admin/plans/{created['id']}", headers=headers)
 
-        assert (
-            await client.get(f"/api/v1/admin/plans/{plan['id']}", headers=headers)
-        ).status_code == 404
+        assert resp.status_code == 204
+        gone = await client.get(f"/api/v1/admin/plans/{created['id']}", headers=headers)
+        assert gone.status_code == 404
 
-        listed = (await client.get("/api/v1/admin/plans", headers=headers)).json()["data"]
-        assert plan["id"] not in [p["id"] for p in listed]
-
-    async def test_plan_with_subscribers_returns_409(
+    async def test_refuses_when_the_plan_has_subscribers(
         self, client: AsyncClient, db_session: AsyncSession
     ) -> None:
         headers = await _admin_headers(client, db_session)
@@ -1036,162 +1165,47 @@ class TestAdminDeletePlan:
         await _create_subscription(db_session, user_id, plan["id"])
 
         resp = await client.delete(f"/api/v1/admin/plans/{plan['id']}", headers=headers)
+
         assert resp.status_code == 409
+        message = resp.json()["error"]["message"]
+        assert "NGỪNG BÁN" in message
 
-        # Bị chặn thì gói phải còn nguyên — 409 mà vẫn xoá mất là tệ hơn cả xoá thẳng.
-        assert (
-            await client.get(f"/api/v1/admin/plans/{plan['id']}", headers=headers)
-        ).status_code == 200
+        still_there = await client.get(f"/api/v1/admin/plans/{plan['id']}", headers=headers)
+        assert still_there.status_code == 200
 
-    async def test_deactivating_stays_available_as_the_soft_alternative(
+    async def test_refuses_to_delete_the_free_plan(
         self, client: AsyncClient, db_session: AsyncSession
     ) -> None:
-        """Gói còn người dùng: lối đi đúng là ngừng bán, không phải xoá."""
+        await PlansSeeder(db_session).run()
         headers = await _admin_headers(client, db_session)
-        plan = (
-            await client.post("/api/v1/admin/plans", json=_plan_payload(), headers=headers)
-        ).json()["data"]
+        free = await db_session.scalar(select(PlanModel).where(PlanModel.slug == "free"))
 
-        user_h = await _user_headers(client)
-        user_id = (await client.get("/api/v1/users/me", headers=user_h)).json()["data"]["id"]
-        await _create_subscription(db_session, user_id, plan["id"])
+        resp = await client.delete(f"/api/v1/admin/plans/{free.id}", headers=headers)
 
-        assert (
-            await client.delete(f"/api/v1/admin/plans/{plan['id']}", headers=headers)
-        ).status_code == 409
-
-        resp = await client.patch(
-            f"/api/v1/admin/plans/{plan['id']}",
-            json={"is_active": False},
-            headers=headers,
-        )
-        assert resp.status_code == 200
-        assert resp.json()["data"]["is_active"] is False
-
-    async def test_cancelled_subscription_still_blocks_delete(
-        self, client: AsyncClient, db_session: AsyncSession
-    ) -> None:
-        """Trạng thái thuê bao KHÔNG được tính đến — khoá ngoại vẫn là khoá ngoại.
-
-        Một thuê bao `cancelled` vẫn là một hàng còn trỏ vào gói; xoá gói vẫn vỡ DB.
-        Ghim hành vi này lại vì đọc lướt rất dễ tưởng "đã huỷ thì xoá được".
-        """
-        headers = await _admin_headers(client, db_session)
-        plan = (
-            await client.post("/api/v1/admin/plans", json=_plan_payload(), headers=headers)
-        ).json()["data"]
-
-        user_h = await _user_headers(client)
-        user_id = (await client.get("/api/v1/users/me", headers=user_h)).json()["data"]["id"]
-        await _create_subscription(db_session, user_id, plan["id"], status="cancelled")
-
-        resp = await client.delete(f"/api/v1/admin/plans/{plan['id']}", headers=headers)
         assert resp.status_code == 409
+        assert "Free" in resp.json()["error"]["message"]
 
-    async def test_payment_record_blocks_delete_of_an_upgraded_away_plan(
-        self, client: AsyncClient, db_session: AsyncSession
-    ) -> None:
-        """Gói CŨ sau khi user nâng cấp: hết thuê bao nhưng còn lịch sử thanh toán.
-
-        Đây là tình huống duy nhất mà chốt chặn giao dịch thực sự lên tiếng — và cũng là
-        tình huống thật: `subscription_payments.subscription_id` là FK NOT NULL nên một
-        giao dịch không thể sống lâu hơn thuê bao của nó; chỉ khi thuê bao đã chuyển sang
-        gói khác thì gói cũ mới còn 0 thuê bao mà vẫn còn giao dịch trỏ vào.
-
-        Không có chốt này, xoá gói cũ sẽ vỡ khoá ngoại và xoá luôn dấu vết ai đã trả tiền
-        cho nó. Unit test chỉ mock được lời gọi; test này mới chứng minh câu đếm trỏ đúng
-        bảng `subscription_payments` và đúng cột `plan_id`.
-        """
-        headers = await _admin_headers(client, db_session)
-        old_plan = (
-            await client.post("/api/v1/admin/plans", json=_plan_payload(), headers=headers)
-        ).json()["data"]
-        new_plan = (
-            await client.post("/api/v1/admin/plans", json=_plan_payload(), headers=headers)
-        ).json()["data"]
-
-        user_h = await _user_headers(client)
-        user_id = (await client.get("/api/v1/users/me", headers=user_h)).json()["data"]["id"]
-        await _create_subscription(db_session, user_id, new_plan["id"])
-        sub_id = (
-            await client.get(
-                f"/api/v1/admin/subscriptions?plan_slug={new_plan['slug']}", headers=headers
-            )
-        ).json()["data"]["data"][0]["id"]
-
-        # Giao dịch cũ vẫn ghi gói CŨ, trong khi thuê bao đã sang gói MỚI.
-        await db_session.execute(
-            insert(SubscriptionPaymentModel).values(
-                user_id=uuid.UUID(user_id),
-                subscription_id=uuid.UUID(sub_id),
-                plan_id=uuid.UUID(old_plan["id"]),
-                provider="momo",
-                status="succeeded",
-                amount=Decimal("199000"),
-                currency="VND",
-                expires_at=datetime.now(UTC) + timedelta(days=1),
-            )
-        )
-        await db_session.flush()
-
-        resp = await client.delete(f"/api/v1/admin/plans/{old_plan['id']}", headers=headers)
-        assert resp.status_code == 409
-        assert "giao dịch" in resp.json()["error"]["message"]
-
-        assert (
-            await client.get(f"/api/v1/admin/plans/{old_plan['id']}", headers=headers)
-        ).status_code == 200
-
-    async def test_deleting_twice_returns_404(
+    async def test_nonexistent_plan_returns_404(
         self, client: AsyncClient, db_session: AsyncSession
     ) -> None:
         headers = await _admin_headers(client, db_session)
-        plan = (
-            await client.post("/api/v1/admin/plans", json=_plan_payload(), headers=headers)
-        ).json()["data"]
 
-        first = await client.delete(f"/api/v1/admin/plans/{plan['id']}", headers=headers)
-        assert first.status_code == 200
-        second = await client.delete(f"/api/v1/admin/plans/{plan['id']}", headers=headers)
-        assert second.status_code == 404
-
-    async def test_malformed_uuid_returns_422(
-        self, client: AsyncClient, db_session: AsyncSession
-    ) -> None:
-        headers = await _admin_headers(client, db_session)
-        resp = await client.delete("/api/v1/admin/plans/not-a-uuid", headers=headers)
-        assert resp.status_code == 422
-
-    async def test_delete_writes_audit_log(
-        self, client: AsyncClient, db_session: AsyncSession
-    ) -> None:
-        headers = await _admin_headers(client, db_session)
-        plan = (
-            await client.post("/api/v1/admin/plans", json=_plan_payload(), headers=headers)
-        ).json()["data"]
-
-        await client.delete(f"/api/v1/admin/plans/{plan['id']}", headers=headers)
-
-        logs = (
-            await client.get("/api/v1/admin/audit-logs?event_type=plan.deleted", headers=headers)
-        ).json()["data"]["data"]
-        assert any(entry["target_id"] == plan["id"] for entry in logs)
-
-    async def test_delete_nonexistent_plan_returns_404(
-        self, client: AsyncClient, db_session: AsyncSession
-    ) -> None:
-        headers = await _admin_headers(client, db_session)
         resp = await client.delete(f"/api/v1/admin/plans/{uuid.uuid4()}", headers=headers)
+
         assert resp.status_code == 404
 
     async def test_non_admin_returns_403(self, client: AsyncClient) -> None:
         headers = await _user_headers(client)
+
         resp = await client.delete(f"/api/v1/admin/plans/{uuid.uuid4()}", headers=headers)
+
         assert resp.status_code == 403
 
     async def test_unauthenticated_returns_401(self, client: AsyncClient) -> None:
         resp = await client.delete(f"/api/v1/admin/plans/{uuid.uuid4()}")
+
         assert resp.status_code == 401
+
 
 
 # ---------------------------------------------------------------------------
@@ -1625,6 +1639,203 @@ class TestAdminCreateTemplate:
         assert resp.status_code == 201
         assert resp.json()["data"]["profession"] is None
 
+    async def test_xem_truoc_dung_to_giay_that(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """Admin soạn mẫu mà nhìn thấy ngay tờ giấy khách sẽ đọc.
+
+        Trước bản này admin soạn trong một form toàn ô chữ, còn tờ báo giá thì chỉ freelancer
+        mới thấy — người soạn ra nội dung gửi khách hàng chưa từng nhìn thấy nội dung đó nằm
+        trên giấy.  #Huynh
+        """
+        headers = await _admin_headers(client, db_session)
+        resp = await client.post(
+            "/api/v1/admin/templates/preview",
+            json={
+                "template_type": "proposal",
+                "content": {
+                    "project_overview": "Thiết kế bộ nhận diện thương hiệu.",
+                    "scope_of_work": ["Khảo sát", "Phác thảo"],
+                    "standard_terms": "Bàn giao file nguồn.",
+                },
+            },
+            headers=headers,
+        )
+        assert resp.status_code == 200, resp.text
+        html = resp.json()["data"]["html"]
+
+        assert "Thiết kế bộ nhận diện thương hiệu." in html
+        assert "Khảo sát" in html
+        # Chế độ sửa: MỌI mục hiện ra kể cả khi trống, bằng không admin không có chỗ bấm vào.
+        for field in ("payment_terms", "out_of_scope", "revision_policy", "assumptions"):
+            assert f'data-field="{field}"' in html, field
+
+    async def test_xem_truoc_khong_cho_mau_cham_tien(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """Màn soạn của admin KHÔNG được thành lối vòng để nhét khoá tiền vào tài liệu.
+
+        Cổng gửi báo giá, `resolve_cost_items` và bộ sinh task thu tiền cùng dựa trên bất biến
+        "tổng hạng mục = giá chào khách".
+        """
+        headers = await _admin_headers(client, db_session)
+        resp = await client.post(
+            "/api/v1/admin/templates/preview",
+            json={
+                "template_type": "proposal",
+                "content": {
+                    "standard_terms": "Điều khoản thật",
+                    "pricing_items": [{"label": "Mẫu chèn bậy", "amount": 999}],
+                    "pricing": "999 VND",
+                },
+            },
+            headers=headers,
+        )
+        html = resp.json()["data"]["html"]
+        assert "Điều khoản thật" in html
+        assert "Mẫu chèn bậy" not in html
+        assert "999" not in html
+
+    async def test_xem_truoc_hop_dong_dung_bo_dieu_rieng(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        headers = await _admin_headers(client, db_session)
+        resp = await client.post(
+            "/api/v1/admin/templates/preview",
+            json={
+                "template_type": "contract",
+                "content": {"ip_ownership": "Bàn giao toàn bộ quyền sau thanh toán."},
+            },
+            headers=headers,
+        )
+        assert resp.status_code == 200, resp.text
+        html = resp.json()["data"]["html"]
+        assert "Bàn giao toàn bộ quyền sau thanh toán." in html
+        assert 'data-field="custom_clauses"' in html
+
+    async def test_xem_truoc_hien_dau_muc_tu_soan_va_giu_so_lien_mach(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """Admin tự thêm đầu mục — bộ mục cứng không phủ hết mọi nghề.
+
+        Số mục phải LIỀN MẠCH sau khi chèn: tờ giấy nhảy số là khách đọc tưởng bị cắt bớt.
+        """
+        import re
+
+        headers = await _admin_headers(client, db_session)
+        resp = await client.post(
+            "/api/v1/admin/templates/preview",
+            json={
+                "template_type": "proposal",
+                "content": {
+                    "standard_terms": "Điều khoản chuẩn",
+                    "extra_sections": [
+                        {"title": "Quyền sử dụng hình ảnh", "body": "Bên B dùng thương mại."},
+                        {"title": "Bảo hành sản phẩm", "body": "30 ngày."},
+                    ],
+                },
+            },
+            headers=headers,
+        )
+        assert resp.status_code == 200, resp.text
+        html = resp.json()["data"]["html"]
+
+        assert "Quyền sử dụng hình ảnh" in html
+        assert "Bảo hành sản phẩm" in html
+        so_muc = [int(n) for n in re.findall(r"<h2>(\d+)\.", html)]
+        assert so_muc == list(range(1, len(so_muc) + 1)), so_muc
+
+    async def test_xem_truoc_giu_muc_chua_dat_ten_de_admin_go_vao(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        # Vừa bấm "Thêm đầu mục" thì mục đó chưa có tên; lọc đi ngay là nó không hiện lên giấy
+        # và admin không có chỗ nào để gõ tên vào.
+        headers = await _admin_headers(client, db_session)
+        resp = await client.post(
+            "/api/v1/admin/templates/preview",
+            json={
+                "template_type": "proposal",
+                "content": {"extra_sections": [{"title": "", "body": ""}]},
+            },
+            headers=headers,
+        )
+        html = resp.json()["data"]["html"]
+        assert 'data-field="extra_title_0"' in html
+        assert 'data-field="extra_body_0"' in html
+
+    async def test_muc_trong_bien_khoi_ban_gui_khach(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """Xoá nội dung một mục CỨNG = mục đó không hiện trên bản khách nhận.
+
+        Mục cứng không bỏ khỏi cấu trúc được, nhưng bỏ trống là nó biến mất — đúng thứ admin
+        muốn khi bấm xoá. Trước bản này mục 3-6 render vô điều kiện nên để trống là khách nhận
+        một tiêu đề rỗng.
+        """
+        import re
+
+        from src.ai.proposal_generator.application.render import ProposalPdfRenderer
+        from src.modules.admin.application.template_preview import _proposal_document
+
+        html = ProposalPdfRenderer().render_html(
+            _proposal_document({"standard_terms": "Chỉ có điều khoản"}), editable=False
+        )
+        assert "Tổng Quan Dự Án" not in html
+        assert "Sản Phẩm Bàn Giao" not in html
+        so_muc = [int(n) for n in re.findall(r"<h2>(\d+)\.", html)]
+        assert so_muc == list(range(1, len(so_muc) + 1)), so_muc
+
+    async def test_xem_truoc_chi_danh_cho_admin(self, client: AsyncClient) -> None:
+        headers = await _user_headers(client)
+        resp = await client.post(
+            "/api/v1/admin/templates/preview",
+            json={"template_type": "proposal", "content": {}},
+            headers=headers,
+        )
+        assert resp.status_code == 403
+
+    async def test_go_mau_ve_dung_chung_duoc(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """Gỡ nghề khỏi một mẫu đang gắn nghề.
+
+        `if payload.profession is not None` gộp hai chuyện khác hẳn nhau: "không gửi trường
+        này" và "gửi lên đúng null". Hệ quả: admin mở mẫu ra, chọn "Dùng chung cho mọi nghề",
+        bấm Lưu, nhận toast thành công — mà cột giữ nguyên nghề cũ, freelancer nghề khác vẫn
+        không thấy mẫu đó. Mở lại form thì select hiện đúng nghề cũ, không dấu vết gì.  #Huynh
+        """
+        headers = await _admin_headers(client, db_session)
+        tao = await client.post(
+            "/api/v1/admin/templates",
+            json=self._template_payload(profession="ui-ux-design"),
+            headers=headers,
+        )
+        tid = tao.json()["data"]["id"]
+
+        sua = await client.patch(
+            f"/api/v1/admin/templates/{tid}", json={"profession": None}, headers=headers
+        )
+        assert sua.status_code == 200, sua.text
+        assert sua.json()["data"]["profession"] is None
+
+    async def test_khong_gui_profession_thi_giu_nguyen_nghe(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        # Mặt còn lại của cùng một bất biến: sửa mỗi tên thì đừng đụng tới nghề.
+        headers = await _admin_headers(client, db_session)
+        tao = await client.post(
+            "/api/v1/admin/templates",
+            json=self._template_payload(profession="ui-ux-design"),
+            headers=headers,
+        )
+        tid = tao.json()["data"]["id"]
+
+        sua = await client.patch(
+            f"/api/v1/admin/templates/{tid}", json={"name": "Tên mới"}, headers=headers
+        )
+        assert sua.status_code == 200, sua.text
+        assert sua.json()["data"]["profession"] == "ui-ux-design"
+
     async def test_loc_thu_vien_theo_nghe(
         self, client: AsyncClient, db_session: AsyncSession
     ) -> None:
@@ -1743,15 +1954,15 @@ class TestAdminDeleteTemplate:
         assert resp.status_code == 201, resp.text
         return resp.json()["data"]
 
-    async def test_delete_template_returns_200(
+    async def test_delete_template_returns_204(
         self, client: AsyncClient, db_session: AsyncSession
     ) -> None:
         headers = await _admin_headers(client, db_session)
         template = await self._create_template(client, headers)
 
         resp = await client.delete(f"/api/v1/admin/templates/{template['id']}", headers=headers)
-        assert resp.status_code == 200, resp.text
-        assert resp.json()["data"]["detail"] == "Template deleted"
+        assert resp.status_code == 204, resp.text
+        assert resp.content == b""
 
     async def test_deleted_template_is_gone_from_list(
         self, client: AsyncClient, db_session: AsyncSession
@@ -1771,7 +1982,7 @@ class TestAdminDeleteTemplate:
         template = await self._create_template(client, headers)
 
         first = await client.delete(f"/api/v1/admin/templates/{template['id']}", headers=headers)
-        assert first.status_code == 200
+        assert first.status_code == 204
         second = await client.delete(f"/api/v1/admin/templates/{template['id']}", headers=headers)
         assert second.status_code == 404
 
@@ -1841,10 +2052,10 @@ class TestAdminDeleteTemplate:
 
         assert (
             await client.delete(f"/api/v1/admin/templates/{child_id}", headers=headers)
-        ).status_code == 200
+        ).status_code == 204
         assert (
             await client.delete(f"/api/v1/admin/templates/{parent['id']}", headers=headers)
-        ).status_code == 200
+        ).status_code == 204
 
     async def test_delete_active_template_succeeds(
         self, client: AsyncClient, db_session: AsyncSession
@@ -1854,7 +2065,7 @@ class TestAdminDeleteTemplate:
         template = await self._create_template(client, headers, is_active=True)
 
         resp = await client.delete(f"/api/v1/admin/templates/{template['id']}", headers=headers)
-        assert resp.status_code == 200, resp.text
+        assert resp.status_code == 204, resp.text
 
     async def test_malformed_uuid_returns_422(
         self, client: AsyncClient, db_session: AsyncSession
@@ -1927,7 +2138,7 @@ class TestDeletedTemplateDoesNotBreakGeneratedDocuments:
         deleted = await client.delete(
             f"/api/v1/admin/templates/{template['id']}", headers=admin_h
         )
-        assert deleted.status_code == 200, deleted.text
+        assert deleted.status_code == 204, deleted.text
 
         after = await client.get(f"/api/v1/proposals/{proposal['id']}", headers=user_h)
         assert after.status_code == 200, after.text

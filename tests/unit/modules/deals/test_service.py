@@ -10,6 +10,7 @@ from src.ai.shared.prompt import load_prompt
 from src.modules.deals.application.service import (
     EXCLUDED_BLOCK_HEADING,
     SCORED_BLOCK_HEADING,
+    UPDATED_BLOCK_HEADING,
     DealsService,
 )
 from src.modules.deals.schemas.request import DealRequest, DealStageRequest, PublicIntakeRequest
@@ -273,7 +274,7 @@ async def test_create_public_intake_creates_client_deal_and_intake() -> None:
     intake = IntakeStub(id=uuid.uuid4(), client_id=client_id)
     deal = DealStub(id=uuid.uuid4(), stage="new_lead", client_id=client_id)
     repo = AsyncMock()
-    repo.get_owner_by_intake_token.return_value = owner
+    repo.get_owner_by_public_link.return_value = owner
     repo.create_client.return_value = DealStub(id=client_id, stage="prospect")
     repo.create.return_value = deal
     repo.create_intake.return_value = intake
@@ -336,7 +337,7 @@ async def test_thu_bao_deal_moi_gui_NGAY_va_neu_so_tep_khach_khai() -> None:
     client_id = uuid.uuid4()
     deal = DealStub(id=uuid.uuid4(), stage="new_lead", client_id=client_id)
     repo = AsyncMock()
-    repo.get_owner_by_intake_token.return_value = owner
+    repo.get_owner_by_public_link.return_value = owner
     repo.create_client.return_value = DealStub(id=client_id, stage="prospect")
     repo.create.return_value = deal
     repo.create_intake.return_value = IntakeStub(id=uuid.uuid4(), client_id=client_id)
@@ -379,7 +380,7 @@ class TestPublicIntakeAttachment:
 
     async def test_token_sai_thi_khong_nhan(self) -> None:
         repo = AsyncMock()
-        repo.get_owner_by_intake_token.return_value = None
+        repo.get_owner_by_public_link.return_value = None
 
         with pytest.raises(NotFoundError):
             await self._service(repo).add_public_intake_attachment(
@@ -393,7 +394,7 @@ class TestPublicIntakeAttachment:
     async def test_phieu_khong_thuoc_chu_link_thi_khong_nhan(self) -> None:
         # Chốt quan trọng nhất: có link hợp lệ KHÔNG có nghĩa được ghi vào phiếu bất kỳ.
         repo = AsyncMock()
-        repo.get_owner_by_intake_token.return_value = OwnerStub(id=uuid.uuid4())
+        repo.get_owner_by_public_link.return_value = OwnerStub(id=uuid.uuid4())
         repo.get_intake_by_id.return_value = None
 
         with pytest.raises(NotFoundError):
@@ -409,7 +410,7 @@ class TestPublicIntakeAttachment:
         from datetime import UTC, datetime, timedelta
 
         repo = AsyncMock()
-        repo.get_owner_by_intake_token.return_value = OwnerStub(id=uuid.uuid4())
+        repo.get_owner_by_public_link.return_value = OwnerStub(id=uuid.uuid4())
         repo.get_intake_by_id.return_value = SimpleNamespace(
             deal_id=uuid.uuid4(),
             submitted_at=datetime.now(UTC) - timedelta(hours=2),
@@ -431,7 +432,7 @@ class TestPublicIntakeAttachment:
         from datetime import UTC, datetime
 
         repo = AsyncMock()
-        repo.get_owner_by_intake_token.return_value = OwnerStub(id=uuid.uuid4())
+        repo.get_owner_by_public_link.return_value = OwnerStub(id=uuid.uuid4())
         repo.get_intake_by_id.return_value = SimpleNamespace(
             deal_id=uuid.uuid4(), submitted_at=datetime.now(UTC), created_at=None
         )
@@ -458,18 +459,21 @@ class TestPublicIntakeAttachment:
         from datetime import UTC, datetime
 
         repo = AsyncMock()
-        repo.get_owner_by_intake_token.return_value = owner
+        repo.get_owner_by_public_link.return_value = owner
         repo.get_intake_by_id.return_value = SimpleNamespace(
             deal_id=deal_id, submitted_at=datetime.now(UTC), created_at=None
         )
         upload = AsyncMock(return_value="saved")
 
-        with patch(
-            "src.modules.deals.application.attachment_service.DealAttachmentService.list_for_deal",
-            AsyncMock(return_value=[]),
-        ), patch(
-            "src.modules.deals.application.attachment_service.DealAttachmentService.upload",
-            upload,
+        with (
+            patch(
+                "src.modules.deals.application.attachment_service.DealAttachmentService.list_for_deal",
+                AsyncMock(return_value=[]),
+            ),
+            patch(
+                "src.modules.deals.application.attachment_service.DealAttachmentService.upload",
+                upload,
+            ),
         ):
             result = await self._service(repo).add_public_intake_attachment(
                 f"tok-{uuid.uuid4().hex}",
@@ -488,7 +492,7 @@ class TestPublicIntakeAttachment:
 
 async def test_create_public_intake_rejects_unknown_token() -> None:
     repo = AsyncMock()
-    repo.get_owner_by_intake_token.return_value = None
+    repo.get_owner_by_public_link.return_value = None
     service = DealsService(db=AsyncMock(), repo=repo, usage=AsyncMock())
 
     with pytest.raises(NotFoundError):
@@ -557,6 +561,7 @@ class DealModelStub:
     estimated_value: object | None = None
     currency: str = "VND"
     desired_timeline: str | None = None
+    client_budget: str | None = None
     project_type: str | None = None
     service_category: str | None = None
     pricing_tier: str | None = None
@@ -638,7 +643,9 @@ async def test_qualify_deal_writes_all_signal_fields_to_deal() -> None:
     assert deal_model.ai_qualification_timeline_signal == "CLEAR"
     assert deal_model.ai_qualification_urgency_signal == "MODERATE"
     assert deal_model.ai_qualification_red_flags == ["no mockups provided"]
-    assert deal_model.ai_qualification_next_step == "Reply today to confirm scope and move to quoting."
+    assert (
+        deal_model.ai_qualification_next_step == "Reply today to confirm scope and move to quoting."
+    )
     assert deal_model.ai_qualification_suggested_actions == [
         "Reply today to confirm scope",
         "Generate AI quote after scope confirmation",
@@ -658,6 +665,11 @@ async def test_qualify_deal_writes_all_signal_fields_to_deal() -> None:
 
 
 def _breakdown(scope: int, budget: int, timeline: int, detail: int, context: int) -> dict:
+    """Điểm truyền vào phải nằm ĐÚNG một nấc của barem (xem `RUBRIC_LEVELS`).
+
+    `compute_readiness` kéo mọi số lẻ về nấc dưới, nên chấm 28 cho scope sẽ thành 20 và
+    phép cộng trong test không còn khớp với con số mình vừa viết ra.
+    """
     return {
         "scope": {"points": scope, "reason": ""},
         "budget": {"points": budget, "reason": ""},
@@ -669,12 +681,12 @@ def _breakdown(scope: int, budget: int, timeline: int, detail: int, context: int
 
 async def test_qualify_deal_diem_cong_tu_thang_tieu_chi() -> None:
     service, _, deal_model = _make_qualify_service(
-        {**_AI_RESULT, "score_breakdown": _breakdown(28, 25, 18, 13, 8)}
+        {**_AI_RESULT, "score_breakdown": _breakdown(30, 25, 20, 8, 5)}
     )
 
     await service.qualify_deal(deal_model.owner_user_id, deal_model.id)
 
-    assert deal_model.ai_qualification_score == 92  # 28+25+18+13+8
+    assert deal_model.ai_qualification_score == 88  # 30+25+20+8+5
     assert deal_model.ai_qualification_recommendation == "qualify"
 
 
@@ -684,7 +696,7 @@ async def test_qualify_deal_nhan_suy_ra_tu_diem_chu_khong_tu_model() -> None:
         {
             **_AI_RESULT,
             "suggested_lead_score": "HOT",
-            "score_breakdown": _breakdown(10, 10, 5, 3, 2),
+            "score_breakdown": _breakdown(12, 0, 10, 8, 0),
         }
     )
 
@@ -701,7 +713,7 @@ async def test_qualify_deal_hai_deal_khac_nhau_ra_diem_khac_nhau() -> None:
         {**_AI_RESULT, "score_breakdown": _breakdown(30, 25, 20, 15, 10)}
     )
     service_b, _, deal_b = _make_qualify_service(
-        {**_AI_RESULT, "score_breakdown": _breakdown(5, 20, 0, 5, 0)}
+        {**_AI_RESULT, "score_breakdown": _breakdown(12, 0, 10, 8, 0)}
     )
 
     await service_a.qualify_deal(deal_a.owner_user_id, deal_a.id)
@@ -780,11 +792,58 @@ class TestInquiryContext:
         scored = ctx.partition(EXCLUDED_BLOCK_HEADING)[0]
         assert "- Nội dung yêu cầu: Ngân sách: 700 triệu. Thời gian build: 5 tháng." in scored
 
+    async def test_ngan_sach_khach_neu_nam_trong_khoi_cham_diem(self) -> None:
+        """Ô freelancer ghi lại sau khi HỎI được khách — là lời khách nên phải được chấm.
+
+        Không có ô này thì đọc xong "thiếu 25 điểm ngân sách", đi hỏi khách, quay về không
+        biết ghi vào đâu. Chấm lại vẫn 0 điểm, và vòng lặp đứt ngay chỗ đó.
+        """
+        ctx = await self._context(client_budget="120 triệu")
+
+        scored = ctx.partition(EXCLUDED_BLOCK_HEADING)[0]
+        assert "- Ngân sách khách nêu: 120 triệu" in scored
+
+    async def test_thong_tin_bo_sung_nam_o_khoi_uu_tien_rieng(self) -> None:
+        """Ô freelancer hỏi được PHẢI tách khỏi brief, không nối tiếp vào cùng danh sách.
+
+        Ca thật đã đo được: brief ghi "bên mình chưa chốt con số cụ thể", freelancer hỏi
+        thêm rồi ghi "120 triệu", AI vẫn chấm ngân sách 0 với lý do "khách chưa chốt". Hai
+        dòng ngang hàng nhau thì brief nói nhiều hơn nên thắng — mà brief mới là cái CŨ.
+        """
+        ctx = await self._context(
+            notes="Về ngân sách thì bên mình chưa chốt con số cụ thể, bạn báo giá trước nhé.",
+            client_budget="120 triệu",
+            desired_timeline="trước 30/09/2026",
+        )
+
+        scored, _, rest = ctx.partition(UPDATED_BLOCK_HEADING)
+        assert "chưa chốt con số cụ thể" in scored
+        assert "120 triệu" not in scored, "phải nằm ở khối ưu tiên, không lẫn vào brief"
+        assert "- Ngân sách khách nêu: 120 triệu" in rest
+        assert "- Thời hạn khách nêu: trước 30/09/2026" in rest
+
+    async def test_khong_bo_sung_gi_thi_khong_in_khoi_uu_tien(self) -> None:
+        """Tiêu đề rỗng chỉ tổ mời model đi tìm xem khối kia nằm ở đâu."""
+        ctx = await self._context(notes="Cần làm website bán hàng.")
+
+        assert UPDATED_BLOCK_HEADING not in ctx
+
+    async def test_ngan_sach_khach_neu_khac_han_gia_tri_du_kien(self) -> None:
+        """Hai ô tiền, hai vai KHÁC hẳn nhau — ranh giới này mà lẫn là hỏng cả bộ chấm điểm.
+
+        `client_budget` là khách nói. `estimated_value` là freelancer tự đoán để ước doanh
+        thu — từng bị AI đọc thành "khách đã duyệt ngân sách" và chấm 20/25.
+        """
+        ctx = await self._context(client_budget="120 triệu", estimated_value=999_000_000)
+
+        scored, _, excluded = ctx.partition(EXCLUDED_BLOCK_HEADING)
+        assert "120 triệu" in scored
+        assert "999000000" not in scored
+        assert "999000000" in excluded
+
     async def test_khong_con_dan_nhan_ghi_chu_noi_bo(self) -> None:
         """Đúng hai chuỗi này làm AI bỏ qua chữ người dùng dán vào — cấm chúng quay lại."""
-        ctx = await self._context(
-            notes="5 hạng mục: đăng nhập, giỏ hàng, thanh toán, CMS, báo cáo"
-        )
+        ctx = await self._context(notes="5 hạng mục: đăng nhập, giỏ hàng, thanh toán, CMS, báo cáo")
 
         assert "Ghi chú nội bộ" not in ctx
         assert "FREELANCER TỰ NHẬP" not in ctx
@@ -856,7 +915,7 @@ class TestInquiryContext:
 
 
 # ---------------------------------------------------------------------------
-# save_latest_qualification — bản đánh giá ĐÃ CHỐT (tab "Tài liệu")
+# save_qualification — bản đánh giá ĐÃ CHỐT (tab "Tài liệu")
 # ---------------------------------------------------------------------------
 
 
@@ -865,6 +924,7 @@ class LeadScoreStub:
     id: uuid.UUID
     score: int = 100
     saved_at: object | None = None
+    gap_acknowledged: bool = False
 
 
 class TestSaveLatestQualification:
@@ -887,17 +947,75 @@ class TestSaveLatestQualification:
         row = LeadScoreStub(id=uuid.uuid4())
         service, _ = self._service(row)
 
-        result = await service.save_latest_qualification(uuid.uuid4(), uuid.uuid4())
+        result = await service.save_qualification(uuid.uuid4(), uuid.uuid4())
 
         assert result.saved_at is not None, "chưa đóng dấu thì tab Tài liệu không thấy gì"
         assert result is row
+
+    async def test_chot_dung_ban_duoc_chi_dinh_chu_khong_phai_ban_moi_nhat(self) -> None:
+        """Luồng "mở lại bản cũ ở tab Lịch sử rồi chốt".
+
+        Freelancer chấm xong quên chốt rồi dọn mất tác vụ, sau đó vào Lịch sử mở lại bản cũ.
+        Lúc này bản đang xem KHÔNG phải bản mới nhất — chốt bản mới nhất là đóng dấu nhầm
+        dòng mà họ không hề biết. Không có đường này thì họ buộc phải chấm lại, tốn một lượt
+        AI cho kết quả đã có sẵn.
+        """
+        ban_cu = LeadScoreStub(id=uuid.uuid4())
+        ban_moi = LeadScoreStub(id=uuid.uuid4())
+        service, repo = self._service(ban_moi)
+        repo.get_lead_score_by_id.return_value = ban_cu
+
+        result = await service.save_qualification(
+            uuid.uuid4(), uuid.uuid4(), qualification_id=ban_cu.id
+        )
+
+        assert result is ban_cu
+        assert ban_moi.saved_at is None, "không được đụng vào bản mới nhất"
+        repo.get_latest_lead_score.assert_not_awaited()
+
+    async def test_ban_chi_dinh_khong_thuoc_deal_thi_404(self) -> None:
+        """`get_lead_score_by_id` lọc cả id bản chấm, id deal LẪN chủ sở hữu.
+
+        Thiếu vế nào cũng thành một cửa để chốt bản chấm của deal khác hoặc của người khác.
+        """
+        service, repo = self._service(LeadScoreStub(id=uuid.uuid4()))
+        repo.get_lead_score_by_id.return_value = None
+
+        with pytest.raises(NotFoundError):
+            await service.save_qualification(
+                uuid.uuid4(), uuid.uuid4(), qualification_id=uuid.uuid4()
+            )
+
+    async def test_ghi_lai_viec_nguoi_dung_chap_nhan_chot_khi_thieu_diem(self) -> None:
+        """Nhìn một bản 27/100 đã chốt phải phân biệt được hai chuyện khác hẳn nhau:
+
+        hệ thống để lọt, hay người dùng đã được cảnh báo và tự chịu trách nhiệm. Số điểm
+        thiếu suy lại được từ `breakdown`; việc CÓ ĐƯỢC CẢNH BÁO thì không suy ra từ đâu.
+        """
+        row = LeadScoreStub(id=uuid.uuid4())
+        service, _ = self._service(row)
+
+        result = await service.save_qualification(
+            uuid.uuid4(), uuid.uuid4(), gap_acknowledged=True
+        )
+
+        assert result.gap_acknowledged is True
+
+    async def test_khong_truyen_co_thi_mac_dinh_la_chua_canh_bao(self) -> None:
+        """Đường gọi cũ (POST không body) phải chạy y như trước, và không tự nhận là đã cảnh báo."""
+        row = LeadScoreStub(id=uuid.uuid4())
+        service, _ = self._service(row)
+
+        result = await service.save_qualification(uuid.uuid4(), uuid.uuid4())
+
+        assert result.gap_acknowledged is False
 
     async def test_chua_cham_lan_nao_thi_404(self) -> None:
         """Không có gì để chốt — nói thẳng, đừng lặng lẽ tạo một bản rỗng."""
         service, _ = self._service(None)
 
         with pytest.raises(NotFoundError):
-            await service.save_latest_qualification(uuid.uuid4(), uuid.uuid4())
+            await service.save_qualification(uuid.uuid4(), uuid.uuid4())
 
     async def test_deal_khong_phai_cua_minh_thi_404_truoc_khi_doc_ban_cham(self) -> None:
         """Chốt chặn quyền sở hữu phải chạy TRƯỚC, không thì biết id deal là chốt được hộ."""
@@ -906,7 +1024,7 @@ class TestSaveLatestQualification:
         service = DealsService(db=AsyncMock(), repo=repo, usage=AsyncMock())
 
         with pytest.raises(NotFoundError):
-            await service.save_latest_qualification(uuid.uuid4(), uuid.uuid4())
+            await service.save_qualification(uuid.uuid4(), uuid.uuid4())
 
         repo.get_latest_lead_score.assert_not_awaited()
 
@@ -916,7 +1034,7 @@ class TestSaveLatestQualification:
         moi = LeadScoreStub(id=uuid.uuid4())
         service, repo = self._service(moi)
 
-        await service.save_latest_qualification(uuid.uuid4(), uuid.uuid4())
+        await service.save_qualification(uuid.uuid4(), uuid.uuid4())
 
         assert cu.saved_at == "2026-08-01T00:00:00Z", "dấu chốt cũ phải còn nguyên"
         assert moi.saved_at is not None

@@ -5,6 +5,7 @@ POST /api/v1/intake/{share_token} — no auth. Verifies the happy path, bad-toke
 Uses real PostgreSQL (rolled back per test).
 """
 
+import uuid
 from unittest.mock import AsyncMock, patch
 
 from httpx import AsyncClient
@@ -220,3 +221,46 @@ async def test_dinh_kem_bang_token_sai_thi_404(client: AsyncClient) -> None:
         files={"file": ("x.pdf", b"%PDF-1.4", "application/pdf")},
     )
     assert resp.status_code == 404
+
+
+async def test_gui_form_va_dinh_kem_bang_ten_duong_dan_rieng(client: AsyncClient) -> None:
+    """Trang công khai mở được bằng token LẪN slug, nên hai đường GHI cũng phải nhận cả hai.
+
+    Bản đầu chỉ dạy repository của `intake_form` tra slug; hai đường này đi qua
+    `DealsRepository` nên vẫn chỉ nhận token — khách vào `/{slug}` gửi form là 404.
+    """
+    headers, _ = await _owner_intake_token(client)
+    slug = f"thu-thuy-{uuid.uuid4().hex[:6]}"
+    saved = await client.patch(
+        "/api/v1/users/me/freelancer-profile", headers=headers, json={"profile_slug": slug}
+    )
+    assert saved.status_code == 200, saved.text
+
+    with patch("src.workers.ai_jobs.tasks.qualify_deal_async_by_id.delay"):
+        submit = await client.post(
+            f"/api/v1/intake/{slug}",
+            json={"name": "Khách Vào Bằng Slug", "inquiry_text": "Brief.", "attachment_count": 1},
+        )
+    assert submit.status_code == 201, submit.text
+    intake_id = submit.json()["data"]["id"]
+
+    with (
+        patch(
+            "src.infrastructure.storage.object_storage.ObjectStorage.enabled",
+            new=property(lambda self: True),
+        ),
+        patch(
+            "src.infrastructure.storage.object_storage.ObjectStorage.upload",
+            new=AsyncMock(return_value="deals/test/brief.pdf"),
+        ),
+    ):
+        upload = await client.post(
+            f"/api/v1/intake/{slug}/{intake_id}/attachments",
+            files={"file": ("brief.pdf", b"%PDF-1.4 noi dung", "application/pdf")},
+        )
+    assert upload.status_code == 201, upload.text
+
+    deals = await client.get("/api/v1/deals", headers=headers)
+    deal_id = next(d["id"] for d in deals.json()["data"] if "Khách Vào Bằng Slug" in d["title"])
+    listed = await client.get(f"/api/v1/deals/{deal_id}/attachments", headers=headers)
+    assert [a["filename"] for a in listed.json()["data"]] == ["brief.pdf"]

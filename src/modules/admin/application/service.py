@@ -3,10 +3,12 @@
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from decimal import Decimal
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.ai.shared.constants import SUPPORTED_LLM_PROVIDERS
+from src.config.settings import settings
 from src.infrastructure.database.models import AIProviderConfigurationModel, PlanModel, SubscriptionModel, UserModel
 from src.modules.admin.domain.entities import AdminUser, FeatureFlagRollout, SubscriptionOverride
 from src.modules.admin.infrastructure.repository import AdminRepository
@@ -25,6 +27,23 @@ from src.shared.exceptions.domain import (
     NotFoundError,
     ValidationError,
 )
+
+
+# Gói miễn phí là gói HỆ THỐNG, không phải một mặt hàng trong bảng giá: người đăng ký mới
+# được gán vào nó (`auth`), và job hết hạn hạ mọi gói trả phí về nó (`subscriptions`). Cả
+# hai chỗ đều tra theo MÃ này. Mất nó, hoặc đổi mã nó, là gãy cả hai luồng — im lặng, vì
+# cả hai đều `if free_plan is None` rồi bỏ qua.  #Huynh
+_SYSTEM_PLAN_SLUG = "free"
+
+
+def _vnd(amount: Decimal | int) -> str:
+    """``50000000`` → ``"50.000.000"``.
+
+    Cố ý nhân đôi một dòng với `integrations/momo/client.py` thay vì dựng một module tiền
+    tệ dùng chung: chỉ hai nơi cần, và để `modules/admin` import `integrations/momo` chỉ
+    vì một hàm định dạng là một ràng buộc đắt hơn thứ nó tiết kiệm.
+    """
+    return f"{int(amount):,}".replace(",", ".")
 
 
 @dataclass
@@ -175,7 +194,42 @@ class AdminService:
             raise NotFoundError(f"Plan {plan_id} not found")
         return plan
 
+    @staticmethod
+    def _assert_price_is_payable(price: Decimal) -> None:
+        """Gói phải hoặc miễn phí, hoặc có giá mà cổng thanh toán nhận được.
+
+        0đ = gói miễn phí, KHÔNG đi qua cổng thanh toán nên không bị ràng buộc gì. Còn
+        lại thì phải nằm trong hạn mức MoMo, nếu không admin vừa tạo ra một gói BÀY RA
+        ĐỂ BÁN NHƯNG KHÔNG MUA ĐƯỢC: người dùng bấm "Nâng cấp qua MoMo" và chắc chắn ăn
+        lỗi, lần nào cũng vậy — trong khi chỗ hỏng thật nằm ở màn hình quản trị từ tuần
+        trước.
+
+        Chặn ở đây, chỗ DUY NHẤT giá gói được ghi vào DB, rẻ hơn nhiều so với để phát
+        hiện lúc người dùng đang cầm ví.  #Huynh
+        """
+        if price == 0:
+            return
+        if not settings.momo_min_amount <= price <= settings.momo_max_amount:
+            raise ValidationError(
+                f"Giá gói phải là 0đ (gói miễn phí) hoặc nằm trong khoảng "
+                f"{_vnd(settings.momo_min_amount)}đ – {_vnd(settings.momo_max_amount)}đ "
+                f"— đây là hạn mức MoMo nhận cho một giao dịch. Giá vừa nhập: "
+                f"{_vnd(price)}đ."
+            )
+
+    @staticmethod
+    def _assert_not_system_plan(plan, *, action: str) -> None:
+        """Gói Free không được xoá, không được ngừng bán, không được đổi mã."""
+        if plan.slug != _SYSTEM_PLAN_SLUG:
+            return
+        raise BusinessRuleError(
+            f"Không {action} được gói Free. Đây là gói gán cho mọi người đăng ký mới và "
+            f"là đích hạ gói khi một gói trả phí hết hạn — mất nó là gãy cả hai luồng, "
+            f"mà không có lỗi nào hiện ra."
+        )
+
     async def create_plan(self, payload: AdminPlanRequest, *, admin_id: uuid.UUID | None = None):
+        self._assert_price_is_payable(payload.price_monthly)
         if await self.repo.get_plan_by_name(payload.name) is not None:
             raise AlreadyExistsError(f"Plan name '{payload.name}' is already in use")
         if await self.repo.get_plan_by_slug(payload.slug) is not None:
@@ -212,6 +266,20 @@ class AdminService:
             raise NotFoundError(f"Plan {plan_id} not found")
 
         fields = payload.model_fields_set
+        # Chỉ soi giá khi payload THẬT SỰ đụng tới giá. Gói cũ trong DB có thể đang để
+        # một mức giá không còn hợp lệ; chặn cả những lần sửa không liên quan (đổi tên,
+        # tắt gói) là khoá luôn đường duy nhất để đi sửa nó.  #Huynh
+        # `is not None` chứ không chỉ kiểm tra có mặt: kiểu là `PlanPrice | None`, nên
+        # `{"price_monthly": null}` vẫn nằm trong `model_fields_set`. So `None` với số sẽ
+        # ném TypeError và biến một payload sai thành 500 trần.
+        if "price_monthly" in fields and payload.price_monthly is not None:
+            self._assert_price_is_payable(payload.price_monthly)
+        # Gói Free vẫn đổi tên / đổi quyền lợi được — chỉ hai thứ khiến code không tìm
+        # thấy nó nữa là bị cấm: tắt nó đi, và đổi mã của nó.
+        if "is_active" in fields and payload.is_active is False:
+            self._assert_not_system_plan(plan, action="ngừng bán")
+        if "slug" in fields and payload.slug != plan.slug:
+            self._assert_not_system_plan(plan, action="đổi mã")
         if "name" in fields and payload.name != plan.name:
             if await self.repo.get_plan_by_name(payload.name, exclude_plan_id=plan_id) is not None:
                 raise AlreadyExistsError(f"Plan name '{payload.name}' is already in use")
@@ -232,47 +300,47 @@ class AdminService:
         )
         return plan
 
-    async def delete_plan(
-        self, plan_id: uuid.UUID, *, admin_id: uuid.UUID | None = None
-    ) -> None:
-        """Xoá hẳn một gói cước, chỉ khi không còn gì trỏ vào nó.
+    async def delete_plan(self, plan_id: uuid.UUID, *, admin_id: uuid.UUID | None = None) -> None:
+        """Xoá HẲN một gói — chỉ dành cho gói chưa từng được dùng.
 
-        `subscriptions.plan_id` và `subscription_payments.plan_id` đều NOT NULL, nên xoá
-        một gói còn người dùng sẽ vỡ khoá ngoại ở tầng DB — trả về 500 trống trong khi
-        nguyên nhân thật là một quy tắc nghiệp vụ rõ ràng. Chặn ở đây để admin nhận đúng
-        409 kèm số thuê bao đang vướng, và biết việc cần làm là chuyển họ sang gói khác
-        (hoặc chỉ cần `is_active=false` nếu mục tiêu chỉ là ngừng bán).  #Huynh
+        Một gói là hai thứ khác nhau cùng lúc: một mặt hàng đang bày bán, và một sự thật
+        lịch sử gắn vào hoá đơn ("tháng 7 người này trả 199.000đ cho gói Pro"). Bỏ mặt
+        hàng khỏi quầy thì lúc nào cũng được; xoá sự thật lịch sử thì không bao giờ.
+
+        Nên xoá thật CHỈ hợp lệ khi không có sự thật nào để xoá — chưa ai đăng ký và chưa
+        có giao dịch nào. Đó đúng là ca "lỡ tay tạo nhầm", cũng là ca duy nhất admin thật
+        sự cần xoá. Gói đã có người dùng thì đường đúng là `is_active = false`: nó biến
+        khỏi bảng giá, không ai mua mới được, còn người đang dùng giữ nguyên quyền lợi
+        tới hết kỳ đã trả tiền rồi mới bị hạ về Free.
+
+        Đây cũng là cách Stripe/Paddle làm: một mức giá đã từng dùng thì không xoá được,
+        chỉ lưu trữ.  #Huynh
         """
         plan = await self.repo.get_plan(plan_id)
         if plan is None:
             raise NotFoundError(f"Plan {plan_id} not found")
 
-        subscription_count = await self.repo.count_subscriptions_for_plan(plan_id)
-        if subscription_count:
+        self._assert_not_system_plan(plan, action="xoá")
+
+        subscribers, payments = await self.repo.count_plan_usage(plan_id)
+        if subscribers or payments:
             raise BusinessRuleError(
-                f"Không xoá được gói '{plan.name}': còn {subscription_count} thuê bao đang "
-                "dùng. Hãy chuyển họ sang gói khác, hoặc đặt is_active=false để ngừng bán."
+                f"Không xoá được gói '{plan.name}' vì đã có người dùng "
+                f"({subscribers} lượt đăng ký, {payments} giao dịch). Xoá là hoá đơn cũ "
+                f"mất chỗ trỏ về. Hãy NGỪNG BÁN gói này: nó sẽ biến khỏi bảng giá và "
+                f"không ai mua mới được, còn người đang dùng vẫn giữ quyền lợi tới hết kỳ."
             )
 
-        payment_count = await self.repo.count_payments_for_plan(plan_id)
-        if payment_count:
-            raise BusinessRuleError(
-                f"Không xoá được gói '{plan.name}': còn {payment_count} giao dịch thanh toán "
-                "tham chiếu tới gói. Hãy đặt is_active=false để ngừng bán."
-            )
-
-        # Đọc tên/slug TRƯỚC khi xoá — sau `delete()` + `flush()` mọi truy cập thuộc tính
-        # đều là instance đã bị tách khỏi phiên.
-        name, slug = plan.name, plan.slug
-        await self.repo.delete_plan(plan)
-
+        # Ghi nhật ký TRƯỚC khi xoá. `target_id` cố ý không có khoá ngoại (xem models.py),
+        # nên bản ghi này sống sót sau khi gói biến mất — đó là toàn bộ điểm của nó.
         await self.repo.create_audit_log(
             event_type="plan.deleted",
             actor_user_id=admin_id,
             target_type="plan",
-            target_id=plan_id,
-            description=f"Admin xoá gói '{name}' ({slug})",
+            target_id=plan.id,
+            description=f"Admin xoá gói '{plan.name}' ({plan.slug})",
         )
+        await self.repo.delete_plan(plan)
 
     # -------------------------------------------------------------------------
     # Subscriptions
@@ -491,7 +559,12 @@ class AdminService:
             raise NotFoundError(f"Template {template_id} not found")
         if payload.name is not None:
             template.name = payload.name
-        if payload.profession is not None:
+        # `in model_fields_set` chứ không phải `is not None`: với trường nullable, hai chuyện
+        # "không gửi lên" và "gửi lên đúng null" khác hẳn nhau, mà `is not None` gộp chúng làm
+        # một. Hệ quả: admin mở mẫu đang gắn nghề, chọn "Dùng chung cho mọi nghề", bấm Lưu, nhận
+        # toast "Đã cập nhật mẫu." — nhưng cột giữ nguyên nghề cũ, và freelancer nghề khác vẫn
+        # không thấy mẫu đó. Mở lại form thì select hiện đúng nghề cũ, không dấu vết gì.  #Huynh
+        if "profession" in payload.model_fields_set:
             template.profession = self._clean_profession(payload.profession)
         if payload.content is not None:
             template.content = payload.content
@@ -523,18 +596,17 @@ class AdminService:
                 "Hãy xoá các mẫu con trước, hoặc đặt is_active=false để ẩn mẫu này."
             )
 
-        name = template.name
-        await self.repo.delete_template(template)
-
-        # Mẫu là tài sản dùng chung của cả nền tảng và xoá là không hoàn tác được — ghi
-        # nhật ký để luôn truy được ai đã xoá cái gì, cùng lối với các thao tác gói cước.
+        # Ghi nhật ký TRƯỚC khi xoá, cùng lối với `delete_plan`: `target_id` cố ý không có
+        # khoá ngoại (xem models.py) nên bản ghi sống sót sau khi mẫu biến mất, và đọc
+        # thuộc tính trước `delete()` + `flush()` thì khỏi chạm vào instance đã tách phiên.
         await self.repo.create_audit_log(
             event_type="template.deleted",
             actor_user_id=admin_id,
             target_type="template",
-            target_id=template_id,
-            description=f"Admin xoá mẫu '{name}'",
+            target_id=template.id,
+            description=f"Admin xoá mẫu '{template.name}'",
         )
+        await self.repo.delete_template(template)
 
     @staticmethod
     def _clean_profession(profession: str | None) -> str | None:

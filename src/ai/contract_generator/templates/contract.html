@@ -35,9 +35,38 @@
     .footer-note { margin-top: 36px; font-size: 10pt; color: #777; text-align: center; border-top: 1px dashed #ccc; padding-top: 8px; }
     .en { display: block; font-weight: normal; font-size: 0.72em; font-style: italic; color: #888; text-transform: none; margin-top: 1px; }
     .eni { font-weight: normal; font-style: italic; color: #888; font-size: 0.85em; }
+    /* Mục admin đã TẮT — chỉ hiện ở màn soạn, không bao giờ ra bản gửi khách. */
+    h2[data-tat] { opacity: .45; }
+    h2[data-tat] .tat-badge { display: block; font-size: .62em; font-weight: normal;
+        font-style: italic; color: #b45309; text-transform: none; letter-spacing: 0; }
 </style>
 </head>
 <body>
+
+{# Chữ trong các điều CÓ SẴN = dữ liệu, không phải chữ cứng.
+   `clause_defaults` do Python truyền xuống (một nguồn duy nhất), `clause_texts` là phần admin
+   đã sửa. Trước đây admin đổi được TÊN điều mà không đổi được một chữ nào bên trong — bấm vào
+   tiêu đề thì sửa được, bấm vào đoạn ngay dưới thì không.  #Huynh #}
+{% macro dieu_khoan(key, css, nhan) %}
+{%- set noi_dung = clause_texts.get(key) or clause_defaults.get(key) -%}
+<p{% if css %} class="{{ css }}"{% endif %} data-field="clause_{{ key }}" data-label="{{ nhan }}" style="white-space:pre-line">{{ noi_dung }}</p>
+{%- endmacro %}
+
+{% macro dieu_khoan_ds(key, nhan) %}
+{%- set muc = clause_texts.get(key) or clause_defaults.get(key) or [] -%}
+<ul data-field="clause_{{ key }}" data-kind="list" data-label="{{ nhan }}">
+    {% for item in muc %}<li>{{ item }}</li>{% endfor %}
+</ul>
+{%- endmacro %}
+
+
+{# Tiêu đề điều = DỮ LIỆU. Xem chú thích cùng nội dung ở template.html.  #Huynh #}
+{% macro tieu_de(num, key, tat=false) %}
+{%- set mac_dinh = section_defaults.get(key, {}) -%}
+{%- set rieng = section_titles.get(key) -%}
+<h2{% if tat %} data-tat="1"{% endif %}>Điều {{ num }}. <span data-field="title_{{ key }}" data-label="Tên điều">{{ rieng or mac_dinh.vi }}</span><span class="en">Article {{ num }}{% if not rieng %}. {{ mac_dinh.en }}{% endif %}</span>{% if tat %}<span class="tat-badge">đã tắt — không hiện trên bản gửi khách</span>{% endif %}</h2>
+{%- endmacro %}
+
 
 <div class="national-header">
     <div class="title">CỘNG HÒA XÃ HỘI CHỦ NGHĨA VIỆT NAM<span class="en">Socialist Republic of Vietnam</span></div>
@@ -51,9 +80,9 @@
 <div class="meta-line">{% if contract_date %}Ngày lập <span class="eni">/ Date</span>: {{ contract_date }}{% else %}Hôm nay, ngày …… tháng …… năm ……{% endif %}</div>
 
 <div class="preamble">
-    <p>Căn cứ Bộ luật Dân sự số 91/2015/QH13 và các quy định pháp luật hiện hành có liên quan;</p>
+    {{ dieu_khoan('preamble_law', '', 'Căn cứ pháp luật') }}
     {% if proposal_reference %}<p>Căn cứ {{ proposal_reference }};</p>{% endif %}
-    <p>Căn cứ nhu cầu và khả năng thực tế của hai Bên;</p>
+    {{ dieu_khoan('preamble_need', '', 'Căn cứ nhu cầu hai Bên') }}
     <p>Hai Bên chúng tôi gồm <span class="eni">/ The two Parties are</span>:</p>
 </div>
 
@@ -71,21 +100,26 @@
 <div class="party-line"><span class="label">Số CCCD/MST <span class="eni">/ ID / Tax code</span>:</span><span class="fill">&nbsp;</span></div>
 <div class="party-line"><span class="label">Điện thoại <span class="eni">/ Phone</span>:</span>{{ client_phone or "" }}{% if client_email %} &nbsp; Email: {{ client_email }}{% endif %}</div>
 
-<p style="margin-top:14px;">Sau khi bàn bạc, hai Bên thống nhất ký kết Hợp đồng Dịch vụ này (gọi tắt là "Hợp Đồng") với các điều khoản như sau:</p>
+{{ dieu_khoan('intro', '', 'Câu dẫn vào các điều khoản') }}
 
 {% set ns = namespace(n=0) %}
 
 {% set ns.n = ns.n + 1 %}
-<h2>Điều {{ ns.n }}. Nội Dung và Phạm Vi Công Việc<span class="en">Article {{ ns.n }}. Scope of Work</span></h2>
-<p class="clause" data-field="scope_of_work" data-label="Nội dung và phạm vi công việc">{{ scope_of_work }}</p>
+{{ tieu_de(ns.n, 'scope_of_work') }}
+{# Rỗng thì BỎ hẳn đoạn văn, đừng in `<p class="clause"></p>` trống dưới tiêu đề — trông
+   như tài liệu lỗi. Tiêu đề vẫn giữ (điều này thuộc tầng 1–2, không tắt được).  #Huynh #}
+{% if scope_of_work or editable %}<p class="clause" data-field="scope_of_work" data-label="Nội dung và phạm vi công việc">{{ scope_of_work }}</p>{% endif %}
 
 {% set ns.n = ns.n + 1 %}
-<h2>Điều {{ ns.n }}. Thời Hạn Thực Hiện<span class="en">Article {{ ns.n }}. Term of Performance</span></h2>
-<p class="clause">Hợp đồng có hiệu lực từ ngày {{ effective_date or "hai Bên ký kết" }}{% if end_date %} và kéo dài đến ngày {{ end_date }}{% endif %}. Tiến độ và các mốc bàn giao thực hiện theo lịch tại Điều 3 và nội dung công việc hai Bên đã thống nhất.</p>
+{{ tieu_de(ns.n, 'term') }}
+<p class="clause">Hợp đồng có hiệu lực từ ngày {{ effective_date or "hai Bên ký kết" }}{% if end_date %} và kéo dài đến ngày {{ end_date }}{% endif %}.</p>
+{{ dieu_khoan('term', 'clause', 'Thời hạn thực hiện') }}
 
 {% set ns.n = ns.n + 1 %}
-<h2>Điều {{ ns.n }}. Giá Trị Hợp Đồng và Phương Thức Thanh Toán<span class="en">Article {{ ns.n }}. Contract Value and Payment</span></h2>
-<p class="clause" data-field="payment_terms" data-label="Giá trị hợp đồng và phương thức thanh toán">{{ payment_terms }}</p>
+{{ tieu_de(ns.n, 'payment') }}
+{# Rỗng thì BỎ hẳn đoạn văn, đừng in `<p class="clause"></p>` trống dưới tiêu đề — trông
+   như tài liệu lỗi. Tiêu đề vẫn giữ (điều này thuộc tầng 1–2, không tắt được).  #Huynh #}
+{% if payment_terms or editable %}<p class="clause" data-field="payment_terms" data-label="Giá trị hợp đồng và phương thức thanh toán">{{ payment_terms }}</p>{% endif %}
 {% if milestones %}
 <table class="schedule">
     <thead><tr><th>Đợt thanh toán <span class="eni">/ Milestone</span></th><th>Hạn <span class="eni">/ Due</span></th><th class="amount">Số tiền <span class="eni">/ Amount</span></th></tr></thead>
@@ -95,57 +129,78 @@
     {% if total_amount %}<tfoot><tr><td>Tổng giá trị hợp đồng <span class="eni">/ Total</span></td><td></td><td class="amount">{{ total_amount }}</td></tr></tfoot>{% endif %}
 </table>
 {% endif %}
-<p>Trường hợp Bên B thanh toán trễ hạn, Bên B chịu lãi suất chậm trả <span class="fill" style="min-width:40px">&nbsp;</span>%/tháng trên số tiền chậm thanh toán.</p>
+{{ dieu_khoan('late_payment', '', 'Lãi chậm trả') }}
 
 {% set ns.n = ns.n + 1 %}
-<h2>Điều {{ ns.n }}. Quyền và Nghĩa Vụ Của Bên A<span class="en">Article {{ ns.n }}. Rights and Obligations of Party A</span></h2>
-<ul>
-    <li>Thực hiện công việc đúng nội dung, chất lượng và tiến độ đã cam kết tại Điều 1 và Điều 2.</li>
-    <li>Chủ động thông báo cho Bên B khi có phát sinh ảnh hưởng đến tiến độ hoặc phạm vi công việc.</li>
-    <li>Bảo mật thông tin, tài liệu của Bên B theo Điều {{ ns.n + 2 }}.</li>
-    <li>Có quyền yêu cầu Bên B thanh toán đầy đủ, đúng hạn theo Điều 3.</li>
-</ul>
+{{ tieu_de(ns.n, 'party_a_duties') }}
+{{ dieu_khoan_ds('party_a_duties', 'Quyền và nghĩa vụ của Bên A') }}
 
 {% set ns.n = ns.n + 1 %}
-<h2>Điều {{ ns.n }}. Quyền và Nghĩa Vụ Của Bên B<span class="en">Article {{ ns.n }}. Rights and Obligations of Party B</span></h2>
-<ul>
-    <li>Cung cấp đầy đủ, kịp thời thông tin, tài liệu, quyền truy cập cần thiết để Bên A thực hiện công việc.</li>
-    <li>Thanh toán đầy đủ, đúng hạn theo Điều 3.</li>
-    <li>Có quyền yêu cầu Bên A báo cáo tiến độ và nghiệm thu sản phẩm theo các mốc đã thỏa thuận.</li>
-</ul>
+{{ tieu_de(ns.n, 'party_b_duties') }}
+{{ dieu_khoan_ds('party_b_duties', 'Quyền và nghĩa vụ của Bên B') }}
+
+{# Mục TẦNG 3 — admin tắt được. Bộ đếm nằm TRONG `{% if %}`: để ngoài là tắt một điều
+   thì số điều nhảy, khách đọc tưởng bị cắt bớt.  #Huynh #}
+{% set an_confidentiality = 'confidentiality' in hidden_sections %}
+{% if editable or not an_confidentiality %}
+{% set ns.n = ns.n + 1 %}
+{{ tieu_de(ns.n, 'confidentiality', editable and an_confidentiality) }}
+{{ dieu_khoan('confidentiality', 'clause', 'Bảo mật thông tin') }}
+{% endif %}
 
 {% set ns.n = ns.n + 1 %}
-<h2>Điều {{ ns.n }}. Bảo Mật Thông Tin<span class="en">Article {{ ns.n }}. Confidentiality</span></h2>
-<p class="clause">Hai Bên cam kết bảo mật mọi thông tin, tài liệu không công khai trao đổi trong quá trình thực hiện Hợp đồng, không tiết lộ cho bên thứ ba nếu không có sự đồng ý bằng văn bản của Bên còn lại, trừ trường hợp pháp luật yêu cầu. Nghĩa vụ này vẫn có hiệu lực sau khi Hợp đồng kết thúc.</p>
+{{ tieu_de(ns.n, 'ip_ownership') }}
+{# Chữ mặc định ở `CONTRACT_CLAUSE_DEFAULTS`, KHÔNG nhúng thẳng vào đây — trước có hai nguồn,
+   trái đúng chú thích "một nguồn duy nhất" ngay phía trên.  #Huynh #}
+<p class="clause" data-field="ip_ownership" data-label="Quyền sở hữu trí tuệ">{{ ip_ownership or clause_texts.get('ip_ownership') or clause_defaults.get('ip_ownership') }}</p>
+
+{# Mục TẦNG 3 — admin tắt được. Bộ đếm nằm TRONG `{% if %}`: để ngoài là tắt một điều
+   thì số điều nhảy, khách đọc tưởng bị cắt bớt.  #Huynh #}
+{% set an_termination = 'termination_clause' in hidden_sections %}
+{% if editable or not an_termination %}
+{% set ns.n = ns.n + 1 %}
+{{ tieu_de(ns.n, 'termination_clause', editable and an_termination) }}
+{# Rỗng thì BỎ hẳn đoạn văn, đừng in `<p class="clause"></p>` trống dưới tiêu đề — trông
+   như tài liệu lỗi. Khác hẳn việc admin TẮT điều: tắt là bỏ cả tiêu đề, còn rỗng chỉ là
+   hợp đồng này không có gì để nói ở đây.  #Huynh #}
+{% if termination_clause or editable %}<p class="clause" data-field="termination_clause" data-label="Sửa đổi và chấm dứt hợp đồng">{{ termination_clause }}</p>{% endif %}
+{% if revision_policy or editable %}<p class="clause" data-field="revision_policy" data-label="Chính sách chỉnh sửa và phát sinh">{{ revision_policy }}</p>{% endif %}
+{% endif %}
 
 {% set ns.n = ns.n + 1 %}
-<h2>Điều {{ ns.n }}. Quyền Sở Hữu Trí Tuệ<span class="en">Article {{ ns.n }}. Intellectual Property</span></h2>
-<p class="clause" data-field="ip_ownership" data-label="Quyền sở hữu trí tuệ">{{ ip_ownership or "Toàn bộ quyền sở hữu trí tuệ đối với sản phẩm bàn giao thuộc về Bên B kể từ thời điểm Bên B thanh toán đầy đủ giá trị Hợp đồng, trừ khi hai Bên có thỏa thuận khác bằng văn bản." }}</p>
+{{ tieu_de(ns.n, 'dispute') }}
+<p class="clause">Hợp đồng được điều chỉnh bởi pháp luật {{ governing_law or "Việt Nam" }}.</p>
+{{ dieu_khoan('dispute', 'clause', 'Giải quyết tranh chấp') }}
 
+{# Mục TẦNG 3 — admin tắt được. Bản soạn (`editable`) VẪN render mục bị tắt, chỉ làm mờ,
+   bằng không admin không có chỗ bấm để bật lại. Cùng tinh thần `keep_untitled`.  #Huynh #}
+{% set an_standard_terms = 'standard_terms' in hidden_sections %}
+{% if editable or (standard_terms and not an_standard_terms) %}
 {% set ns.n = ns.n + 1 %}
-<h2>Điều {{ ns.n }}. Sửa Đổi và Chấm Dứt Hợp Đồng<span class="en">Article {{ ns.n }}. Amendment and Termination</span></h2>
-<p class="clause" data-field="termination_clause" data-label="Sửa đổi và chấm dứt hợp đồng">{{ termination_clause }}</p>
-{% if revision_policy %}<p class="clause" data-field="revision_policy" data-label="Chính sách chỉnh sửa và phát sinh">{{ revision_policy }}</p>{% endif %}
-
-{% set ns.n = ns.n + 1 %}
-<h2>Điều {{ ns.n }}. Giải Quyết Tranh Chấp<span class="en">Article {{ ns.n }}. Dispute Resolution</span></h2>
-<p class="clause">Hợp đồng được điều chỉnh bởi pháp luật {{ governing_law or "Việt Nam" }}. Mọi tranh chấp trước hết được hai Bên giải quyết qua thương lượng, hòa giải; nếu không đạt thỏa thuận, tranh chấp được đưa ra Tòa án nhân dân có thẩm quyền giải quyết theo quy định pháp luật.</p>
-
-{% if standard_terms %}
-{% set ns.n = ns.n + 1 %}
-<h2>Điều {{ ns.n }}. Điều Khoản Chuẩn Theo Lĩnh Vực<span class="en">Article {{ ns.n }}. Standard Terms</span></h2>
+{{ tieu_de(ns.n, 'standard_terms', editable and an_standard_terms) }}
 <p class="clause" data-field="standard_terms" data-label="Điều khoản chuẩn theo lĩnh vực" style="white-space:pre-line">{{ standard_terms }}</p>
 {% endif %}
 
-{% if custom_clauses %}
+{# Mục TẦNG 3 — admin tắt được. Bản soạn (`editable`) VẪN render mục bị tắt, chỉ làm mờ,
+   bằng không admin không có chỗ bấm để bật lại. Cùng tinh thần `keep_untitled`.  #Huynh #}
+{% set an_custom_clauses = 'custom_clauses' in hidden_sections %}
+{% if editable or (custom_clauses and not an_custom_clauses) %}
 {% set ns.n = ns.n + 1 %}
-<h2>Điều {{ ns.n }}. Điều Khoản Bổ Sung<span class="en">Article {{ ns.n }}. Additional Terms</span></h2>
+{{ tieu_de(ns.n, 'custom_clauses', editable and an_custom_clauses) }}
 <p class="clause" data-field="custom_clauses" data-label="Điều khoản bổ sung">{{ custom_clauses }}</p>
 {% endif %}
 
+{# ĐIỀU DO ADMIN TỰ SOẠN — bộ điều cứng không phủ hết mọi nghề. Tên điều nằm trong dữ liệu
+   chứ không nằm trong template.  #Huynh #}
+{% for muc in extra_sections %}
 {% set ns.n = ns.n + 1 %}
-<h2>Điều {{ ns.n }}. Điều Khoản Chung<span class="en">Article {{ ns.n }}. General Provisions</span></h2>
-<p class="clause">Hợp đồng có hiệu lực kể từ ngày ký, được lập thành 02 (hai) bản có giá trị pháp lý như nhau, mỗi Bên giữ 01 (một) bản.</p>
+<h2>Điều {{ ns.n }}. <span data-field="extra_title_{{ loop.index0 }}" data-label="Tên điều">{{ muc.title }}</span><span class="en">Article {{ ns.n }}</span></h2>
+<p class="clause" data-field="extra_body_{{ loop.index0 }}" data-label="Nội dung điều" style="white-space:pre-line">{{ muc.body }}</p>
+{% endfor %}
+
+{% set ns.n = ns.n + 1 %}
+{{ tieu_de(ns.n, 'general') }}
+{{ dieu_khoan('general', 'clause', 'Điều khoản chung') }}
 
 <table class="signature">
     <tr>

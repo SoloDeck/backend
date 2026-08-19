@@ -77,7 +77,7 @@ class ContractGenerator(BaseAIChain):
                 prompt=full_prompt,
                 temperature=0.1,
                 json_mode=True,
-            
+
             )
 
             self.last_usage = response.usage

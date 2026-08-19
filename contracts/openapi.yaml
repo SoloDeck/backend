@@ -108,6 +108,41 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
 
+  /intake/{share_token}/profile:
+    get:
+      tags: [Public]
+      summary: Get the freelancer's public share profile
+      description: |
+        Returns the freelancer introduction page that sits in front of their intake
+        form — name, headline, bio, avatar, skills and portfolio link.
+
+        Identified **only** by `share_token`. There is no lookup by user id and no
+        listing endpoint, so profiles cannot be enumerated or browsed: a visitor can
+        only reach the page of a freelancer who gave them the link. Deliberately omits
+        `id`, `email` and `phone`, and carries no rating or ranking fields.
+        No authentication required.
+      security: []
+      parameters:
+        - name: share_token
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Freelancer share profile
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/PublicProfileResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
   /intake/{share_token}:
     post:
       tags: [Public]
@@ -158,122 +193,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiError'
-
-  # -------------------------------------------------------------------------
-  # PUBLIC FREELANCER DIRECTORY
-  # -------------------------------------------------------------------------
-  /public/freelancers/categories:
-    get:
-      tags: [Public]
-      summary: List freelancer categories
-      description: |
-        Returns the 5 static skill categories used to browse and filter the
-        freelancer directory. No authentication required.
-      security: []
-      responses:
-        '200':
-          description: List of categories
-          content:
-            application/json:
-              schema:
-                allOf:
-                  - $ref: '#/components/schemas/ApiResponseBase'
-                  - type: object
-                    properties:
-                      data:
-                        type: array
-                        items:
-                          $ref: '#/components/schemas/FreelancerCategoryResponse'
-
-  /public/freelancers:
-    get:
-      tags: [Public]
-      summary: Search freelancers
-      description: |
-        Paginated public search across opted-in freelancers (`is_listed=true`).
-        Supports free-text search (`q`) over name, professional title, and bio,
-        and multi-value category filter (array overlap — a freelancer matching
-        any of the supplied slugs is returned). Both filters are combinable.
-        No authentication required.
-      security: []
-      parameters:
-        - name: q
-          in: query
-          required: false
-          schema:
-            type: string
-          description: Search by name, title, or bio (case-insensitive, partial match)
-        - name: categories
-          in: query
-          required: false
-          schema:
-            type: array
-            items:
-              type: string
-              enum: [design, programming, marketing, content, consulting]
-          style: form
-          explode: true
-          description: Filter by category slugs — multiple values are OR-combined
-        - name: page
-          in: query
-          required: false
-          schema:
-            type: integer
-            default: 1
-            minimum: 1
-        - name: page_size
-          in: query
-          required: false
-          schema:
-            type: integer
-            default: 20
-            minimum: 1
-            maximum: 100
-      responses:
-        '200':
-          description: Paginated list of freelancers
-          content:
-            application/json:
-              schema:
-                allOf:
-                  - $ref: '#/components/schemas/PaginatedResponse'
-                  - type: object
-                    properties:
-                      data:
-                        type: array
-                        items:
-                          $ref: '#/components/schemas/FreelancerPublicResponse'
-
-  /public/freelancers/{freelancer_id}:
-    get:
-      tags: [Public]
-      summary: Get freelancer public profile
-      description: |
-        Returns the public profile of a single opted-in freelancer.
-        Returns 404 if the freelancer does not exist or has `is_listed=false`.
-        No authentication required.
-      security: []
-      parameters:
-        - name: freelancer_id
-          in: path
-          required: true
-          schema:
-            type: string
-            format: uuid
-      responses:
-        '200':
-          description: Freelancer public profile
-          content:
-            application/json:
-              schema:
-                allOf:
-                  - $ref: '#/components/schemas/ApiResponseBase'
-                  - type: object
-                    properties:
-                      data:
-                        $ref: '#/components/schemas/FreelancerPublicResponse'
-        '404':
-          $ref: '#/components/responses/NotFound'
 
   # -------------------------------------------------------------------------
   # INTAKE FORM (authenticated)
@@ -3576,17 +3495,8 @@ paths:
         `is_active=false` instead: that hides it from the catalog and leaves existing
         subscriptions untouched.
       responses:
-        '200':
+        '204':
           description: Plan deleted
-          content:
-            application/json:
-              schema:
-                allOf:
-                  - $ref: '#/components/schemas/ApiResponseBase'
-                  - type: object
-                    properties:
-                      data:
-                        $ref: '#/components/schemas/MessageResponse'
         '404':
           $ref: '#/components/responses/NotFound'
         '409':
@@ -3760,17 +3670,8 @@ paths:
         templates were derived from this one (`parent_template_id`); deactivate with
         `is_active=false` instead if you only want to hide it from AI generation.
       responses:
-        '200':
+        '204':
           description: Template deleted
-          content:
-            application/json:
-              schema:
-                allOf:
-                  - $ref: '#/components/schemas/ApiResponseBase'
-                  - type: object
-                    properties:
-                      data:
-                        $ref: '#/components/schemas/MessageResponse'
         '404':
           $ref: '#/components/responses/NotFound'
         '409':
@@ -4928,19 +4829,25 @@ components:
         professional_title:
           type: string
           nullable: true
-          description: Headline shown on the public directory card.
-        service_categories:
-          type: array
-          items:
-            type: string
+          description: Headline shown on the public share page (GET /intake/{share_token}/profile).
+        cover_url:
+          type: string
+          nullable: true
           description: >-
-            Directory category slugs (design, programming, marketing, content, consulting).
-            Validated on write — an unknown slug returns 422.
-        is_listed:
-          type: boolean
+            Cover image for the public share page. A `data:image/...` URL (compressed
+            client-side) or an https link.
+        brand_color:
+          type: string
+          nullable: true
+          pattern: '^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$'
+          description: Accent colour of the public share page, as a hex code.
+        profile_slug:
+          type: string
+          nullable: true
+          maxLength: 32
           description: >-
-            Whether this freelancer opted into the public directory. Defaults to false;
-            only the owner can change it via PATCH /users/me/freelancer-profile.
+            Vanity path for the freelancer's public page, e.g. `/thuthuy`. Unique across
+            users; system route names are rejected. Accepted anywhere `{share_token}` is.
         professional_profile:
           $ref: '#/components/schemas/ProfessionalProfileDTO'
         preferences:
@@ -4952,27 +4859,14 @@ components:
           type: string
           format: date-time
 
-    FreelancerCategoryResponse:
+    PublicProfileResponse:
       type: object
-      required: [slug, name, sub_skills]
+      required: [full_name, skills]
+      description: >-
+        Freelancer introduction shown on the share page in front of the intake form.
+        Carries no `id` — the share token is the only identifier, which is what keeps
+        profiles from being enumerated — and no rating or ranking fields.
       properties:
-        slug:
-          type: string
-          description: Category identifier (design, programming, marketing, content, consulting)
-        name:
-          type: string
-          description: Display name of the category
-        sub_skills:
-          type: string
-          description: Comma-separated example skills within this category
-
-    FreelancerPublicResponse:
-      type: object
-      required: [id, full_name, skills, service_categories, rating_count, completed_project_count, is_new, created_at]
-      properties:
-        id:
-          type: string
-          format: uuid
         full_name:
           type: string
         professional_title:
@@ -4984,32 +4878,21 @@ components:
         avatar_url:
           type: string
           nullable: true
+        cover_url:
+          type: string
+          nullable: true
+        brand_color:
+          type: string
+          nullable: true
+          pattern: '^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$'
+          description: Accent colour the page is themed with. Null falls back to the SoloDesk purple.
         skills:
-          type: array
-          items:
-            type: string
-        service_categories:
           type: array
           items:
             type: string
         portfolio_url:
           type: string
           nullable: true
-        rating_average:
-          type: number
-          format: float
-          nullable: true
-        rating_count:
-          type: integer
-        completed_project_count:
-          type: integer
-          description: Number of deals in completed_and_billed stage owned by this freelancer
-        is_new:
-          type: boolean
-          description: true if the account is under 30 days old
-        created_at:
-          type: string
-          format: date-time
 
     IntakeFormFieldRequest:
       type: object

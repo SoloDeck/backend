@@ -20,15 +20,22 @@ from src.ai.proposal_generator.schemas.proposal_document import (
 )
 from src.modules.deals.infrastructure.repository import DealsRepository
 from src.modules.proposals.application.pdf_content import (
+    DUE_CUSTOM,
+    CostItem,
     build_proposal_document,
     extract_payment_milestones,
-    typed_pricing_items,
+    infer_due_type,
+    resolve_cost_items,
 )
 from src.modules.proposals.infrastructure.repository import ProposalsRepository
 from src.modules.proposals.schemas.request import ProposalRequest
 from src.modules.subscriptions.application.ai_usage import AiUsageService
-from src.modules.tasks.application.service import PAYMENT_TASK_PREFIX
-from src.modules.tasks.schemas.request import CreateTaskRequest
+from src.modules.tasks.application.service import PAYMENT_TASK_PREFIX, BillingTaskPayload
+from src.shared.domain.template_blocks import (
+    VALID_DAYS_KEY,
+    apply_template_blocks,
+    build_skeleton_content,
+)
 from src.shared.events.bus import event_bus
 from src.shared.exceptions.domain import (
     BusinessRuleError,
@@ -72,55 +79,128 @@ _VALID_TRANSITIONS: dict[str, frozenset[str]] = {
 }
 
 
-def _milestones_to_payloads(milestones: list[PaymentMilestone]) -> list[CreateTaskRequest]:
-    """Mốc thanh toán → task "Thu tiền:". Title mang tiền tố `PAYMENT_TASK_PREFIX` để guard
-    "hoàn thành dự án" nhận ra đâu là mốc thu tiền cần tick xong; số liệu (% hoặc số tiền)
-    và điều kiện đưa vào phần mô tả để title gọn.  #Huynh"""
-    payloads: list[CreateTaskRequest] = []
-    for m in milestones:
-        if m.percent is not None:
-            share = f"{m.percent}%"
-        elif m.amount:
-            share = m.amount
-        else:
-            share = ""
-        title = f"{PAYMENT_TASK_PREFIX} {m.label}"[:500]
-        desc_parts = []
-        if share:
-            desc_parts.append(f"Giá trị: {share} của tổng báo giá")
-        if m.due:
-            desc_parts.append(f"Thời điểm/điều kiện: {m.due}")
+def _cost_items_to_payloads(items: list[CostItem]) -> list[BillingTaskPayload]:
+    """Hạng mục chi phí (mục 7) → task THU TIỀN, một đổi một.
+
+    Tên task là NHÃN HẠNG MỤC nguyên văn — đây vừa là việc phải làm vừa là đợt thu tiền, nên
+    freelancer đọc bảng việc thấy đúng công việc thật chứ không phải "Thu tiền: Đặt cọc khi ký
+    hợp đồng". Số tiền vào cột `billing_amount`, không nhét vào tên: sửa tên không được phép
+    làm đứt đường xuất hoá đơn nữa.  #Huynh
+    """
+    payloads: list[BillingTaskPayload] = []
+    for item in items:
+        desc_parts = [
+            f"Số tiền: {item.amount:,.0f} đ".replace(",", "."),
+            f"Thời điểm thu: {item.due_label}",
+        ]
         payloads.append(
-            CreateTaskRequest(title=title, description="\n".join(desc_parts) or None)
+            BillingTaskPayload(
+                title=item.label[:500],
+                amount=Decimal(item.amount),
+                description="\n".join(desc_parts),
+                due_type=item.due_type,
+            )
         )
     return payloads
 
 
-def _payment_task_payloads(content: dict) -> list[CreateTaskRequest]:
-    """Từ các mốc thanh toán của báo giá → task "Thu tiền:" (Phase B — mục 8/9).
+def _milestones_to_payloads(
+    milestones: list[PaymentMilestone], total: Decimal
+) -> list[BillingTaskPayload]:
+    """Mốc thanh toán theo % → task thu tiền. LỐI RƠI VỀ cho báo giá cũ không có hạng mục nào.
 
-    Dùng ĐÚNG nguồn milestone với bảng in trên PDF (`extract_payment_milestones`) nên task
-    và tờ báo giá luôn khớp.  #Huynh"""
-    return _milestones_to_payloads(extract_payment_milestones(content or {}))
+    Giữ tiền tố `PAYMENT_TASK_PREFIX` trong tên để nhìn vào bảng việc là biết ngay đây là deal
+    theo lịch cũ. Tiền vẫn ghi vào `billing_amount` như mọi task thu tiền khác — chỉ khác chỗ
+    con số tới từ đâu.  #Huynh"""
+    percents = [m.percent for m in milestones]
+    known = sum(p for p in percents if p is not None)
+    missing = [i for i, p in enumerate(percents) if p is None]
+    share = (
+        (max(Decimal(0), Decimal(100) - Decimal(known)) / len(missing))
+        if missing
+        else Decimal(0)
+    )
+
+    amounts: list[Decimal] = [
+        (total * (Decimal(p) if p is not None else share) / Decimal(100)).quantize(Decimal("1"))
+        for p in percents
+    ]
+    # Đồng lẻ dồn vào mốc CUỐI để tổng khớp tuyệt đối giá chốt — cùng quy tắc với bảng chi phí.
+    if amounts and Decimal(known) + share * len(missing) == 100:
+        amounts[-1] += total - sum(amounts)
+
+    payloads: list[BillingTaskPayload] = []
+    for m, amount in zip(milestones, amounts, strict=True):
+        desc_parts = [f"Số tiền: {amount:,.0f} đ".replace(",", ".")]
+        if m.due:
+            desc_parts.append(f"Thời điểm/điều kiện: {m.due}")
+        payloads.append(
+            BillingTaskPayload(
+                title=f"{PAYMENT_TASK_PREFIX} {m.label}"[:500],
+                amount=amount,
+                description="\n".join(desc_parts),
+                # Mốc cũ chỉ có chữ tự do nên phải suy. Suy không ra thì để `None` — bảng việc
+                # im lặng, thà thiếu một nhãn còn hơn nhắc sai.  #Huynh
+                due_type=infer_due_type(f"{m.label} {m.due}"),
+            )
+        )
+    return payloads
 
 
-async def payment_task_payloads_for_deal(
+async def billing_task_payloads_for_deal(
     db: AsyncSession, deal_id: uuid.UUID, owner_user_id: uuid.UUID
-) -> list[CreateTaskRequest]:
-    """Payloads task "Thu tiền:" lấy từ báo giá ĐÃ CHỐT của deal (rỗng nếu chưa có báo giá
-    nào được chốt).
+) -> list[BillingTaskPayload]:
+    """Payloads task THU TIỀN lấy từ báo giá ĐÃ CHỐT của deal (rỗng nếu chưa chốt báo giá nào).
 
-    Deals gọi hàm này khi deal vào "active" để gắn các mốc thanh toán vào project. Đặt ở
-    proposals vì cấu trúc mốc thanh toán là chuyện của báo giá.
+    Contracts gọi hàm này khi hợp đồng được ghi nhận đã ký; deals gọi lại khi vào `active` để
+    vá dữ liệu cũ. Đặt ở proposals vì hạng mục chi phí là chuyện của báo giá.
 
-    Báo giá đã chốt mà KHÔNG có mốc có cấu trúc (báo giá cũ, hoặc model chỉ ghi văn xuôi ở
-    `payment_terms`) thì rơi về lịch CHUẨN 50/50 — để luôn có task thu tiền cho freelancer
-    theo dõi, thay vì để trống.  #Huynh"""
+    Nguồn là `resolve_cost_items` — ĐÚNG hàm mà tờ báo giá dùng để in bảng mục 7, nên số task
+    và số tiền không thể lệch khỏi thứ khách cầm trên tay. Lưu ý: KHÔNG đọc thẳng
+    `content["pricing_items"]`. Khoá đó thường KHÔNG có trong DB (chỉ frontend ghi, và nó vừa
+    được sửa lỗi làm rụng) — đọc thẳng là hầu hết deal ra 0 task, guard đóng dự án pass vô điều
+    kiện và bảng doanh thu về 0 đ. `resolve_cost_items` đi hết chuỗi tới bảng của bộ định giá.
+
+    Báo giá cũ không có hạng mục nào thì rơi về mốc % (hoặc lịch chuẩn 50/50) — vẫn phải có
+    task thu tiền cho freelancer theo dõi, thay vì để trống.  #Huynh"""
     proposal = await ProposalsRepository(db).get_accepted_by_deal(deal_id, owner_user_id)
     if proposal is None:
         return []
-    milestones = extract_payment_milestones(proposal.content or {}) or default_payment_milestones()
-    return _milestones_to_payloads(milestones)
+
+    content = proposal.content or {}
+    items = resolve_cost_items(content)
+    if items:
+        return _cost_items_to_payloads(items)
+
+    deal = await DealsRepository(db).get_by_id(deal_id, owner_user_id)
+    total = Decimal(getattr(deal, "estimated_value", None) or 0)
+    milestones = extract_payment_milestones(content) or default_payment_milestones()
+    return _milestones_to_payloads(milestones, total)
+
+
+def _apply_template_valid_days(content: dict, template_content: dict) -> dict:
+    """Mẫu gợi ý số ngày hiệu lực báo giá.
+
+    CHỈ áp khi freelancer chưa tự đặt hạn — mẫu là giá trị mặc định, không phải lệnh ghi đè
+    lên thứ người dùng đã gõ. Khác hẳn các khối văn bản (mẫu thắng AI), vì đây là thứ CON
+    NGƯỜI đặt chứ không phải AI sinh.  #Huynh
+    """
+    if not isinstance(template_content, dict):
+        return content
+    if str(content.get("valid_until") or "").strip():
+        return content
+
+    raw = template_content.get(VALID_DAYS_KEY)
+    try:
+        days = int(raw)
+    except (TypeError, ValueError):
+        return content
+    if days <= 0:
+        return content
+
+    out = dict(content)
+    out["valid_until"] = (datetime.now(UTC).date() + timedelta(days=days)).isoformat()
+    return out
 
 
 @dataclass
@@ -428,11 +508,55 @@ class ProposalsService:
         )
         if template is None:
             raise ValidationError("Mẫu điều khoản không hợp lệ hoặc không dùng được.")
-        body = template.content.get("body") if isinstance(template.content, dict) else None
-        if isinstance(body, str) and body.strip():
-            content = dict(content)
-            content["standard_terms"] = body.strip()
-        return content
+        content = apply_template_blocks(content, template.content, "proposal")
+        return _apply_template_valid_days(content, template.content)
+
+    async def create_from_template(  # type: ignore[no-untyped-def]
+        self,
+        user_id: uuid.UUID,
+        deal_id: uuid.UUID,
+        *,
+        template_id: uuid.UUID | None = None,
+    ):
+        """Tạo bản nháp báo giá từ KHUNG mẫu — KHÔNG gọi AI, KHÔNG tốn lượt.
+
+        Đường soạn thứ hai, dành cho freelancer không muốn nhờ AI (và cho gói Free vốn bị chặn
+        402 ở mọi endpoint AI). Trước đây thư viện mẫu chỉ với được từ trong bụng hai hàm
+        `generate_*`, tức là muốn dùng mẫu thì bắt buộc phải tiêu một lượt AI — dù
+        `build_skeleton_content` không cần LLM một chút nào.
+
+        CỐ Ý không gọi `_apply_pricing`: bộ định giá đọc `complexity`/`scale`/`line_item_weights`
+        do AI vừa sinh, không có AI thì không có mấy trường đó. Freelancer tự chốt giá qua
+        `PATCH /proposals/{id}/price`, và cổng gửi chỉ đòi một con số > 0 nên đường này đi lọt
+        mà không phải nới cổng nào.
+
+        `template_id = None` là hợp lệ: "khung trắng", tờ giấy trống với đủ ô để tự điền.  #Huynh
+        """
+        deal = await self.repo.get_deal(deal_id)
+        if deal is None or deal.owner_user_id != user_id:
+            raise NotFoundError(f"Deal {deal_id} not found")
+
+        content: dict = {}
+        if template_id is not None:
+            user = await self.repo.get_user(user_id)
+            profession = getattr(user, "profession", None) if user else None
+            template = await self.repo.get_template_for_use(
+                template_id, template_type="proposal", profession=profession
+            )
+            if template is None:
+                raise ValidationError("Mẫu điều khoản không hợp lệ hoặc không dùng được.")
+            content = build_skeleton_content(template.content, "proposal")
+            content = _apply_template_valid_days(content, template.content)
+
+        version_number = await self.repo.count_by_deal(deal_id) + 1
+        return await self.repo.create(
+            deal_id=deal_id,
+            owner_user_id=user_id,
+            version_number=version_number,
+            status="draft",
+            content=content,
+            ai_generated=False,
+        )
 
     async def generate_from_deal(  # type: ignore[no-untyped-def]
         self,
@@ -582,10 +706,16 @@ class ProposalsService:
             valid_until=_vn_date(valid_until),
         )
 
-    async def render_preview_html(self, user_id: uuid.UUID, proposal_id: uuid.UUID) -> str:
-        """HTML xem trước — CHÍNH XÁC những gì PDF sẽ in ra. Frontend nhúng vào card."""
+    async def render_preview_html(
+        self, user_id: uuid.UUID, proposal_id: uuid.UUID, *, editable: bool = False
+    ) -> str:
+        """HTML xem trước — CHÍNH XÁC những gì PDF sẽ in ra. Frontend nhúng vào card.
+
+        `editable=True` chỉ dùng cho bản nháp đang soạn: thêm ô rỗng cho các mục chưa có chữ để
+        freelancer bấm vào nhập. Mặc định tắt, nên mọi đường khác vẫn ra đúng bản khách nhận.
+        """
         document = await self._build_document(user_id, proposal_id)
-        return ProposalPdfRenderer().render_html(document)
+        return ProposalPdfRenderer().render_html(document, editable=editable)
 
     async def generate_pdf(
         self,
@@ -633,42 +763,69 @@ class ProposalsService:
                     "Chưa chốt giá. Hãy chọn mức giá bạn muốn chào trước khi gửi cho khách."
                 )
 
-            # KHÔNG cho gửi khi các đợt thanh toán không cộng thành 100%.
+            # --- CỔNG TIỀN -------------------------------------------------------------
             #
-            # Đã đo tận nơi: một báo giá có ba đợt 50% + 50% + 30% = 130% vẫn in ra bảng "8.
-            # Điều Khoản Thanh Toán" và vẫn gửi được cho khách. Khách cầm tờ giấy tự cộng ra
-            # 130% thì hoặc là mình mất uy tín, hoặc là cãi nhau lúc đòi tiền — cả hai đều tệ.
+            # Từ khi thu tiền theo hạng mục, hạng mục chi phí là ĐƠN VỊ THU TIỀN: mỗi dòng ở
+            # mục 7 thành một task và một hoá đơn. Nên cổng gửi phải soi đúng nó.
             #
-            # CHỈ chặn khi MỌI đợt đều khai bằng %. Lịch hỗn hợp (có đợt ghi số tiền cụ thể)
-            # thì cộng % không có nghĩa gì, chặn là chặn oan. Báo giá cũ không có mốc cấu trúc
-            # cũng không đụng tới — chúng rơi về lịch chuẩn 50/50 lúc sinh task.
+            # Cổng "tổng mốc thanh toán = 100%" của bản cũ đã BỎ: mục 8 giờ suy ra từ mục 7
+            # (`pdf_content.payment_schedule`) chứ không ai gõ tay nữa, nên không còn cách nào
+            # cộng ra 130%. Giữ lại là chặn oan chính dữ liệu mình vừa sinh.
             #
-            # Dùng ĐÚNG `extract_payment_milestones` mà bảng PDF và bộ sinh task dùng, để ba
-            # nơi không bao giờ hiểu khác nhau về "các đợt thanh toán là gì".  #Huynh
-            milestones = extract_payment_milestones(content)
-            percents = [m.percent for m in milestones]
-            if milestones and all(p is not None for p in percents):
-                total_percent = sum(percents)  # type: ignore[arg-type]
-                if total_percent != 100:
-                    raise BusinessRuleError(
-                        f"Tổng tỷ lệ các đợt thanh toán đang là {total_percent}%, phải bằng 100%. "
-                        "Hãy sửa mục 'Mốc thanh toán' trước khi gửi cho khách."
-                    )
+            # Dùng ĐÚNG `resolve_cost_items` mà bảng PDF và bộ sinh task dùng — ba nơi không
+            # bao giờ hiểu khác nhau về "hạng mục chi phí là gì".  #Huynh
+            cost_items = resolve_cost_items(content)
+            agreed = int(final_price or dto_total or 0)
 
-            # KHÔNG cho gửi khi tổng các hạng mục chi phí ≠ giá chào khách.
+            # KHÔNG có hạng mục nào: cổng dưới viết `if cost_items and agreed > 0` nên báo giá
+            # trắng hạng mục ĐI LỌT toàn bộ khối kiểm này.
             #
-            # Cùng lý do với cổng 100% ngay trên: khách cầm tờ báo giá tự cộng cột "Thành
-            # tiền" ra một số, rồi đọc dòng "Tổng báo giá" ra số khác. Mất uy tín ngay tại
-            # bàn, và không cãi được.
+            # Lọt rồi thì cuối đường `resolve_cost_items` trả rỗng, bộ sinh task rơi xuống nhánh
+            # chia mốc % nhân `deal.estimated_value` và đẻ ra HAI task chung chung ("đặt cọc 50%
+            # / bàn giao 50%") — trái hẳn quy tắc mỗi hạng mục là một đợt thu tiền và một hoá
+            # đơn, mà freelancer không hề được báo là mình vừa nhận kiểu task khác.
             #
-            # CHỈ chặn khi freelancer đã tự gõ tiền từng dòng (dạng `{label, amount}`). Dạng
-            # cũ chỉ có nhãn thì backend tự chia đều theo giá chốt nên không bao giờ lệch —
-            # chặn là chặn oan.  #Huynh
-            typed_items = typed_pricing_items(content.get("pricing_items") or [])
-            if typed_items:
-                items_total = sum(amount for _, amount in typed_items)
-                agreed = int(final_price or dto_total or 0)
-                if agreed > 0 and items_total != agreed:
+            # Đường KHUNG (không AI) rơi vào đây mặc định: mẫu tuyệt đối không mang tiền nên
+            # bảng mục 7 mở ra trống trơn. Đường AI thường không dính vì bảng đã dựng sẵn từ
+            # `pricing_detail.line_items` — trừ khi AI không trả tỉ trọng công sức, và khi đó
+            # chặn cũng đúng chứ không oan.  #Huynh
+            if not cost_items:
+                raise BusinessRuleError(
+                    "Chưa có hạng mục chi phí nào. Mỗi hạng mục ở mục 'Hạng mục chi phí' là một "
+                    "đợt thu tiền — hệ thống dựa vào đó để tạo task và hoá đơn sau khi ký hợp "
+                    "đồng. Hãy thêm ít nhất một hạng mục trước khi gửi."
+                )
+
+            # Hạng mục 0 đồng: lọt qua được vì cổng dưới chỉ kiểm TỔNG. Hậu quả là một task
+            # thu tiền 0 đồng — bắt buộc tick xong mới đóng được dự án, nhưng bấm xuất hoá đơn
+            # thì bị từ chối ("Mốc này đang là 0 đồng"). Deal kẹt vĩnh viễn, không lối ra.
+            zero_items = [item.label for item in cost_items if item.amount <= 0]
+            if zero_items:
+                raise BusinessRuleError(
+                    f"Hạng mục '{zero_items[0]}' đang là 0 đồng. Mỗi hạng mục là một đợt thu "
+                    "tiền, nên phải có số tiền cụ thể. Hãy điền số tiền hoặc xoá hạng mục này."
+                )
+
+            # Chọn "Khác" mà bỏ trống ghi chú: tờ giấy khách KÝ sẽ có ô "thời điểm thu" mơ hồ,
+            # đúng thứ đẻ ra cãi nhau lúc đòi tiền. Cùng lý do với cổng 0 đồng ngay trên.
+            vague = [
+                item.label
+                for item in cost_items
+                if item.due_type == DUE_CUSTOM and not item.due_note.strip()
+            ]
+            if vague:
+                raise BusinessRuleError(
+                    f"Hạng mục '{vague[0]}' chọn thời điểm thu 'Khác' nhưng chưa ghi rõ là khi "
+                    "nào. Hãy ghi cụ thể hoặc chọn một mốc có sẵn."
+                )
+
+            # KHÔNG cho gửi khi tổng các hạng mục ≠ giá chào khách: khách cầm tờ báo giá tự
+            # cộng cột "Thành tiền" ra một số, rồi đọc dòng "Tổng báo giá" ra số khác. Mất uy
+            # tín ngay tại bàn, và không cãi được.
+            # Không cần `if cost_items` nữa — cổng ngay trên đã bảo đảm có ít nhất một hạng mục.
+            if agreed > 0:
+                items_total = sum(item.amount for item in cost_items)
+                if items_total != agreed:
                     raise BusinessRuleError(
                         f"Tổng các hạng mục chi phí đang là {items_total:,.0f} đ, "
                         f"nhưng giá chào khách là {agreed:,.0f} đ. "

@@ -8,6 +8,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
+from src.ai.lead_qualifier.scoring import COLD_THRESHOLD, level_from_score
 from src.modules.deals.domain.value_objects.ai_confidence import AIConfidence
 from src.modules.deals.domain.value_objects.deal_stage import (
     STAGE_TRANSITIONS,
@@ -45,17 +46,18 @@ class Deal:
 
     @property
     def ai_level(self) -> str | None:
+        """Dùng CHUNG ngưỡng với bộ chấm điểm (75/45), không tự khai ngưỡng riêng.
+
+        Ngưỡng cũ ở đây là 80/50 — deal 78 điểm thì bảng chấm điểm nói HOT còn tầng domain
+        nói WARM. `DealResponse.ai_level` đã sửa từ trước, chỗ này bị bỏ sót.  #Huynh
+        """
         if self.ai_score is None:
             return None
-        if self.ai_score >= 80:
-            return "hot"
-        if self.ai_score >= 50:
-            return "warm"
-        return "cold"
+        return level_from_score(self.ai_score).lower()
 
     @property
     def is_ai_qualified(self) -> bool:
-        return self.ai_score is not None and self.ai_score >= 60
+        return self.ai_score is not None and self.ai_score >= COLD_THRESHOLD
 
     @property
     def is_won(self) -> bool:

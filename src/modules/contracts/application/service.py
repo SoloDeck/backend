@@ -14,6 +14,7 @@ from src.modules.contracts.domain.value_objects.contract_status import (
 from src.modules.contracts.infrastructure.repository import ContractsRepository
 from src.modules.contracts.schemas.request import ContractRequest
 from src.modules.subscriptions.application.ai_usage import AiUsageService
+from src.shared.domain.template_blocks import apply_template_blocks, build_skeleton_content
 from src.shared.exceptions.domain import (
     BusinessRuleError,
     EntitlementError,
@@ -115,6 +116,24 @@ class ContractsService:
         contract.status = target.value
 
         if target == ContractStatus.ACTIVE:
+            # KHÔNG cho ghi nhận đã ký khi deal chưa có báo giá nào được chấp nhận.
+            #
+            # Ký hợp đồng là CHỐT CUỐI (báo giá chỉ mới là chốt giá), và toàn bộ task thu tiền
+            # sinh ra ngay dưới đây đọc từ bản báo giá `accepted` mới nhất. Không có bản nào thì
+            # `billing_task_payloads_for_deal` trả rỗng và mọi thứ trôi qua LẶNG NGẮT: hợp đồng
+            # thành "đang hiệu lực", không một task nào được tạo, và guard đóng dự án
+            # (`if total > 0 and done < total`) cũng mất tác dụng vì `total == 0` luôn lọt.
+            #
+            # `DealsService.transition_stage` đã đòi đúng điều kiện này khi vào "active"
+            # (deals/application/service.py:517) — cửa hợp đồng thì bỏ sót. Luật nghiệp vụ phải
+            # đứng ở mọi cửa vào, không chỉ cửa nào ai đó nhớ ra trước.  #Huynh
+            if not await self.repo.has_accepted_proposal(contract.deal_id, user_id):
+                raise BusinessRuleError(
+                    "Deal này chưa có báo giá nào được khách chấp nhận. Hãy ghi nhận khách "
+                    "đã chấp nhận báo giá trước, vì các đợt thu tiền được tạo từ chính bản "
+                    "báo giá đó."
+                )
+
             # Freelancer GHI NHẬN rằng hai bên đã ký (ngoài hệ thống: giấy, scan, Zalo).
             #
             # Khách hàng của freelancer KHÔNG có tài khoản SoloDesk — bắt họ đăng ký để ký
@@ -141,14 +160,14 @@ class ContractsService:
             # tức MỘT NHỊP SAU thời điểm phải thu: freelancer đã bắt tay làm rồi hệ thống mới
             # nhắc đi đòi cọc. Ngược đời, và đúng cái rủi ro SoloDesk sinh ra để ngăn.  #Huynh
             #
-            # Idempotent (create_many_for_entity bỏ qua title đã có) nên khối tương tự bên
+            # Idempotent (project đã có task thu tiền thì không sinh nữa) nên khối tương tự bên
             # `DealsService.transition_stage` VẪN GIỮ: hợp đồng ký từ trước ngày sửa này vẫn
             # được vá khi deal vào active, mà chuyển active sau đó không nhân đôi task.
             #
             # Import CỤC BỘ trong hàm, y như deals đang làm — tránh vòng import giữa các module.
             from src.modules.projects.application.service import ProjectService
             from src.modules.proposals.application.service import (
-                payment_task_payloads_for_deal,
+                billing_task_payloads_for_deal,
             )
             from src.modules.tasks.application.service import TaskService
 
@@ -156,9 +175,9 @@ class ContractsService:
             project = await ProjectService(db=self.db).get_or_create_for_deal(
                 contract.deal_id, user_id, name=deal.title if deal else None
             )
-            payloads = await payment_task_payloads_for_deal(self.db, contract.deal_id, user_id)
+            payloads = await billing_task_payloads_for_deal(self.db, contract.deal_id, user_id)
             if payloads:
-                await TaskService(self.db).create_many_for_entity(
+                await TaskService(self.db).create_billing_tasks_for_entity(
                     "project", project.id, user_id, payloads
                 )
         elif target == ContractStatus.PENDING_SIGNATURES or target in TERMINAL_CONTRACT_STATUSES:
@@ -271,11 +290,46 @@ class ContractsService:
         if template is None:
             # Mẫu không tồn tại / đã tắt / thuộc nghề khác — chặn, không im lặng bỏ qua.
             raise ValidationError("Mẫu điều khoản không hợp lệ hoặc không dùng được.")
-        body = template.content.get("body") if isinstance(template.content, dict) else None
-        if isinstance(body, str) and body.strip():
-            content = dict(content)
-            content["standard_terms"] = body.strip()
-        return content
+        return apply_template_blocks(content, template.content, "contract")
+
+    async def fill_from_template(  # type: ignore[no-untyped-def]
+        self,
+        user_id: uuid.UUID,
+        contract_id: uuid.UUID,
+        *,
+        template_id: uuid.UUID | None = None,
+    ):
+        """Điền hợp đồng nháp từ KHUNG mẫu — KHÔNG gọi AI, KHÔNG tốn lượt.
+
+        Cùng hình dạng với `generate_content` ngay trên, trừ hai thứ: không `AiUsageService` và
+        không gọi model. Trước bản này, freelancer gói Free đứng ở bước thương lượng là bí đường
+        hẳn — mọi nút tạo hợp đồng đều bắn request AI và trả về 402, không có lối nào khác.
+
+        `template_id = None` = "khung trắng": hợp đồng giữ nguyên phần văn bản cứng của tờ giấy
+        (căn cứ, quyền/nghĩa vụ, bảo mật, tranh chấp) và để trống các điều cần freelancer tự
+        điền.  #Huynh
+        """
+        contract = await self._get_contract(user_id, contract_id)
+        if contract.status != ContractStatus.DRAFT:
+            raise BusinessRuleError(
+                f"Chỉ điền được nội dung cho hợp đồng ở trạng thái nháp "
+                f"(hiện tại: '{contract.status}')"
+            )
+
+        content: dict = {}
+        if template_id is not None:
+            user = await self.repo.get_user(user_id)
+            profession = getattr(user, "profession", None) if user else None
+            template = await self.repo.get_template_for_use(
+                template_id, template_type="contract", profession=profession
+            )
+            if template is None:
+                raise ValidationError("Mẫu điều khoản không hợp lệ hoặc không dùng được.")
+            content = build_skeleton_content(template.content, "contract")
+
+        contract.content = content
+        contract.ai_generated = False
+        return await self.repo.save(contract)
 
     async def send(self, user_id: uuid.UUID, contract_id: uuid.UUID):  # type: ignore[return]
         return await self.transition_status(user_id, contract_id, "pending_signatures")

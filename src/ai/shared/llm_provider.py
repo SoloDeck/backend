@@ -2,17 +2,17 @@
 
 from __future__ import annotations
 
+import asyncio
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from decimal import Decimal
-from typing import Any
-import asyncio
-from groq import Groq
+
 from google import genai
 from google.genai.types import GenerateContentConfig
+from groq import Groq
+
 from src.ai.shared.token_usage import extract_usage
 from src.config.settings import settings
-
 
 
 @dataclass
@@ -45,7 +45,17 @@ class BaseLLMProvider(ABC):
 
 
 class GroqProvider(BaseLLMProvider):
-    MODEL = "llama-3.3-70b-versatile"
+    # Groq đã GỠ toàn bộ dòng Llama khỏi API (gọi `llama-3.3-70b-versatile` trả
+    # 404 `model_not_found`), nên mọi tính năng AI chết đồng loạt: bấm "Tạo Báo Giá AI" là
+    # vòng xoay quay mãi rồi rơi về nhánh lỗi.
+    #
+    # Đổi sang model còn phục vụ, cùng cửa sổ ngữ cảnh 131k và có `response_format=json_object`
+    # — điều kiện bắt buộc vì cả ba bộ sinh (báo giá, hợp đồng, chấm điểm lead) đều đọc JSON
+    # có cấu trúc chứ không đọc văn xuôi.
+    #
+    # Danh sách model đổi theo thời gian; kiểm bằng `GET https://api.groq.com/openai/v1/models`
+    # với chính khoá đang dùng, đừng đoán theo tên.  #Huynh
+    MODEL = "openai/gpt-oss-120b"
 
     def __init__(self):
         api_key = settings.groq_api_key

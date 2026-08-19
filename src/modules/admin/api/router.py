@@ -5,19 +5,21 @@ from datetime import datetime
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Query, Response
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.infrastructure.database.session import get_db_session
 from src.modules.admin.application.service import AdminService
+from src.modules.admin.application.template_preview import render_template_preview
 from src.modules.admin.schemas.request import (
     AdminCreateTemplateRequest,
     AdminPlanRequest,
     AdminSubscriptionOverrideRequest,
     AdminUpdateFeatureFlagRequest,
+    AdminUpdateLLMProviderRequest,
     AdminUpdatePlanRequest,
     AdminUpdateTemplateRequest,
     AdminUpdateUserRequest,
-    AdminUpdateLLMProviderRequest,
 )
 from src.modules.admin.schemas.response import (
     AdminAiCostPagedResponse,
@@ -25,14 +27,13 @@ from src.modules.admin.schemas.response import (
     AdminAiCostTotals,
     AdminAuditLogResponse,
     AdminFeatureFlagResponse,
-    AdminMessageResponse,
+    AdminLLMProviderResponse,
     AdminPlanResponse,
     AdminPlatformMetricsResponse,
     AdminSubscriptionResponse,
     AdminTemplateResponse,
     AdminUserResponse,
     Paginated,
-    AdminLLMProviderResponse,
 )
 from src.shared.dependencies.auth import AdminUser
 from src.shared.responses.response import ApiResponse
@@ -206,20 +207,15 @@ async def update_plan(
     return ApiResponse.ok(AdminPlanResponse.model_validate(plan))
 
 
-@router.delete("/plans/{plan_id}", response_model=ApiResponse[AdminMessageResponse])
+@router.delete("/plans/{plan_id}", status_code=204)
 async def delete_plan(
     plan_id: uuid.UUID,
     admin: AdminUser,
     db: DBSession,
-) -> ApiResponse[AdminMessageResponse]:
-    """Xoá một gói cước.
-
-    Chỉ xoá được khi không còn thuê bao hay giao dịch thanh toán nào trỏ vào gói —
-    ngược lại trả 409. Muốn ngừng bán mà vẫn giữ người dùng hiện tại thì dùng
-    `PATCH /admin/plans/{plan_id}` với `is_active=false`.
-    """
+) -> None:
+    """Xoá hẳn một gói chưa từng được dùng. Gói đã có người dùng → 409, kèm lý do và
+    hướng dẫn ngừng bán thay vì xoá."""
     await AdminService(db=db).delete_plan(plan_id, admin_id=uuid.UUID(admin.sub))
-    return ApiResponse.ok(AdminMessageResponse(detail="Plan deleted"))
 
 
 # ---------------------------------------------------------------------------
@@ -459,6 +455,32 @@ async def create_template(
     return ApiResponse.created(AdminTemplateResponse.model_validate(template))
 
 
+class TemplatePreviewRequest(BaseModel):
+    template_type: Literal["proposal", "contract"] = "proposal"
+    content: dict = {}
+
+
+class TemplatePreviewResponse(BaseModel):
+    html: str
+
+
+@router.post("/templates/preview", response_model=ApiResponse[TemplatePreviewResponse])
+async def preview_template(
+    payload: TemplatePreviewRequest,
+    _: AdminUser,
+) -> ApiResponse[TemplatePreviewResponse]:
+    """Dựng TỜ GIẤY THẬT từ nội dung mẫu — để admin soạn mà nhìn thấy ngay kết quả.
+
+    Nhận `content` thẳng từ màn soạn chứ không đọc DB: admin cần thấy bản đang gõ dở, trước cả
+    khi bấm Lưu. Vì vậy endpoint này KHÔNG chạm database và không cần `template_id`.
+
+    Cùng một template Jinja với bản freelancer nhận và với PDF, nên cái admin thấy đúng là cái
+    khách sẽ đọc — không có đường nào để hai bên lệch nhau.  #Huynh
+    """
+    html = render_template_preview(payload.template_type, payload.content)
+    return ApiResponse.ok(TemplatePreviewResponse(html=html))
+
+
 @router.patch("/templates/{template_id}", response_model=ApiResponse[AdminTemplateResponse])
 async def update_template(
     template_id: uuid.UUID,
@@ -470,19 +492,18 @@ async def update_template(
     return ApiResponse.ok(AdminTemplateResponse.model_validate(template))
 
 
-@router.delete("/templates/{template_id}", response_model=ApiResponse[AdminMessageResponse])
+@router.delete("/templates/{template_id}", status_code=204)
 async def delete_template(
     template_id: uuid.UUID,
     admin: AdminUser,
     db: DBSession,
-) -> ApiResponse[AdminMessageResponse]:
+) -> None:
     """Xoá một mẫu hệ thống khỏi thư viện.
 
     Đề xuất/hợp đồng đã tạo từ mẫu không bị ảnh hưởng (nội dung đã được sao chép sang).
     Chỉ chặn khi còn mẫu phái sinh trỏ vào mẫu này — khi đó trả 409.
     """
     await AdminService(db=db).delete_template(template_id, admin_id=uuid.UUID(admin.sub))
-    return ApiResponse.ok(AdminMessageResponse(detail="Template deleted"))
 
 
 # ---------------------------------------------------------------------------

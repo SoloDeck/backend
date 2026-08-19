@@ -25,6 +25,7 @@ from src.shared.exceptions.domain import (
     AlreadyExistsError,
     BusinessRuleError,
     NotFoundError,
+    ValidationError,
 )
 
 
@@ -430,29 +431,166 @@ class TestUpdatePlan:
 
 
 # ---------------------------------------------------------------------------
-# delete_plan
+# Hạn mức giá gói
+#
+# Một gói có phí nhưng để giá ngoài khoảng MoMo nhận là gói BÀY RA ĐỂ BÁN MÀ KHÔNG MUA
+# ĐƯỢC: người dùng bấm "Nâng cấp qua MoMo" và chắc chắn ăn lỗi, lần nào cũng vậy. Chặn ở
+# đây — chỗ duy nhất giá gói được ghi vào DB.
+# ---------------------------------------------------------------------------
+
+
+class TestPlanPriceGuard:
+    async def test_create_rejects_price_below_momo_minimum(self) -> None:
+        """200đ — đúng con số đã gây ra sự cố trên bản deploy."""
+        repo = _repo(get_plan_by_name=None, get_plan_by_slug=None)
+        service = AdminService(db=AsyncMock(), repo=repo)
+
+        with pytest.raises(ValidationError) as excinfo:
+            await service.create_plan(_plan_payload(price_monthly=Decimal("200")))
+
+        assert "1.000" in excinfo.value.message
+
+    async def test_create_rejects_price_above_momo_maximum(self) -> None:
+        repo = _repo(get_plan_by_name=None, get_plan_by_slug=None)
+        service = AdminService(db=AsyncMock(), repo=repo)
+
+        with pytest.raises(ValidationError) as excinfo:
+            await service.create_plan(_plan_payload(price_monthly=Decimal("50000001")))
+
+        assert "50.000.000" in excinfo.value.message
+
+    async def test_create_allows_zero_price_free_plan(self) -> None:
+        """Gói miễn phí không đi qua cổng thanh toán nên không chịu hạn mức nào."""
+        created = PlanStub(id=uuid.uuid4())
+        repo = _repo(get_plan_by_name=None, get_plan_by_slug=None, create_plan=created)
+        service = AdminService(db=AsyncMock(), repo=repo)
+
+        result = await service.create_plan(
+            _plan_payload(name="Free", slug="free", price_monthly=Decimal("0"))
+        )
+
+        assert result is created
+
+    @pytest.mark.parametrize("price", ["1000", "50000000"])
+    async def test_create_allows_exact_boundaries(self, price: str) -> None:
+        created = PlanStub(id=uuid.uuid4())
+        repo = _repo(get_plan_by_name=None, get_plan_by_slug=None, create_plan=created)
+        service = AdminService(db=AsyncMock(), repo=repo)
+
+        result = await service.create_plan(_plan_payload(price_monthly=Decimal(price)))
+
+        assert result is created
+
+    async def test_create_rejects_before_touching_the_repository(self) -> None:
+        """Giá sai thì dừng ngay, đừng tốn hai lượt truy vấn trùng tên/mã."""
+        repo = _repo(get_plan_by_name=None, get_plan_by_slug=None)
+        service = AdminService(db=AsyncMock(), repo=repo)
+
+        with pytest.raises(ValidationError):
+            await service.create_plan(_plan_payload(price_monthly=Decimal("200")))
+
+        repo.get_plan_by_name.assert_not_awaited()
+
+    async def test_update_rejects_price_below_momo_minimum(self) -> None:
+        plan = PlanStub(id=uuid.uuid4())
+        repo = _repo(get_plan=plan)
+        service = AdminService(db=AsyncMock(), repo=repo)
+
+        with pytest.raises(ValidationError):
+            await service.update_plan(
+                plan.id, AdminUpdatePlanRequest(price_monthly=Decimal("200"))
+            )
+
+    async def test_update_without_price_field_is_unaffected(self) -> None:
+        """Gói cũ đang để giá xấu vẫn phải đổi tên / tắt được.
+
+        Chặn cả những lần sửa không đụng tới giá là khoá luôn con đường duy nhất để đi
+        dọn đúng cái gói hỏng đó.
+        """
+        plan = PlanStub(id=uuid.uuid4(), name="abc", slug="abc", price_monthly=Decimal("200"))
+        repo = _repo(get_plan=plan)
+        service = AdminService(db=AsyncMock(), repo=repo)
+
+        result = await service.update_plan(plan.id, AdminUpdatePlanRequest(is_active=False))
+
+        assert result.is_active is False
+        assert result.price_monthly == Decimal("200")
+
+
+# ---------------------------------------------------------------------------
+# Xoá gói
+#
+# Một gói là hai thứ cùng lúc: mặt hàng đang bày bán, và sự thật lịch sử gắn vào hoá đơn.
+# Bỏ khỏi quầy thì lúc nào cũng được; xoá sự thật lịch sử thì không bao giờ.
 # ---------------------------------------------------------------------------
 
 
 class TestDeletePlan:
-    async def test_success_deletes_and_writes_audit_log(self) -> None:
-        plan = PlanStub(id=uuid.uuid4(), name="Pro", slug="pro")
-        repo = _repo(
-            get_plan=plan,
-            count_subscriptions_for_plan=0,
-            count_payments_for_plan=0,
-        )
+    async def test_deletes_a_plan_nobody_ever_used(self) -> None:
+        """Ca "lỡ tay tạo nhầm" — không có lịch sử nào để phá."""
+        plan = PlanStub(id=uuid.uuid4(), name="abc", slug="abc")
+        repo = _repo(get_plan=plan, count_plan_usage=(0, 0))
         service = AdminService(db=AsyncMock(), repo=repo)
-        admin_id = uuid.uuid4()
 
-        await service.delete_plan(plan.id, admin_id=admin_id)
+        await service.delete_plan(plan.id)
 
         repo.delete_plan.assert_awaited_once_with(plan)
-        kwargs = repo.create_audit_log.await_args.kwargs
-        assert kwargs["event_type"] == "plan.deleted"
-        assert kwargs["actor_user_id"] == admin_id
-        assert kwargs["target_id"] == plan.id
-        assert "Pro" in kwargs["description"]
+
+    async def test_writes_audit_log_before_deleting(self) -> None:
+        """Nhật ký phải sống sót sau khi gói biến mất — đó là toàn bộ điểm của nó."""
+        plan = PlanStub(id=uuid.uuid4(), name="abc", slug="abc")
+        repo = _repo(get_plan=plan, count_plan_usage=(0, 0))
+        service = AdminService(db=AsyncMock(), repo=repo)
+
+        await service.delete_plan(plan.id, admin_id=uuid.uuid4())
+
+        repo.create_audit_log.assert_awaited_once()
+        assert repo.create_audit_log.await_args.kwargs["event_type"] == "plan.deleted"
+
+    async def test_refuses_when_someone_is_subscribed(self) -> None:
+        plan = PlanStub(id=uuid.uuid4(), name="Pro", slug="pro")
+        repo = _repo(get_plan=plan, count_plan_usage=(3, 0))
+        service = AdminService(db=AsyncMock(), repo=repo)
+
+        with pytest.raises(BusinessRuleError) as excinfo:
+            await service.delete_plan(plan.id)
+
+        assert "3" in excinfo.value.message
+        repo.delete_plan.assert_not_awaited()
+
+    async def test_refuses_when_plan_has_payment_history_even_with_no_subscribers(self) -> None:
+        """Không còn ai dùng, nhưng từng có người trả tiền → hoá đơn cũ vẫn trỏ về đây."""
+        plan = PlanStub(id=uuid.uuid4(), name="Pro cũ", slug="pro-cu")
+        repo = _repo(get_plan=plan, count_plan_usage=(0, 5))
+        service = AdminService(db=AsyncMock(), repo=repo)
+
+        with pytest.raises(BusinessRuleError):
+            await service.delete_plan(plan.id)
+
+        repo.delete_plan.assert_not_awaited()
+
+    async def test_refuses_to_delete_the_free_plan(self) -> None:
+        """Free là gói hệ thống: đích đăng ký mới VÀ đích hạ gói khi hết hạn."""
+        plan = PlanStub(id=uuid.uuid4(), name="Free", slug="free")
+        repo = _repo(get_plan=plan, count_plan_usage=(0, 0))
+        service = AdminService(db=AsyncMock(), repo=repo)
+
+        with pytest.raises(BusinessRuleError) as excinfo:
+            await service.delete_plan(plan.id)
+
+        assert "Free" in excinfo.value.message
+        repo.delete_plan.assert_not_awaited()
+
+    async def test_checks_system_plan_before_counting_usage(self) -> None:
+        """Gói Free bị chặn vì nó LÀ gói Free, không phải vì tình cờ có người dùng."""
+        plan = PlanStub(id=uuid.uuid4(), name="Free", slug="free")
+        repo = _repo(get_plan=plan, count_plan_usage=(0, 0))
+        service = AdminService(db=AsyncMock(), repo=repo)
+
+        with pytest.raises(BusinessRuleError):
+            await service.delete_plan(plan.id)
+
+        repo.count_plan_usage.assert_not_awaited()
 
     async def test_not_found_raises(self) -> None:
         repo = _repo(get_plan=None)
@@ -461,51 +599,56 @@ class TestDeletePlan:
         with pytest.raises(NotFoundError):
             await service.delete_plan(uuid.uuid4())
 
-    async def test_plan_with_subscribers_raises_business_rule(self) -> None:
-        plan = PlanStub(id=uuid.uuid4(), name="Pro")
-        repo = _repo(get_plan=plan, count_subscriptions_for_plan=3)
-        service = AdminService(db=AsyncMock(), repo=repo)
 
-        with pytest.raises(BusinessRuleError, match="3 thuê bao"):
-            await service.delete_plan(plan.id)
+class TestSystemPlanGuards:
+    """Gói Free vẫn đổi tên / đổi quyền lợi được — chỉ cấm hai thứ khiến code không
+    tìm thấy nó nữa."""
 
-        repo.delete_plan.assert_not_awaited()
-
-    async def test_plan_with_payments_raises_business_rule(self) -> None:
-        plan = PlanStub(id=uuid.uuid4(), name="Pro")
-        repo = _repo(
-            get_plan=plan,
-            count_subscriptions_for_plan=0,
-            count_payments_for_plan=2,
-        )
-        service = AdminService(db=AsyncMock(), repo=repo)
-
-        with pytest.raises(BusinessRuleError, match="2 giao dịch"):
-            await service.delete_plan(plan.id)
-
-        repo.delete_plan.assert_not_awaited()
-
-    async def test_blocked_delete_writes_no_audit_log(self) -> None:
-        """Chặn rồi thì không được ghi 'đã xoá' — nhật ký sai còn tệ hơn không có."""
-        plan = PlanStub(id=uuid.uuid4(), name="Pro")
-        repo = _repo(get_plan=plan, count_subscriptions_for_plan=1)
+    async def test_cannot_deactivate_the_free_plan(self) -> None:
+        plan = PlanStub(id=uuid.uuid4(), name="Free", slug="free")
+        repo = _repo(get_plan=plan)
         service = AdminService(db=AsyncMock(), repo=repo)
 
         with pytest.raises(BusinessRuleError):
-            await service.delete_plan(plan.id)
+            await service.update_plan(plan.id, AdminUpdatePlanRequest(is_active=False))
 
-        repo.create_audit_log.assert_not_awaited()
-
-    async def test_subscriber_check_runs_before_payment_check(self) -> None:
-        """Còn thuê bao thì báo ngay chuyện thuê bao — đó mới là việc admin phải xử."""
-        plan = PlanStub(id=uuid.uuid4(), name="Pro")
-        repo = _repo(get_plan=plan, count_subscriptions_for_plan=1, count_payments_for_plan=5)
+    async def test_cannot_change_the_free_plan_slug(self) -> None:
+        plan = PlanStub(id=uuid.uuid4(), name="Free", slug="free")
+        repo = _repo(get_plan=plan, get_plan_by_slug=None)
         service = AdminService(db=AsyncMock(), repo=repo)
 
-        with pytest.raises(BusinessRuleError, match="thuê bao"):
-            await service.delete_plan(plan.id)
+        with pytest.raises(BusinessRuleError):
+            await service.update_plan(plan.id, AdminUpdatePlanRequest(slug="mien-phi"))
 
-        repo.count_payments_for_plan.assert_not_awaited()
+    async def test_can_still_rename_the_free_plan(self) -> None:
+        """Tên là để hiển thị — đổi thoải mái. Mã mới là khoá code."""
+        plan = PlanStub(id=uuid.uuid4(), name="Free", slug="free")
+        repo = _repo(get_plan=plan, get_plan_by_name=None)
+        service = AdminService(db=AsyncMock(), repo=repo)
+
+        result = await service.update_plan(plan.id, AdminUpdatePlanRequest(name="Miễn phí"))
+
+        assert result.name == "Miễn phí"
+        assert result.slug == "free"
+
+    async def test_can_reactivate_the_free_plan(self) -> None:
+        """Chỉ chặn TẮT, không chặn bật lại."""
+        plan = PlanStub(id=uuid.uuid4(), name="Free", slug="free", is_active=False)
+        repo = _repo(get_plan=plan)
+        service = AdminService(db=AsyncMock(), repo=repo)
+
+        result = await service.update_plan(plan.id, AdminUpdatePlanRequest(is_active=True))
+
+        assert result.is_active is True
+
+    async def test_other_plans_can_still_be_deactivated(self) -> None:
+        plan = PlanStub(id=uuid.uuid4(), name="Pro", slug="pro")
+        repo = _repo(get_plan=plan)
+        service = AdminService(db=AsyncMock(), repo=repo)
+
+        result = await service.update_plan(plan.id, AdminUpdatePlanRequest(is_active=False))
+
+        assert result.is_active is False
 
 
 # ---------------------------------------------------------------------------
