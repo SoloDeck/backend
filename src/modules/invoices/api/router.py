@@ -13,6 +13,7 @@ from src.modules.invoices.application.service import InvoicesService
 from src.modules.invoices.domain.value_objects.invoice_status import InvoiceStatus
 from src.modules.invoices.schemas.request import (
     InvoiceRequest,
+    InvoiceSendRequest,
     InvoiceUpdateRequest,
     PaymentRequest,
 )
@@ -120,9 +121,23 @@ async def delete_invoice(
 
 @router.post("/{invoice_id}/send", response_model=ApiResponse[InvoiceResponse])
 async def send_invoice(
-    invoice_id: uuid.UUID, user_id: CurrentUserId, db: DBSession
+    invoice_id: uuid.UUID,
+    user_id: CurrentUserId,
+    db: DBSession,
+    payload: InvoiceSendRequest | None = None,
 ) -> ApiResponse[InvoiceResponse]:
-    invoice = await InvoicesService(db=db).send(user_id, invoice_id)
+    """Gửi hóa đơn cho khách qua email, rồi đánh dấu đã gửi.
+
+    Body **không bắt buộc** — gọi trần vẫn chạy như cũ (gửi email, QR tự sinh). Nhờ vậy mọi
+    chỗ đang gọi endpoint này không phải sửa gì.
+
+    Gửi hỏng thì hóa đơn ở nguyên `draft` và trả 502 kèm lý do, thay vì ghi "đã gửi" cho một
+    lá thư chưa bao giờ rời máy chủ.  #Huynh
+    """
+    options = payload or InvoiceSendRequest()
+    invoice = await InvoicesService(db=db).send(
+        user_id, invoice_id, notify=options.notify, attachments=options.attachments
+    )
     return ApiResponse.ok(InvoiceResponse.model_validate(invoice))
 
 

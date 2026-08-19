@@ -48,6 +48,12 @@ async def _create_accepted_proposal(http: AsyncClient, headers: dict, deal_id: s
             "content": {
                 "body": "proposal body",
                 "pricing": {"total": 5_000_000, "currency": "VND"},
+                # Cổng gửi của main đòi hạng mục chi phí (mục 7), không chỉ một con số tổng:
+                # mỗi hạng mục là một đợt thu tiền. Tổng các dòng phải KHỚP giá chào.
+                "pricing_items": [
+                    {"label": "Thiết kế", "amount": 2_000_000},
+                    {"label": "Phát triển", "amount": 3_000_000},
+                ],
             },
         },
         headers=headers,
@@ -55,7 +61,10 @@ async def _create_accepted_proposal(http: AsyncClient, headers: dict, deal_id: s
     assert resp.status_code == 201, resp.text
     pid = resp.json()["data"]["id"]
 
-    await http.patch(f"/api/v1/proposals/{pid}/status", json={"status": "sent"}, headers=headers)
+    sent = await http.patch(
+        f"/api/v1/proposals/{pid}/status", json={"status": "sent"}, headers=headers
+    )
+    assert sent.status_code == 200, sent.text
     r = await http.patch(
         f"/api/v1/proposals/{pid}/status", json={"status": "accepted"}, headers=headers
     )

@@ -204,3 +204,77 @@ class TestChecklist:
             f"/api/v1/tasks/{task['id']}/checklist/{item['id']}", headers=headers
         )
         assert resp.status_code == 204
+
+
+class TestThuTuTaskOnDinh:
+    """Thứ tự task phải TẤT ĐỊNH, kể cả khi cả lô sinh trong cùng một transaction.
+
+    Bản trước sắp theo `created_at DESC` trần. `created_at` dùng `server_default=func.now()`,
+    mà `now()` của PostgreSQL trả về thời điểm bắt đầu TRANSACTION — nên các task sinh cùng lô
+    có `created_at` bằng nhau tới từng micro giây, và `ORDER BY created_at` là hoà hoàn toàn:
+    thứ tự do planner quyết, F5 hai lần ra hai kiểu.
+
+    Chuyện này thành lỗi nghiệp vụ từ khi freelancer kéo sắp lại được hạng mục chi phí ở mục 7
+    của báo giá — sắp đúng trình tự triển khai rồi mở bảng việc ra vẫn thấy lộn xộn.  #Huynh
+    """
+
+    async def test_task_giu_dung_thu_tu_tao(self, client: AsyncClient) -> None:
+        headers = await _auth_headers(client)
+        project = await _create_project(client, headers)
+
+        titles = ["Thiết kế giao diện", "Tích hợp đặt lịch", "Phát triển ứng dụng"]
+        for title in titles:
+            resp = await client.post(
+                f"/api/v1/projects/{project['id']}/tasks",
+                json={"title": title},
+                headers=headers,
+            )
+            assert resp.status_code == 201, resp.text
+
+        listed = await client.get(f"/api/v1/projects/{project['id']}/tasks", headers=headers)
+        assert listed.status_code == 200, listed.text
+        rows = listed.json()["data"]
+        assert [r["title"] for r in rows] == titles
+        assert [r["position"] for r in rows] == [0, 1, 2]
+
+    async def test_sua_mot_task_khong_lam_xao_tron_thu_tu(self, client: AsyncClient) -> None:
+        """Chính là chỗ bản cũ trượt, và là cảnh người dùng gặp thật.
+
+        `ORDER BY created_at DESC` không có khoá phá hoà. Khi các dòng bằng nhau, thứ tự trả
+        về là thứ tự nằm trong heap — mà PostgreSQL ghi bản cập nhật thành một phiên bản MỚI
+        ở cuối heap. Nên chỉ cần đổi tên hay tick xong một công việc là cả danh sách nhảy chỗ,
+        dòng vừa sửa rơi xuống cuối. Người dùng đang nhìn thì thấy bảng tự xáo.  #Huynh
+        """
+        headers = await _auth_headers(client)
+        project = await _create_project(client, headers)
+        for index in range(5):
+            await client.post(
+                f"/api/v1/projects/{project['id']}/tasks",
+                json={"title": f"Việc {index}"},
+                headers=headers,
+            )
+
+        before = await client.get(f"/api/v1/projects/{project['id']}/tasks", headers=headers)
+        order_before = [r["id"] for r in before.json()["data"]]
+
+        edited = await client.patch(
+            f"/api/v1/tasks/{order_before[0]}",
+            json={"title": "Việc 0 (đã đổi tên)"},
+            headers=headers,
+        )
+        assert edited.status_code == 200, edited.text
+
+        after = await client.get(f"/api/v1/projects/{project['id']}/tasks", headers=headers)
+        assert [r["id"] for r in after.json()["data"]] == order_before
+
+    async def test_task_them_sau_noi_tiep_chu_khong_dam_len(self, client: AsyncClient) -> None:
+        headers = await _auth_headers(client)
+        project = await _create_project(client, headers)
+        await _create_task_under_project(client, headers, project["id"])
+        await _create_task_under_project(client, headers, project["id"])
+        await _create_task_under_project(client, headers, project["id"])
+
+        listed = await client.get(f"/api/v1/projects/{project['id']}/tasks", headers=headers)
+        positions = [r["position"] for r in listed.json()["data"]]
+        assert positions == sorted(positions)
+        assert len(set(positions)) == len(positions)

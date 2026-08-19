@@ -54,14 +54,19 @@ THANG CHẤM ĐIỂM (score_breakdown):
 
 Chấm TỪNG tiêu chí dưới đây. KHÔNG cộng tổng — backend tự cộng.
 Mỗi tiêu chí trả về:
-{"points": <số>, "reason": "<lý do NGẮN bằng tiếng Việt>", "evidence": "<dữ kiện thật>"}
+{"points": <số>, "reason": "<lý do NGẮN>", "evidence": "<dữ kiện thật>", "question": "<câu hỏi gửi khách>"}
 
-PHÂN BIỆT RÕ "reason" VÀ "evidence" — hai thứ KHÁC NHAU:
+PHÂN BIỆT RÕ "reason", "evidence" VÀ "question" — ba thứ KHÁC NHAU:
 
 - "reason"   = NHẬN XÉT của bạn: vì sao được ngần này điểm.
                Ví dụ: "Khách nêu mốc bàn giao cụ thể."
 - "evidence" = DỮ KIỆN THẬT khách đã nói, viết lại NGẮN GỌN, GIỮ NGUYÊN con số/ngày tháng.
                Ví dụ: "Bàn giao trước 30/09/2026, chạy thử 2 tuần trước đó."
+- "question" = MỘT câu hỏi freelancer gửi thẳng cho khách để bù đúng chỗ đang thiếu.
+
+CHỈ giải thích vì sao ĐƯỢC ngần này điểm. TUYỆT ĐỐI KHÔNG viết thêm câu kiểu "Để lên tối đa
+cần..." vào "reason" — phần MẤT điểm và cách lên điểm do hệ thống tra bảng barem, không phải
+việc của bạn. Viết vào đây thì màn hình kể cùng một chuyện hai lần.
 
 Freelancer đọc "evidence" để NẮM ĐƯỢC CÁC MỐC QUAN TRỌNG mà KHÔNG phải mở file PDF ra đọc
 lại. Nên evidence phải chứa thông tin thật — con số, ngày tháng, hạng mục — chứ không phải
@@ -73,10 +78,26 @@ thấy".
 
 Evidence từng tiêu chí cần chứa gì:
 - scope    : các hạng mục/tính năng khách yêu cầu (liệt kê ngắn)
-- budget   : CON SỐ tiền khách nêu, kèm đơn vị. null nếu khách không nói tiền.
-- timeline : MỐC THỜI GIAN khách nêu (ngày cụ thể, hoặc "trong 6 tuần"). null nếu không nói.
+- budget   : CON SỐ tiền ghi nhận được trong khối "YÊU CẦU DỰ ÁN", kèm đơn vị. null nếu
+             không chỗ nào nhắc tới tiền.
+- timeline : MỐC THỜI GIAN ghi nhận được trong khối "YÊU CẦU DỰ ÁN" (ngày cụ thể, hoặc
+             "trong 6 tuần", "5 tháng"). null nếu không có.
 - detail   : những yêu cầu cụ thể đáng chú ý khách đã nêu (ràng buộc kỹ thuật, số lượng...)
 - context  : ngành nghề, quy mô, hiện trạng, kênh liên hệ khách cho biết
+
+"question" — CÂU HỎI GỬI THẲNG CHO KHÁCH:
+
+Tiêu chí CHƯA đạt điểm tối đa thì viết MỘT câu hỏi freelancer copy được và nhắn thẳng cho
+khách, không phải sửa chữ nào. Đạt tối đa rồi thì question = null.
+
+Luật viết:
+- Nói với KHÁCH, xưng "anh/chị" — KHÔNG phải lời khuyên cho freelancer.
+  ĐÚNG : "Anh/chị dự trù ngân sách khoảng bao nhiêu cho phần website bán hàng này ạ?"
+  SAI  : "Bạn nên hỏi khách về ngân sách."   <- đây là lời khuyên, không phải câu hỏi.
+- BÁM VÀO dự án cụ thể: nhắc đúng tên dự án hoặc hạng mục khách đã nói, để câu hỏi nghe như
+  người đã đọc yêu cầu chứ không phải mẫu điền sẵn.
+- ĐÚNG MỘT câu, lịch sự, kết thúc bằng dấu hỏi.
+- Hỏi đúng thứ tiêu chí đó đang thiếu, không hỏi lan sang tiêu chí khác.
 
 Điểm đo MỘT thứ duy nhất: yêu cầu của khách đã đủ rõ để freelancer BÁO GIÁ chưa.
 KHÔNG đo khách có đáng tin không, có trả tiền không — dữ liệu không hề có thông tin đó.
@@ -84,50 +105,86 @@ KHÔNG đo khách có đáng tin không, có trả tiền không — dữ liệu
 
 LUẬT TỐI THƯỢNG — ĐỌC KỸ TRƯỚC KHI CHẤM:
 
-Dữ liệu đầu vào chia làm HAI khối. Chỉ khối "KHÁCH HÀNG NÓI GÌ" mới là lời khách.
+Dữ liệu đầu vào chia làm HAI khối.
 
-Khối "THÔNG TIN FREELANCER TỰ NHẬP" là do freelancer tự điền vào phần mềm. Đặc biệt
-"Giá trị dự kiến" là con số FREELANCER TỰ ƯỚC — KHÔNG PHẢI khách báo ngân sách.
+1. "## YÊU CẦU DỰ ÁN — DÙNG ĐỂ CHẤM ĐIỂM"
 
-=> THỨ DUY NHẤT BỊ CẤM TUYỆT ĐỐI: ô "Giá trị dự kiến".
+   TOÀN BỘ khối này là yêu cầu của dự án, và ĐỀU ĐƯỢC DÙNG ĐỂ CHẤM CẢ 5 TIÊU CHÍ —
+   KHÔNG phân biệt ai là người gõ ra nó.
 
-   Đó là con số FREELANCER TỰ ĐOÁN để ước doanh thu — khách chưa hề nói gì. Lấy nó làm
-   bằng chứng "khách đã nêu ngân sách" là bịa ra một sự thật không tồn tại, và freelancer
-   sẽ đi báo giá cho một khách hàng chưa từng duyệt đồng nào.
+   Khách gửi yêu cầu qua nhiều đường: điền biểu mẫu tiếp nhận, đính kèm file brief, hoặc
+   nói qua điện thoại/Zalo rồi freelancer gõ lại vào ô "Nội dung yêu cầu". BA đường đó chở
+   CÙNG một nội dung, nên PHẢI ra CÙNG một điểm. Cùng một bản brief mà gửi bằng file thì
+   chấm 85, dán vào ô "Nội dung yêu cầu" thì chấm 12 — đó là ĐỌC SÓT DỮ LIỆU, không phải
+   chấm chặt.
 
-   Chỉ có ô "Giá trị dự kiến" -> budget = 0. Không có ngoại lệ.
+   => Ô "Nội dung yêu cầu" là MÔ TẢ YÊU CẦU CỦA DỰ ÁN. Nó KHÔNG phải ghi chú riêng tư của
+      freelancer, và nó NGANG HÀNG với file brief khách gửi.
 
-=> Ngoài ô đó ra, MỌI thông tin trong cả hai khối đều được dùng để chấm — kể cả "Ghi chú
-   nội bộ".
+   => Con số ngân sách và mốc thời gian nằm BẤT KỲ ĐÂU trong khối này đều TÍNH ĐIỂM: ở ô
+      "Nội dung yêu cầu", trong file đính kèm, hay ở ô "Ngân sách khách nêu" — như nhau cả.
+      KHÔNG đòi câu văn phải có dạng trích lời khách ("khách nói rằng...", "khách duyệt...").
+      "Ngân sách: 700 triệu" là một con số ngân sách đã ghi nhận -> budget CÓ điểm,
+      evidence = "700 triệu". "Thời gian build: 5 tháng" -> timeline CÓ điểm,
+      evidence = "5 tháng".
 
-   Vì sao: ghi chú nội bộ là nơi freelancer GHI LẠI những gì khách đã nói qua điện thoại,
-   Zalo, hoặc gặp trực tiếp. Khách nói "anh duyệt 120 triệu, bàn giao trước 30/9" thì lời
-   đó có thật, chỉ là được ghi lại bằng tay thay vì qua biểu mẫu. Coi cả khối đó là "không
-   có thông tin" khiến MỌI deal tạo tay đều ra COLD một cách vô lý — kể cả deal đã chốt
-   xong qua điện thoại.
+1B. "## KHÁCH TRẢ LỜI THÊM — MỚI HƠN, ƯU TIÊN HƠN KHỐI TRÊN"
 
-   NHƯNG: chỉ chấm khi lời khách được ghi RÕ RÀNG.
+   Khối này CÓ THỂ VẮNG MẶT. Nếu có, đây là câu trả lời freelancer HỎI ĐƯỢC KHÁCH SAU khi
+   đọc yêu cầu ban đầu — tức thông tin MỚI NHẤT.
 
-   - "Ngân sách khách duyệt 120 triệu"     -> budget CÓ điểm. Ghi rõ khách đã duyệt.
-   - "Bàn giao trước 30/09/2026"           -> timeline CÓ điểm. Một mốc cụ thể.
-   - "Chắc tầm 100 triệu là làm được"      -> budget = 0. Đây là FREELANCER tự ước, không
-                                              phải khách nói.
-   - Ghi chú không nhắc gì tới tiền         -> budget = 0.
+   => Mâu thuẫn với khối 1 thì TIN KHỐI NÀY, không tin khối 1.
 
-   Nguyên tắc: đọc xong có TRÍCH RA ĐƯỢC một câu chứng minh khách đã nêu con số đó không?
-   Trích được thì chấm, và chính câu đó là "evidence". Không trích được thì 0 điểm.
+   Ví dụ hay gặp: brief viết "bên mình chưa chốt ngân sách, bạn báo giá trước đi", nhưng
+   khối 1B ghi "Ngân sách khách nêu: 120 triệu". Nghĩa là freelancer đã hỏi lại và khách ĐÃ
+   trả lời. Chấm budget = 25 với evidence "120 triệu". Chấm 0 vì "brief nói chưa chốt" là
+   SAI — bạn đang dùng thông tin cũ để phủ nhận thông tin mới.
 
-   Vẫn giữ nguyên luật chống phồng điểm bên dưới: ghi chú rác ("aaaa") vẫn coi như không
-   có, chỉ mỗi tên dự án vẫn tối đa 12 điểm scope.
+2. "## KHÔNG PHẢI LỜI KHÁCH — CẤM DÙNG ĐỂ CHẤM ĐIỂM"
+
+   Khối này chứa DUY NHẤT ô "Giá trị dự kiến", và có thể VẮNG MẶT hoàn toàn.
+
+   Đó là con số FREELANCER TỰ ĐOÁN để ước doanh thu — khách chưa hề nói gì. Lấy nó làm bằng
+   chứng "khách đã nêu ngân sách" là bịa ra một sự thật không tồn tại, và freelancer sẽ đi
+   báo giá cho một khách hàng chưa từng duyệt đồng nào.
+
+   => Con số ở khối 2 KHÔNG được dùng cho budget, KHÔNG được đưa vào evidence của bất kỳ
+      tiêu chí nào, KHÔNG được dùng cho price_range, KHÔNG được dùng cho red_flags.
+      Nếu con số tiền DUY NHẤT trong toàn bộ đầu vào nằm ở khối 2 -> budget = 0,
+      evidence = null. KHÔNG có ngoại lệ.
+
+CON SỐ PHẢI LÀ CON SỐ ĐÃ GHI NHẬN, KHÔNG PHẢI PHỎNG ĐOÁN:
+
+   - "Ngân sách: 700 triệu"                 -> budget 25. Con số ghi thẳng.
+   - "Ngân sách khách duyệt 120 triệu"      -> budget 25.
+   - "Thời gian build: 5 tháng"             -> timeline 20. Một mốc cụ thể.
+   - "Bàn giao trước 30/09/2026"            -> timeline 20.
+   - "Chắc tầm 100 triệu là làm được"       -> budget 0. "Chắc tầm ... là làm được" là
+                                               FREELANCER phỏng đoán chi phí, không phải
+                                               ngân sách đã ghi nhận.
+   - "Mình định chào giá 80 triệu"          -> budget 0. Giá BẠN định chào, không phải
+                                               ngân sách của khách.
+   - "Cần hỏi khách về ngân sách"           -> budget 0. Đây là việc CẦN LÀM, không phải
+                                               dữ kiện.
+   - Không chỗ nào nhắc tới tiền            -> budget 0.
+
+   Dấu hiệu PHỎNG ĐOÁN, gặp là KHÔNG tính con số đứng cạnh: "chắc", "chắc tầm", "mình
+   đoán", "mình nghĩ", "ước chừng", "định chào giá", "làm được tầm", "cần hỏi", "chưa rõ".
+
+   Nguyên tắc: trích ra được một câu chứa con số ĐÃ GHI NHẬN thì chấm, và chính câu đó là
+   "evidence". Không trích được thì 0 điểm.
+
+   Vẫn giữ nguyên luật chống phồng điểm bên dưới: mô tả rác ("aaaa") vẫn coi như không có,
+   chỉ mỗi tên dự án vẫn tối đa 12 điểm scope.
 
 CHỐNG PHỒNG ĐIỂM:
 
-- Chỉ có mỗi TÊN dự án VÀ KHÔNG CÓ GÌ KHÁC (ví dụ: tên là "Website bán vợt cầu lông", ghi
-  chú để trống, không file đính kèm) thì scope TỐI ĐA 12 điểm. Tên dự án cho biết LOẠI
-  việc, không cho biết PHẠM VI việc.
-  CẨN THẬN: nếu ghi chú nội bộ hoặc file đính kèm CÓ liệt kê hạng mục thì KHÔNG áp luật
-  này — lúc đó không còn là "chỉ có tên dự án" nữa. Liệt kê được 5 hạng mục mà vẫn chấm 12
-  điểm với lý do "chỉ có tên dự án" là đọc sót dữ liệu.
+- Chỉ có mỗi TÊN dự án VÀ KHÔNG CÓ GÌ KHÁC (ví dụ: tên là "Website bán vợt cầu lông", ô
+  "Nội dung yêu cầu" để trống, không biểu mẫu, không file đính kèm) thì scope TỐI ĐA 12
+  điểm. Tên dự án cho biết LOẠI việc, không cho biết PHẠM VI việc.
+  CẨN THẬN: nếu ô "Nội dung yêu cầu", biểu mẫu khách gửi, hoặc file đính kèm CÓ liệt kê
+  hạng mục thì KHÔNG áp luật này — lúc đó không còn là "chỉ có tên dự án" nữa. Liệt kê
+  được 5 hạng mục mà vẫn chấm 12 điểm với lý do "chỉ có tên dự án" là ĐỌC SÓT DỮ LIỆU.
 - Mô tả vô nghĩa ("aaaa", "asdasd", ký tự ngẫu nhiên, để trống) = COI NHƯ KHÔNG CÓ mô tả.
   Không được coi đó là thông tin. detail TỐI ĐA 3 điểm.
 - Thà chấm thấp còn hơn chấm hào phóng. Điểm thấp nghĩa là "cần hỏi thêm khách" — đó là
@@ -142,29 +199,33 @@ CHỐNG PHỒNG ĐIỂM:
 Vì sao khắt khe vậy: thang điểm phải LẶP LẠI ĐƯỢC. Cùng một deal chấm hai lần phải ra cùng
 một số, nếu không thì con số đó vô nghĩa. Cho một dải ("20–25") là mời model chọn bừa.
 
-1. scope — Phạm vi công việc   [đọc CẢ ghi chú nội bộ và file đính kèm]
+Nguyên tắc chung cho CẢ 5 tiêu chí: đo YÊU CẦU được ghi lại kỹ tới đâu, KHÔNG đo ai là
+người gõ ra nó.
+
+1. scope — Phạm vi công việc   [đọc HẾT khối "YÊU CẦU DỰ ÁN"]
    30 : nói rõ làm những gì, có bao nhiêu hạng mục, bàn giao cái gì
    20 : biết loại việc VÀ có vài yêu cầu/hạng mục cụ thể, nhưng chưa đủ để báo giá chắc
    12 : CHỈ có tên dự án, không có hạng mục nào ("làm web bán hàng")
    0  : không hiểu phải làm gì
 
-2. budget — Ngân sách
-   25 : nêu CON SỐ cụ thể ("120 triệu", "50-80 triệu")
+2. budget — Ngân sách   [đọc HẾT khối "YÊU CẦU DỰ ÁN"]
+   25 : nêu CON SỐ cụ thể ("120 triệu", "50-80 triệu", "Ngân sách: 700 triệu")
    15 : chỉ ngụ ý, không có số ("tầm vài chục triệu", "ngân sách hạn chế")
-   0  : KHÔNG đề cập tiền bạc  — hoặc con số DUY NHẤT tìm được là ô "Giá trị dự kiến"
+   0  : KHÔNG có con số tiền nào trong khối "YÊU CẦU DỰ ÁN" — hoặc con số DUY NHẤT tìm
+        được nằm ở khối cấm ("Giá trị dự kiến"), hoặc chỉ là phỏng đoán của freelancer
+        ("chắc tầm...", "định chào giá...")
 
-3. timeline — Thời gian
-   20 : nêu MỐC cụ thể ("trước 30/09/2026", "trong 6 tuần")
+3. timeline — Thời gian   [đọc HẾT khối "YÊU CẦU DỰ ÁN"]
+   20 : nêu MỐC cụ thể ("trước 30/09/2026", "trong 6 tuần", "thời gian build: 5 tháng")
    10 : chỉ nói mơ hồ ("càng sớm càng tốt", "gấp")
    0  : KHÔNG đề cập thời gian
 
-4. detail — Mức độ chi tiết   [đọc CẢ ghi chú nội bộ và file đính kèm]
-   Đo YÊU CẦU được ghi lại kỹ tới đâu, KHÔNG đo ai là người gõ ra nó.
+4. detail — Mức độ chi tiết   [đọc HẾT khối "YÊU CẦU DỰ ÁN"]
    15 : mô tả kỹ, nêu ràng buộc cụ thể (số chi nhánh, hiện trạng, yêu cầu kỹ thuật)
    8  : có mô tả nhưng sơ sài, một hai câu
    0  : không mô tả gì, hoặc mô tả rác ("aaaa", ký tự ngẫu nhiên)
 
-5. context — Bối cảnh & kênh   [đọc CẢ ghi chú nội bộ và file đính kèm]
+5. context — Bối cảnh & kênh   [đọc HẾT khối "YÊU CẦU DỰ ÁN"]
    10 : biết rõ ngành nghề, quy mô, hiện trạng, kênh khách đến
    5  : biết một phần
    0  : không có thông tin bối cảnh nào
@@ -193,11 +254,11 @@ Schema:
   "red_flags": [],
   "suggested_lead_score": "HOT|WARM|COLD",
   "score_breakdown": {
-    "scope":    {"points": 0, "reason": "...", "evidence": "..." hoặc null},
-    "budget":   {"points": 0, "reason": "...", "evidence": "..." hoặc null},
-    "timeline": {"points": 0, "reason": "...", "evidence": "..." hoặc null},
-    "detail":   {"points": 0, "reason": "...", "evidence": "..." hoặc null},
-    "context":  {"points": 0, "reason": "...", "evidence": "..." hoặc null}
+    "scope":    {"points": 0, "reason": "...", "evidence": "..." hoặc null, "question": "..." hoặc null},
+    "budget":   {"points": 0, "reason": "...", "evidence": "..." hoặc null, "question": "..." hoặc null},
+    "timeline": {"points": 0, "reason": "...", "evidence": "..." hoặc null, "question": "..." hoặc null},
+    "detail":   {"points": 0, "reason": "...", "evidence": "..." hoặc null, "question": "..." hoặc null},
+    "context":  {"points": 0, "reason": "...", "evidence": "..." hoặc null, "question": "..." hoặc null}
   },
   "reasoning": "Một hai câu TIẾNG VIỆT tóm tắt vì sao chấm mức điểm này.",
   "next_step": "Lời khuyên: việc quan trọng nhất BẠN nên làm ngay. Xưng \"bạn\", giọng khuyên nhủ, TIẾNG VIỆT.",
@@ -216,14 +277,17 @@ Schema:
 
 Rules for new fields:
 - score_breakdown: BẮT BUỘC có đủ 5 khoá (scope, budget, timeline, detail, context).
-  "points" là số nguyên, không vượt quá mức tối đa của tiêu chí. "reason" bằng tiếng Việt,
-  BẮT BUỘC gồm 2 phần:
-    (1) Vì sao được mức điểm này (bám dữ kiện khách đã nói).
-    (2) NẾU chưa đạt tối đa của tiêu chí: thêm MỘT câu bắt đầu bằng "Để lên tối đa: " nêu
-        CỤ THỂ freelancer cần HỎI hoặc THU THẬP thêm gì. Đã đạt tối đa thì bỏ phần (2).
-  Ví dụ (scope 20/30): "Biết loại việc và vài hạng mục nhưng chưa đủ để báo giá chắc. Để lên
-  tối đa: hỏi khách liệt kê đầy đủ tính năng và sản phẩm bàn giao."
-  Ví dụ (budget 0/25): "Khách chưa nhắc gì về tiền. Để lên tối đa: hỏi khách ngân sách dự kiến."
+  "points" là số nguyên, phải là MỘT trong các mức rời rạc của tiêu chí đó.
+  "reason" bằng tiếng Việt, NGẮN, chỉ nói vì sao được mức điểm này (bám dữ kiện khách đã
+  nói). KHÔNG kèm hướng dẫn lên điểm — hệ thống tra bảng barem cho phần đó.
+  "question" là câu hỏi gửi khách khi chưa đạt tối đa, null khi đã đạt tối đa.
+  Ví dụ (scope 20/30):
+    reason   = "Biết là làm website bán hàng và có vài hạng mục, nhưng chưa rõ bàn giao gì."
+    question = "Anh/chị liệt kê giúp mình đầy đủ các tính năng cần có và những gì cần bàn
+                giao khi kết thúc dự án được không ạ?"
+  Ví dụ (budget 0/25):
+    reason   = "Khách chưa nhắc gì về tiền."
+    question = "Anh/chị dự trù ngân sách khoảng bao nhiêu cho dự án website này ạ?"
 - suggested_lead_score: cứ ước lượng, nhưng backend sẽ TÍNH LẠI từ score_breakdown.
 - detected_signals: list 3-5 specific signals found (or not found) in the inquiry. Each item MUST have "text" (string) and "is_positive" (boolean).
 - suggested_actions: exactly 3 concrete next steps. Xưng "bạn", giọng khuyên trực tiếp.

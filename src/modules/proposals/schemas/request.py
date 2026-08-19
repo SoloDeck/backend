@@ -12,10 +12,17 @@ class CreateProposalRequest(BaseModel):
     "accepted" and skip every rule transition_status() enforces (pricing must be
     set, payment milestones must sum to 100%, share_token generation, superseding
     an existing sent proposal, etc). Status now only ever changes via /send or
-    PATCH .../status."""
+    PATCH .../status.
+
+    Siết chỗ này càng đáng giá từ khi soạn báo giá thủ công (từ khung mẫu, không cần AI)
+    trở thành lối đi CHÍNH chứ không còn là ngách."""
 
     deal_id: uuid.UUID
     content: dict = Field(default_factory=dict)
+    # Khoá cứng về "draft" thay vì BỎ HẲN trường: bỏ hẳn thì pydantic lặng lẽ nuốt
+    # `{"status": "accepted"}` và trả 201 một bản nháp, client tưởng đã thành công.
+    # Giữ Literal để sai là báo 422 ngay tại cửa.
+    status: Literal["draft"] = "draft"
 
 
 class UpdateProposalRequest(BaseModel):

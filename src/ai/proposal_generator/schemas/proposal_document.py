@@ -2,10 +2,16 @@ from pydantic import BaseModel
 
 
 class PricingLineItem(BaseModel):
-    """Một dòng trong bảng giá — mô tả + thành tiền đã định dạng sẵn (VND)."""
+    """Một dòng trong bảng giá — mô tả + thành tiền đã định dạng sẵn (VND) + thời điểm thu.
+
+    `due` gộp vào đây từ khi bỏ mục "8. Điều Khoản Thanh Toán": mỗi hạng mục vừa là công việc
+    vừa là một đợt thu tiền, nên tách làm hai bảng chỉ tạo ra hai bản sao của cùng một danh
+    sách — khách đọc xong không biết bảng nào là thật.  #Huynh
+    """
 
     description: str
     amount: str
+    due: str = ""
 
 
 class PaymentMilestone(BaseModel):
@@ -40,6 +46,18 @@ def default_payment_milestones() -> list[PaymentMilestone]:
             due="Khi nghiệm thu & bàn giao",
         ),
     ]
+
+
+class ExtraSection(BaseModel):
+    """Một đầu mục do ADMIN tự soạn — tên mục nằm trong dữ liệu, không nằm trong template.
+
+    Bộ mục cứng của tờ giấy không thể phủ hết mọi nghề: nhiếp ảnh cần "Quyền sử dụng hình ảnh",
+    dịch thuật cần "Quy tắc thuật ngữ". Đánh số tự động theo bộ đếm chung nên chèn bao nhiêu
+    mục thì số vẫn liền mạch.  #Huynh
+    """
+
+    title: str = ""
+    body: str = ""
 
 
 class ProposalDocument(BaseModel):
@@ -105,3 +123,18 @@ class ProposalDocument(BaseModel):
     # Điều khoản chuẩn lấy NGUYÊN VĂN từ thư viện mẫu của admin (theo nghề). AI không sinh
     # trường này — service gán sau khi sinh. Rỗng = không có mẫu khớp.
     standard_terms: str = ""
+
+    # Đầu mục admin tự thêm, render ngay trước phần cuối tờ giấy.
+    extra_sections: list[ExtraSection] = []
+
+    # Tên đầu mục admin đã đổi. Khoá vắng mặt = dùng tên mặc định
+    # (xem `*_SECTION_DEFAULTS`).
+    section_titles: dict[str, str] = {}
+
+    # Chữ admin đã sửa trong các điều CÓ SẴN. Khoá vắng mặt = dùng bản mặc định
+    # (xem `*_CLAUSE_DEFAULTS`).
+    clause_texts: dict = {}
+
+    # Mục admin CHỦ Ý tắt khỏi mẫu này. Khác hẳn "mục trống": trống là chưa ai
+    # điền, tắt là quyết định mục đó không thuộc về tài liệu.
+    hidden_sections: list[str] = []

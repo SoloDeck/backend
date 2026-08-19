@@ -27,7 +27,19 @@ def _make_proposal(**kwargs) -> MagicMock:
     m.responded_at = kwargs.get("responded_at")
     # Có giá cụ thể để qua được cổng "không gửi báo giá không có giá". MagicMock mặc định
     # cho `.content` trả về mock (không phải dict) nên cổng chặn.  #Huynh
-    m.content = kwargs.get("content", {"pricing": {"total": 5_000_000, "currency": "VND"}})
+    #
+    # Có sẵn MỘT hạng mục để qua cổng "không gửi báo giá trắng hạng mục" — bài nào muốn kiểm
+    # chính cổng đó thì truyền `content` riêng.
+    m.content = kwargs.get(
+        "content",
+        {
+            "pricing": {
+                "total": 5_000_000,
+                "currency": "VND",
+                "line_items": [{"description": "Trọn gói", "amount": 5_000_000}],
+            }
+        },
+    )
     return m
 
 
@@ -117,48 +129,86 @@ class TestTransitionStatus:
             await svc.transition_status(uuid.uuid4(), uuid.uuid4(), "sent")
 
 
-class TestTongMocThanhToanPhaiBang100:
-    """Không gửi được báo giá mà các đợt thanh toán không cộng thành 100%.
+class TestCongTienKhiGuiBaoGia:
+    """Cổng tiền lúc gửi báo giá — hạng mục chi phí là ĐƠN VỊ THU TIỀN nên phải soi kỹ nó.
 
-    Đo thật: một báo giá có ba đợt 50% + 50% + 30% = 130% vẫn in ra bảng "8. Điều Khoản
-    Thanh Toán" và vẫn gửi được cho khách. Khách tự cộng ra 130% thì hoặc mình mất uy tín,
-    hoặc cãi nhau lúc đòi tiền.  #Huynh
+    Cổng "tổng mốc thanh toán = 100%" của bản cũ đã bỏ: mục 8 giờ suy ra từ mục 7 chứ không
+    ai gõ tay nữa, nên không còn cách nào cộng ra 130%.  #Huynh
     """
 
     @staticmethod
-    def _content(milestones: list[dict]) -> dict:
+    def _content(items: list[dict], total: int = 5_000_000) -> dict:
         return {
-            "pricing": {"total": 5_000_000, "currency": "VND"},
-            "payment_milestones": milestones,
+            "pricing_detail": {"final_price": total, "suggested": total},
+            "pricing_items": items,
         }
 
-    async def test_tong_khac_100_thi_chan_gui(self) -> None:
+    async def test_tong_hang_muc_lech_gia_chao_thi_chan_gui(self) -> None:
+        # Khách cầm tờ báo giá tự cộng cột "Thành tiền" ra một số, rồi đọc dòng "Tổng báo
+        # giá" ra số khác. Mất uy tín ngay tại bàn, và không cãi được.
         proposal = _make_proposal(
             status="draft",
             content=self._content(
-                [
-                    {"label": "Đặt cọc khi ký hợp đồng", "percent": 50},
-                    {"label": "Thanh toán khi bàn giao", "percent": 50},
-                    {"label": "avc", "percent": 30},
-                ]
+                [{"label": "A", "amount": 3_000_000}, {"label": "B", "amount": 1_000_000}]
             ),
         )
         db = AsyncMock()
         db.scalar.side_effect = [proposal, None]
 
-        svc = ProposalsService(db=db)
-        with pytest.raises(BusinessRuleError, match="130%"):
-            await svc.transition_status(proposal.owner_user_id, proposal.id, "sent")
+        with pytest.raises(BusinessRuleError, match="Hạng mục chi phí"):
+            await ProposalsService(db=db).transition_status(
+                proposal.owner_user_id, proposal.id, "sent"
+            )
         # Chặn là chặn HẲN: trạng thái không được nhúc nhích.
         assert proposal.status == "draft"
 
-    async def test_tong_dung_100_thi_gui_duoc(self) -> None:
+    async def test_hang_muc_0_dong_thi_chan_gui(self) -> None:
+        """Hạng mục 0 đồng làm DEAL KẸT VĨNH VIỄN nếu lọt qua.
+
+        Nó thành một task thu tiền 0 đồng: bắt buộc tick xong mới đóng được dự án, nhưng bấm
+        xuất hoá đơn thì bị từ chối vì 0 đồng. Không có lối ra.  #Huynh
+        """
+        proposal = _make_proposal(
+            status="draft",
+            content=self._content(
+                [{"label": "Có tiền", "amount": 5_000_000}, {"label": "Quên điền", "amount": 0}]
+            ),
+        )
+        db = AsyncMock()
+        db.scalar.side_effect = [proposal, None]
+
+        with pytest.raises(BusinessRuleError, match="Quên điền"):
+            await ProposalsService(db=db).transition_status(
+                proposal.owner_user_id, proposal.id, "sent"
+            )
+
+    async def test_chon_KHAC_ma_bo_trong_thi_chan_gui(self) -> None:
+        # Tờ giấy khách KÝ sẽ có ô "thời điểm thu" mơ hồ — đúng thứ đẻ ra cãi nhau lúc đòi tiền.
+        proposal = _make_proposal(
+            status="draft",
+            content=self._content(
+                [{"label": "Giai đoạn 2", "amount": 5_000_000, "due_type": "custom"}]
+            ),
+        )
+        db = AsyncMock()
+        db.scalar.side_effect = [proposal, None]
+
+        with pytest.raises(BusinessRuleError, match="Giai đoạn 2"):
+            await ProposalsService(db=db).transition_status(
+                proposal.owner_user_id, proposal.id, "sent"
+            )
+
+    async def test_chon_KHAC_va_ghi_ro_thi_gui_duoc(self) -> None:
         proposal = _make_proposal(
             status="draft",
             content=self._content(
                 [
-                    {"label": "Đặt cọc khi ký hợp đồng", "percent": 50},
-                    {"label": "Thanh toán khi bàn giao", "percent": 50},
+                    {
+                        "label": "Giai đoạn 2",
+                        "amount": 5_000_000,
+                        "due_type": "custom",
+                        "due_note": "Sau khi bên A duyệt bản demo",
+                    }
                 ]
             ),
         )
@@ -172,15 +222,11 @@ class TestTongMocThanhToanPhaiBang100:
             )
         assert result.status == "sent"
 
-    async def test_lich_co_dot_ghi_so_tien_thi_khong_chan(self) -> None:
-        # Lịch hỗn hợp: cộng % không có nghĩa gì, chặn là chặn oan.
+    async def test_tong_khop_gia_chao_thi_gui_duoc(self) -> None:
         proposal = _make_proposal(
             status="draft",
             content=self._content(
-                [
-                    {"label": "Đặt cọc", "percent": 50},
-                    {"label": "Phần còn lại", "amount": "2.500.000 ₫"},
-                ]
+                [{"label": "A", "amount": 3_000_000}, {"label": "B", "amount": 2_000_000}]
             ),
         )
         db = AsyncMock()
@@ -192,6 +238,37 @@ class TestTongMocThanhToanPhaiBang100:
                 proposal.owner_user_id, proposal.id, "sent"
             )
         assert result.status == "sent"
+
+    async def test_bao_gia_trang_hang_muc_thi_chan_gui(self) -> None:
+        """Không hạng mục nào -> CHẶN. Bài này TRƯỚC ĐÂY khẳng định điều ngược lại.
+
+        Bản cũ để lọt vì cổng đối chiếu tổng viết `if cost_items and agreed > 0`: không có
+        hạng mục thì cả khối kiểm bị nhảy qua. Lúc đó lọt là vô hại vì chưa ai sinh task từ
+        hạng mục.
+
+        Giờ thì có: lọt tới cuối đường, `resolve_cost_items` trả rỗng, bộ sinh task rơi xuống
+        nhánh chia mốc % và đẻ ra hai task chung chung "đặt cọc 50% / bàn giao 50%" — khác hẳn
+        quy tắc mỗi hạng mục là một đợt thu tiền và một hoá đơn, mà không báo cho ai biết.
+
+        Đường KHUNG (không AI) rơi vào đây mặc định vì mẫu không mang tiền, nên đây không phải
+        trường hợp hiếm.  #Huynh
+        """
+        proposal = _make_proposal(
+            status="draft",
+            content={"pricing": {"total": 5_000_000, "currency": "VND"}},
+        )
+        db = AsyncMock()
+        db.scalar.side_effect = [proposal, None]
+
+        # Bắt ĐÚNG câu của cổng này, không bắt cụm "hạng mục chi phí" chung chung: cổng
+        # "tổng lệch giá chào" ngay dưới cũng nói cụm đó, nên khớp lỏng là bài này vẫn xanh
+        # kể cả khi cổng bị gỡ mất.
+        with pytest.raises(BusinessRuleError, match="Chưa có hạng mục chi phí nào"):
+            await ProposalsService(db=db).transition_status(
+                proposal.owner_user_id, proposal.id, "sent"
+            )
+        # Chặn là chặn HẲN: trạng thái không được nhúc nhích.
+        assert proposal.status == "draft"
 
     async def test_bao_gia_khong_co_moc_thi_khong_chan(self) -> None:
         # Báo giá cũ không có mốc cấu trúc — chúng rơi về lịch chuẩn 50/50 lúc sinh task,

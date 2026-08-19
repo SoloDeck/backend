@@ -97,7 +97,16 @@ async def _make_proposal(http: AsyncClient, headers: dict) -> dict:
         json={
             "deal_id": d.json()["data"]["id"],
             # có giá cụ thể để chuyển sang "sent" được (báo giá không giá bị chặn 409).
-            "content": {"body": "initial", "pricing": {"total": 5_000_000, "currency": "VND"}},
+            "content": {
+                "body": "initial",
+                "pricing": {
+                    "total": 5_000_000,
+                    "currency": "VND",
+                    # Cổng gửi đòi ít nhất một hạng mục chi phí: mỗi hạng mục là một
+                    # đợt thu tiền, và bộ sinh task đọc đúng bảng này.
+                    "line_items": [{"description": "Trọn gói", "amount": 5_000_000}],
+                },
+            },
         },
         headers=headers,
     )

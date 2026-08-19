@@ -37,12 +37,35 @@ class DealRequest(BaseModel):
     currency: str = "VND"
     notes: str | None = None
     desired_timeline: str | None = None
+    # Ngân sách KHÁCH nêu, ghi lại sau khi hỏi được. Là chuỗi chứ không phải số vì khách hay
+    # nói "50-80 triệu", "tầm 100 củ" — ép về số là mất đúng phần thông tin đáng giá.
+    #
+    # KHÁC `estimated_value` bên trên: đó là freelancer tự ước để tính doanh thu, và bị cấm
+    # dùng để chấm điểm. Ô này là lời khách nên ĐƯỢC chấm.  #Huynh
+    client_budget: str | None = Field(default=None, max_length=255)
     project_type: str | None = None
     service_category: str | None = None
     pricing_tier: str | None = None
     # Profession-specific qualification
     profession: str | None = None
     profession_fields: dict[str, Any] | None = None
+
+
+class SaveQualificationRequest(BaseModel):
+    """Body tuỳ chọn của `POST /deals/{id}/qualifications/save`.
+
+    Mặc định `false` để đường gọi cũ (POST không body) vẫn chạy y như trước.
+    """
+
+    # Chốt ĐÚNG bản chấm này. Bỏ trống thì chốt bản mới nhất.
+    #
+    # Cần cho luồng "mở lại bản cũ ở tab Lịch sử rồi chốt": lúc đó bản đang xem KHÔNG phải
+    # bản mới nhất. Không có nó thì freelancer buộc phải chấm lại — tốn một lượt AI cho một
+    # kết quả đã có sẵn.
+    qualification_id: uuid.UUID | None = None
+
+    # Giao diện đã cảnh báo bản này chưa đủ 100 điểm và người dùng vẫn chọn chốt.
+    gap_acknowledged: bool = False
 
 
 class DealStageRequest(BaseModel):

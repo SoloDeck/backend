@@ -6,6 +6,7 @@ from src.ai.shared.llm_provider import (
 )
 from src.modules.admin.infrastructure.repository import AdminRepository
 
+
 class ProviderFactory:
     def __init__(self, db: AsyncSession):
         self.repo = AdminRepository(db)

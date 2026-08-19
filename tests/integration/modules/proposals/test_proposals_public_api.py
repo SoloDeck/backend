@@ -49,6 +49,12 @@ async def _create_sent_proposal(http: AsyncClient, headers: dict, deal_id: str) 
             "content": {
                 "body": "proposal body",
                 "pricing": {"total": 5_000_000, "currency": "VND"},
+                # Cổng gửi của main đòi hạng mục chi phí (mục 7), không chỉ một con số tổng:
+                # mỗi hạng mục là một đợt thu tiền. Tổng các dòng phải KHỚP giá chào.
+                "pricing_items": [
+                    {"label": "Thiết kế", "amount": 2_000_000},
+                    {"label": "Phát triển", "amount": 3_000_000},
+                ],
             },
         },
         headers=headers,

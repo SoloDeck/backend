@@ -4,6 +4,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.infrastructure.database.models import UserModel
@@ -67,15 +68,42 @@ class UsersService:
         user = await self.get_me(user_id)
         user.deleted_at = datetime.now(UTC)
         user.status = "deleted"
+        # Nhả tên đường dẫn ra. Ràng buộc UNIQUE không loại hàng đã xoá mềm, nên giữ lại là
+        # tài khoản đã xoá ngồi giữ chỗ vĩnh viễn — không ai lấy lại được, kể cả chính chủ
+        # khi đăng ký tài khoản mới.  #Huynh
+        user.profile_slug = None
         await self.repo.save(user)
 
     async def update_freelancer_profile(
         self, user_id: uuid.UUID, payload: FreelancerProfileUpdateRequest
     ):  # type: ignore[return]
         user = await self.get_me(user_id)
+        # Kiểm trùng TRƯỚC khi ghi: cột có ràng buộc UNIQUE nên để DB tự bắt thì lỗi nổi lên
+        # dạng IntegrityError → 500, còn người dùng chỉ thấy "lỗi hệ thống" cho một việc rất
+        # bình thường là tên đã có người lấy. Cùng cách `update_me` xử lý số điện thoại.
+        slug = payload.profile_slug
+        taken_message = f"Tên đường dẫn '{slug}' đã có người dùng, bạn chọn tên khác nhé"
+        if (
+            "profile_slug" in payload.model_fields_set
+            and slug is not None
+            and await self.repo.is_profile_slug_taken(slug, exclude_user_id=user_id)
+        ):
+            raise AlreadyExistsError(taken_message)
         for field in payload.model_fields_set:
             setattr(user, field, getattr(payload, field))
-        return await self.repo.save(user)
+        try:
+            return await self.repo.save(user)
+        except IntegrityError as exc:
+            # Bước kiểm ở trên là "tìm rồi mới ghi" — hai yêu cầu cùng lúc thì cả hai cùng
+            # thấy trống, cùng ghi. Thứ chặn thật là ràng buộc UNIQUE dưới DB; bước kiểm kia
+            # chỉ để có thông điệp tử tế cho trường hợp thường.
+            #
+            # Chỉ nuốt đúng ràng buộc tên đường dẫn. Ràng buộc khác vỡ là chuyện khác hẳn,
+            # gán cho nó cái 409 "tên đã có người dùng" là nói dối người dùng.  #Huynh
+            if "uq_users_profile_slug" not in str(exc.orig):
+                raise
+            await self.db.rollback()
+            raise AlreadyExistsError(taken_message) from exc
 
     async def update_professional_profile(
         self, user_id: uuid.UUID, payload: UpdateProfessionalProfileRequest
@@ -110,11 +138,37 @@ class UsersService:
         return await self.repo.save(user)
 
     async def change_password(self, user_id: uuid.UUID, payload: ChangePasswordRequest) -> None:
+        """Đặt mật khẩu lần đầu, hoặc đổi mật khẩu đang có.
+
+        HAI nhánh, và ranh giới giữa chúng là chỗ dễ làm sai nhất của cả tính năng:
+
+        1. **Chưa có mật khẩu** (tài khoản tạo bằng đăng nhập Google — `auth/service.py` đặt
+           `hashed_password=None`): cho đặt luôn, KHÔNG đòi mật khẩu cũ. An toàn vì người gọi
+           đang cầm một phiên đăng nhập hợp lệ, mà phiên đó chỉ cấp được sau khi Google xác
+           thực danh tính họ. Đó chính là bằng chứng tương đương việc biết mật khẩu cũ. Đòi
+           "mật khẩu hiện tại" ở đây là đòi một thứ không thể tồn tại — bản cũ làm vậy nên
+           người dùng Google vĩnh viễn không đặt được mật khẩu, mà câu báo lỗi lại nói sai sự
+           thật là "mật khẩu hiện tại không đúng".
+
+        2. **Đã có mật khẩu**: giữ NGUYÊN luật cũ — bắt buộc `current_password` và phải khớp.
+
+        ⚠️ Điều kiện phân nhánh là TÀI KHOẢN có mật khẩu hay không, KHÔNG phải "hôm nay đăng
+        nhập bằng cách gì". Người đã có mật khẩu rồi mới gắn thêm Google vẫn phải nhập mật
+        khẩu cũ. Nếu đổi thành "vào bằng Google thì miễn mật khẩu cũ" thì đúng nhóm đó thành
+        lỗ hổng: cướp được phiên là đổi được mật khẩu.  #Huynh
+        """
         user = await self.get_me(user_id)
-        if user.hashed_password is None or not verify_password(
-            payload.current_password, user.hashed_password
+
+        # Viết gộp một `if` cho hợp lint, nhưng đọc theo hai vế: CHỈ tài khoản đã có mật khẩu
+        # mới bị đòi `current_password` — và khi đó thiếu hay sai đều bị từ chối. Vế
+        # `not payload.current_password` là chốt chặn bắt buộc, vì trường này khai tuỳ chọn ở
+        # tầng schema (do nhánh 1); bỏ nó là ai cướp được phiên cũng đổi được mật khẩu.
+        if user.hashed_password is not None and (
+            not payload.current_password
+            or not verify_password(payload.current_password, user.hashed_password)
         ):
             raise AuthenticationError("Current password is incorrect")
+
         user.hashed_password = hash_password(payload.new_password)
         await self.repo.save(user)
 

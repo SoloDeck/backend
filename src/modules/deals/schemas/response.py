@@ -5,7 +5,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, computed_field
 
-from src.ai.lead_qualifier.scoring import COLD_THRESHOLD, level_from_score
+from src.ai.lead_qualifier.scoring import COLD_THRESHOLD, build_gap_summary, level_from_score
 
 
 class DealResponse(BaseModel):
@@ -22,6 +22,9 @@ class DealResponse(BaseModel):
     currency: str
     notes: str | None
     desired_timeline: str | None
+    # Ngân sách KHÁCH nêu — được chấm điểm. Khác `estimated_value` (freelancer tự ước, bị cấm
+    # chấm). Giao diện phải nói rõ khác biệt đó, không thì người dùng điền nhầm ô.
+    client_budget: str | None = None
     project_type: str | None
     service_category: str | None
     pricing_tier: str | None
@@ -122,6 +125,16 @@ class LeadScoreHistoryResponse(BaseModel):
     urgency_signal: str | None = None
     red_flags: list | None = None
 
+    # Lúc freelancer bấm "Lưu & chuyển sang Đã đánh giá". None = mới chấm, chưa chốt.
+    #
+    # Đây là thứ phân biệt tab "Lịch sử" (kể HẾT mọi lần chấm) với tab "Tài liệu" (chỉ kể
+    # bản đã chốt). Giao diện lọc theo trường này chứ đừng đoán theo "bản mới nhất".  #Huynh
+    saved_at: datetime | None = None
+
+    # Freelancer đã được cảnh báo bản này chưa đủ 100 điểm và vẫn chọn chốt. Số điểm thiếu
+    # suy lại được từ `breakdown`; việc CÓ ĐƯỢC CẢNH BÁO thì không suy ra từ đâu cả.
+    gap_acknowledged: bool = False
+
     # Bản ghi CŨ (trước khi thêm mấy cột này) không có -> None. Giao diện phải chịu được.
     breakdown: list | None = None
     next_step: str | None = None
@@ -133,6 +146,19 @@ class LeadScoreHistoryResponse(BaseModel):
     def level(self) -> str:
         """HOT/WARM/COLD suy từ điểm — dùng CHUNG ngưỡng với bộ chấm điểm."""
         return level_from_score(self.score).lower()
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def score_gaps(self) -> dict[str, Any] | None:
+        """Vì sao MẤT phần điểm còn lại, và cần gì để lên — tra từ barem lúc đọc.
+
+        Tính ở đây thay vì lưu xuống database, vì gap suy ra thuần tuý từ (tiêu chí, điểm).
+        Nhờ vậy bản đánh giá CŨ — lưu từ trước khi có tính năng này — mở lại vẫn hiện đủ
+        phần thiếu, thay vì trống đúng chỗ người dùng cần đọc nhất.  #Huynh
+        """
+        if not self.breakdown:
+            return None
+        return build_gap_summary(self.score, self.breakdown)
 
 
 class DealAttachmentResponse(BaseModel):

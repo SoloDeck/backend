@@ -87,6 +87,32 @@ class TerminalStateError(BusinessRuleError):
 
 
 # ---------------------------------------------------------------------------
+# Hạ tầng bên ngoài
+# ---------------------------------------------------------------------------
+
+
+class EmailDeliveryError(DomainError):
+    """Không gửi được email qua SMTP.
+
+    Sinh ra vì lỗi SMTP trước đây rơi thẳng vào `@app.exception_handler(Exception)` →
+    `500 INTERNAL_SERVER_ERROR` + "An unexpected error occurred", **không phân biệt được
+    với hỏng database**. Màn hình quên mật khẩu vì thế chỉ nói được một câu chung chung,
+    và lần truy lỗi nào cũng phải bắt đầu bằng việc đoán.
+
+    `reason` là thứ frontend và log cùng dựa vào để phân nhánh — quan trọng nhất là tách
+    `quota` (thử lại sau vài giờ là được) khỏi `auth` (thử lại bao nhiêu lần cũng vô ích,
+    phải sửa cấu hình). Gộp hai cái đó vào một câu "thử lại sau ít phút" là bảo người dùng
+    làm một việc chắc chắn vô nghĩa.
+
+    Giá trị: ``auth`` · ``quota`` · ``connect`` · ``unknown``.  #Huynh
+    """
+
+    def __init__(self, message: str, reason: str = "unknown") -> None:
+        super().__init__(message)
+        self.reason = reason
+
+
+# ---------------------------------------------------------------------------
 # AI errors
 # ---------------------------------------------------------------------------
 

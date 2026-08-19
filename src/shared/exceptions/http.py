@@ -11,6 +11,7 @@ from src.shared.exceptions.domain import (
     AuthenticationError,
     BusinessRuleError,
     DomainError,
+    EmailDeliveryError,
     EntitlementError,
     ExpiredError,
     ForbiddenError,
@@ -108,6 +109,21 @@ def setup_exception_handlers(app: FastAPI) -> None:
     @app.exception_handler(RateLimitError)
     async def rate_limited(_: Request, exc: RateLimitError) -> JSONResponse:
         return _err(429, ErrorCode.RATE_LIMITED, exc.message)
+
+    @app.exception_handler(EmailDeliveryError)
+    async def email_delivery(_: Request, exc: EmailDeliveryError) -> JSONResponse:
+        # 502 chứ không phải 500: người dùng không nhập sai gì cả, một dịch vụ BÊN NGOÀI
+        # (máy chủ thư) mới là chỗ hỏng — cùng cách đã xử `AIGenerationError` ngay dưới.
+        #
+        # `reason` đi vào log để truy lỗi, KHÔNG đi vào phản hồi: nó có thể lộ ra rằng hộp
+        # thư hệ thống đang sai mật khẩu. Câu gửi cho người dùng đã được soạn sẵn an toàn
+        # ở `smtp.py`.  #Huynh
+        _log.error(
+            "email.delivery_failed",
+            reason=exc.reason,
+            request_id=get_request_id(),
+        )
+        return _err(502, ErrorCode.EMAIL_DELIVERY_FAILED, exc.message)
 
     @app.exception_handler(AIGenerationError)
     async def ai_error(_: Request, exc: AIGenerationError) -> JSONResponse:

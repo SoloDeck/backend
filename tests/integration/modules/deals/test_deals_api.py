@@ -340,13 +340,16 @@ _MOCK_AI_RESULT = {
     # dán. Đó chính là lý do bộ chấm điểm cũ không đáng tin: AI nói "HOT" là được 80 điểm,
     # không ai kiểm chứng được vì sao.
     #
-    # 25 + 22 + 18 + 10 + 5 = 80.  #Huynh
+    # Mỗi tiêu chí phải rơi ĐÚNG một nấc của barem (xem `RUBRIC_LEVELS`): backend kéo số lẻ
+    # về nấc dưới, nên chấm 22 cho ngân sách sẽ thành 15 và tổng không còn khớp.
+    #
+    # 20 + 25 + 20 + 15 + 0 = 80.  #Huynh
     "score_breakdown": {
-        "scope": {"points": 25, "reason": "Khách nêu rõ hạng mục cần làm."},
-        "budget": {"points": 22, "reason": "Khách nói rõ ngân sách."},
-        "timeline": {"points": 18, "reason": "Khách nêu deadline cụ thể."},
-        "detail": {"points": 10, "reason": "Mô tả tương đối chi tiết."},
-        "context": {"points": 5, "reason": "Đến từ kênh inbound."},
+        "scope": {"points": 20, "reason": "Biết loại việc và vài hạng mục, chưa đủ báo giá chắc."},
+        "budget": {"points": 25, "reason": "Khách nêu con số ngân sách cụ thể."},
+        "timeline": {"points": 20, "reason": "Khách nêu deadline cụ thể."},
+        "detail": {"points": 15, "reason": "Mô tả kỹ, có ràng buộc cụ thể."},
+        "context": {"points": 0, "reason": "Chưa rõ ngành nghề và quy mô của khách."},
     },
     "reasoning": "Strong budget and clear timeline.",
     "next_step": "Reply today to confirm scope and move to quoting.",
@@ -508,15 +511,15 @@ class TestDealAIQualificationFields:
 
         # Điểm do CODE cộng từ bảng phân rã, không phải do nhãn AI tự dán. Muốn ra WARM
         # thì phải cho một bảng phân rã cộng lại ra 50 — chứ không phải sửa chữ "WARM".
-        # 18 + 12 + 10 + 6 + 4 = 50.  #Huynh
+        # 20 + 15 + 10 + 0 + 5 = 50.  #Huynh
         mock_facade = _mock_ai_facade(
             suggested_lead_score="WARM",
             score_breakdown={
-                "scope": {"points": 18, "reason": "Phạm vi nêu chung chung."},
-                "budget": {"points": 12, "reason": "Khách nói ngân sách mơ hồ."},
-                "timeline": {"points": 10, "reason": "Thời gian chưa rõ."},
-                "detail": {"points": 6, "reason": "Mô tả sơ sài."},
-                "context": {"points": 4, "reason": "Kênh inbound."},
+                "scope": {"points": 20, "reason": "Biết loại việc và vài hạng mục."},
+                "budget": {"points": 15, "reason": "Khách nói ngân sách mơ hồ, chưa có con số."},
+                "timeline": {"points": 10, "reason": "Thời gian nói chung chung."},
+                "detail": {"points": 0, "reason": "Khách gần như không mô tả gì."},
+                "context": {"points": 5, "reason": "Chỉ biết một phần bối cảnh."},
             },
         )
 
@@ -548,16 +551,16 @@ class TestDealAIQualificationFields:
         headers = await _auth(client, db_session)
         deal_id = await _create_deal_via_intake(client, headers)
 
-        # 8 + 0 + 0 + 7 + 5 = 20. Khách không hề nói ngân sách hay thời gian → 0 điểm cả
+        # 12 + 0 + 0 + 8 + 0 = 20. Khách không hề nói ngân sách hay thời gian → 0 điểm cả
         # hai tiêu chí đó, và đó chính là thứ người dùng nhìn thấy trên bảng chấm điểm.
         mock_facade = _mock_ai_facade(
             suggested_lead_score="COLD",
             score_breakdown={
-                "scope": {"points": 8, "reason": "Chỉ nói chung chung 'cần làm web'."},
+                "scope": {"points": 12, "reason": "Chỉ nói chung chung 'cần làm web'."},
                 "budget": {"points": 0, "reason": "Khách KHÔNG đề cập ngân sách."},
                 "timeline": {"points": 0, "reason": "Khách KHÔNG đề cập thời hạn."},
-                "detail": {"points": 7, "reason": "Mô tả rất ngắn."},
-                "context": {"points": 5, "reason": "Kênh inbound."},
+                "detail": {"points": 8, "reason": "Mô tả rất ngắn."},
+                "context": {"points": 0, "reason": "Không có thông tin bối cảnh."},
             },
         )
 
@@ -580,6 +583,142 @@ class TestDealAIQualificationFields:
         assert qualified["ai_level"] == "cold"
         assert qualified["is_ai_qualified"] is False
         assert qualified["ai_qualification_recommendation"] == "pass"
+
+
+# 12 + 0 + 10 + 0 + 5 = 27 — đúng con số mentor lấy làm ví dụ.
+_DEAL_27_BREAKDOWN = {
+    "scope": {"points": 12, "reason": "Chỉ có tên dự án."},
+    "budget": {"points": 0, "reason": "Khách chưa nhắc tới tiền."},
+    "timeline": {"points": 10, "reason": "Khách chỉ nói càng sớm càng tốt."},
+    "detail": {"points": 0, "reason": "Khách không mô tả gì thêm."},
+    "context": {"points": 5, "reason": "Chỉ biết một phần bối cảnh."},
+}
+
+
+async def _qualify_with(client: AsyncClient, headers: dict, deal_id: str, breakdown: dict) -> None:
+    from src.main import app
+
+    app.dependency_overrides[get_ai_facade] = lambda: _mock_ai_facade(score_breakdown=breakdown)
+    try:
+        resp = await client.post(f"/api/v1/deals/{deal_id}/qualify", headers=headers)
+        assert resp.status_code == 200, resp.text
+    finally:
+        app.dependency_overrides.pop(get_ai_facade, None)
+
+
+class TestQualificationScoreGaps:
+    """Câu hỏi mentor đặt ra: "chấm 27 thì 73 điểm còn lại đi đâu, làm sao lên 100?"
+
+    Phần trả lời do backend TRA TỪ BAREM (`RUBRIC_LEVELS`), không hỏi AI — nên nó có mặt kể
+    cả khi AI trả về bảng phân rã trống trơn lý do, và chấm lại bao nhiêu lần cũng ra y hệt.
+    """
+
+    async def test_lich_su_cham_diem_noi_duoc_mat_diem_o_dau_va_can_gi(
+        self, client: AsyncClient, db_session
+    ) -> None:
+        headers = await _auth(client, db_session)
+        deal_id = await _create_deal_via_intake(client, headers)
+        await _qualify_with(client, headers, deal_id, _DEAL_27_BREAKDOWN)
+
+        resp = await client.get(f"/api/v1/deals/{deal_id}/qualifications", headers=headers)
+        assert resp.status_code == 200, resp.text
+        latest = resp.json()["data"][0]
+
+        assert latest["score"] == 27
+        gaps = latest["score_gaps"]
+        assert gaps["lost_points"] == 73
+        assert gaps["points_to_hot"] == 48
+        # Sắp giảm dần theo điểm mất: budget 25, scope 18, timeline 10.
+        assert gaps["essential_missing"] == ["budget", "scope", "timeline"]
+
+        budget = next(gap for gap in gaps["gaps"] if gap["key"] == "budget")
+        assert budget["lost_points"] == 25
+        assert [step["points"] for step in budget["steps"]] == [15, 25]
+        assert budget["ask"], "không có câu hỏi thì người dùng vẫn không biết làm gì tiếp"
+        assert budget["fill_field"] == "client_budget"
+
+    async def test_dat_100_diem_thi_khong_con_khoang_thieu_nao(
+        self, client: AsyncClient, db_session
+    ) -> None:
+        headers = await _auth(client, db_session)
+        deal_id = await _create_deal_via_intake(client, headers)
+        await _qualify_with(
+            client,
+            headers,
+            deal_id,
+            {
+                "scope": {"points": 30, "reason": "Đủ hạng mục và sản phẩm bàn giao."},
+                "budget": {"points": 25, "reason": "Có con số cụ thể."},
+                "timeline": {"points": 20, "reason": "Có mốc cụ thể."},
+                "detail": {"points": 15, "reason": "Mô tả kỹ."},
+                "context": {"points": 10, "reason": "Rõ ngành nghề và quy mô."},
+            },
+        )
+
+        resp = await client.get(f"/api/v1/deals/{deal_id}/qualifications", headers=headers)
+        gaps = resp.json()["data"][0]["score_gaps"]
+
+        assert gaps["gaps"] == []
+        assert gaps["lost_points"] == 0
+        assert gaps["essential_missing"] == []
+
+    async def test_chot_ban_thieu_diem_luu_lai_viec_da_duoc_canh_bao(
+        self, client: AsyncClient, db_session
+    ) -> None:
+        """Nhìn một bản 27/100 đã chốt phải biết người dùng đã được cảnh báo hay chưa."""
+        headers = await _auth(client, db_session)
+        deal_id = await _create_deal_via_intake(client, headers)
+        await _qualify_with(client, headers, deal_id, _DEAL_27_BREAKDOWN)
+
+        resp = await client.post(
+            f"/api/v1/deals/{deal_id}/qualifications/save",
+            headers=headers,
+            json={"gap_acknowledged": True},
+        )
+
+        assert resp.status_code == 200, resp.text
+        saved = resp.json()["data"]
+        assert saved["saved_at"] is not None
+        assert saved["gap_acknowledged"] is True
+
+    async def test_chot_khong_kem_body_van_chay_nhu_cu(
+        self, client: AsyncClient, db_session
+    ) -> None:
+        """Body là tuỳ chọn — đường gọi cũ không được vỡ, và không tự nhận đã cảnh báo."""
+        headers = await _auth(client, db_session)
+        deal_id = await _create_deal_via_intake(client, headers)
+        await _qualify_with(client, headers, deal_id, _DEAL_27_BREAKDOWN)
+
+        resp = await client.post(f"/api/v1/deals/{deal_id}/qualifications/save", headers=headers)
+
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["data"]["gap_acknowledged"] is False
+
+    async def test_ngan_sach_khach_neu_lam_diem_tang_that(
+        self, client: AsyncClient, db_session
+    ) -> None:
+        """Vòng khép kín: hỏi khách -> ghi vào `client_budget` -> chấm lại -> điểm lên.
+
+        Nếu ô này không vào khối chấm điểm thì cả nút "Bổ sung thông tin" thành vô nghĩa.
+        """
+        headers = await _auth(client, db_session)
+        deal_id = await _create_deal_via_intake(client, headers)
+
+        resp = await client.get(f"/api/v1/deals/{deal_id}", headers=headers)
+        deal = resp.json()["data"]
+
+        updated = await client.patch(
+            f"/api/v1/deals/{deal_id}",
+            headers=headers,
+            json={
+                "client_id": deal["client_id"],
+                "title": deal["title"],
+                "client_budget": "120 triệu",
+            },
+        )
+
+        assert updated.status_code == 200, updated.text
+        assert updated.json()["data"]["client_budget"] == "120 triệu"
 
 
 # ---------------------------------------------------------------------------
