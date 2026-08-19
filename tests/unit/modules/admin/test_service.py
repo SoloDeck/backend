@@ -930,6 +930,25 @@ class TestGetAiProviderConfiguration:
 
 
 class TestUpdateAiProviderConfiguration:
+    @pytest.fixture(autouse=True)
+    def _provider_api_keys(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Ghim khoá API giả cho mọi nhà cung cấp có dùng khoá.
+
+        `update_ai_provider_configuration` giờ DỰNG THỬ provider trước khi ghi, mà
+        GroqProvider/GeminiProvider ném RuntimeError khi khoá trống. Không ghim thì
+        các test này xanh ở máy dev (có `.env`) và đỏ trên CI — job test không đặt
+        GROQ_API_KEY/GEMINI_API_KEY. Ollama xác thực bằng `ollama_base_url`, không
+        có trường khoá, nên phải kiểm tra trước khi gán: Settings là pydantic model
+        và gán tên lạ sẽ lỗi.
+        """
+        from src.ai.shared.constants import SUPPORTED_LLM_PROVIDERS
+        from src.config.settings import settings
+
+        for name in SUPPORTED_LLM_PROVIDERS:
+            field = f"{name}_api_key"
+            if field in type(settings).model_fields:
+                monkeypatch.setattr(settings, field, f"test-{name}-key")
+
     @pytest.mark.parametrize(
         ("provider", "model"),
         [

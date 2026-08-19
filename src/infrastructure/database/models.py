@@ -9,6 +9,7 @@ from datetime import date, datetime
 from decimal import Decimal
 
 from sqlalchemy import (
+    JSON,
     BigInteger,
     Boolean,
     CheckConstraint,
@@ -24,7 +25,7 @@ from sqlalchemy import (
     UniqueConstraint,
     func,
     select,
-    text, JSON,
+    text,
 )
 from sqlalchemy.dialects.postgresql import ARRAY, INET, JSONB, UUID
 from sqlalchemy.dialects.postgresql import ENUM as PgEnum  # noqa: N811
@@ -1498,6 +1499,25 @@ class AIProviderConfigurationModel(Base):
         UUID(as_uuid=True),
         ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
+    )
+
+    # Ràng buộc "chỉ MỘT bản ghi" ở tầng CSDL, không chỉ bằng quy ước. Cột này
+    # luôn TRUE (CHECK) và là UNIQUE, nên bản ghi thứ hai sẽ bị Postgres từ chối
+    # ngay. Trước đây quy tắc này chỉ nằm trong comment: repository dùng
+    # `select(...)` không LIMIT/ORDER BY, nên nếu lỡ có 2 dòng (chạy lại seed,
+    # merge lại migration, UPDATE tay) thì nhà cung cấp LLM của TOÀN hệ thống
+    # trở nên không xác định — mỗi truy vấn có thể trả về một dòng khác nhau,
+    # trong khi ProviderFactory đọc lại bảng này ở MỌI request AI.
+    is_singleton: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=True,
+        server_default=text("true"),
+    )
+
+    __table_args__ = (
+        CheckConstraint("is_singleton IS TRUE", name="ck_ai_provider_singleton"),
+        UniqueConstraint("is_singleton", name="uq_ai_provider_singleton"),
     )
 
 

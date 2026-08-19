@@ -220,6 +220,18 @@ class OllamaProvider(BaseLLMProvider):
 # Factory
 # ==========================================================
 
+# Khoá của dict phải phủ đúng LLMProviderName — test
+# test_every_supported_provider_is_constructible canh việc này, nên thêm nhà
+# cung cấp vào Literal mà quên map ở đây sẽ fail test thay vì fail 500 lúc chạy.
+_PROVIDERS: dict[str, type[BaseLLMProvider]] = {
+    "groq": GroqProvider,
+    "gemini": GeminiProvider,
+    "ollama": OllamaProvider,
+    # "openai": OpenAIProvider — bỏ ra cho tới khi OpenAIProvider cài đặt
+    # `generate`; hiện là lớp rỗng nên không khởi tạo được (xem constants.py).
+}
+
+
 def get_llm_provider(
     provider: str,
     model: str,
@@ -228,9 +240,9 @@ def get_llm_provider(
     Return the configured provider using the requested model.
     """
 
-    provider = provider.lower()
+    key = provider.lower()
 
-    supported = SUPPORTED_LLM_MODELS.get(provider)
+    supported = SUPPORTED_LLM_MODELS.get(key)
 
     if supported is None:
         raise ValueError(f"Unsupported LLM provider: {provider}")
@@ -240,13 +252,9 @@ def get_llm_provider(
             f"Model '{model}' is not supported by provider '{provider}'."
         )
 
-    if provider == "groq":
-        return GroqProvider(model)
-
-    if provider == "gemini":
-        return GeminiProvider(model)
-
-    if provider == "ollama":
-        return OllamaProvider(model)
-
-    raise ValueError(f"Unsupported LLM provider: {provider}")
+    try:
+        return _PROVIDERS[key](model)
+    except KeyError:
+        # Tới được đây nghĩa là provider có trong SUPPORTED_LLM_MODELS nhưng
+        # thiếu ở _PROVIDERS — lỗi cấu hình phía server, không phải lỗi client.
+        raise ValueError(f"Unsupported LLM provider: {provider}") from None

@@ -8,8 +8,11 @@ from httpx import AsyncClient
 from sqlalchemy import insert, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.ai.shared.constants import SUPPORTED_LLM_MODELS, SUPPORTED_LLM_PROVIDERS
+from src.config.settings import settings
 from src.infrastructure.database.models import (
     AiCostRecordModel,
+    AIProviderConfigurationModel,
     FeatureFlagModel,
     PlanModel,
     SubscriptionModel,
@@ -63,6 +66,35 @@ async def _admin_headers_with_id(client: AsyncClient, db_session: AsyncSession) 
     headers = await _admin_headers(client, db_session)
     me = await client.get("/api/v1/users/me", headers=headers)
     return headers, me.json()["data"]["id"]
+
+
+# Nhà cung cấp có xác thực bằng API key (ollama thì không — nó dùng base_url).
+_PROVIDERS_WITH_API_KEY = sorted(
+    name for name in SUPPORTED_LLM_PROVIDERS
+    if f"{name}_api_key" in type(settings).model_fields
+)
+
+
+def _a_model_for(provider: str) -> str:
+    return sorted(SUPPORTED_LLM_MODELS[provider])[0]
+
+
+@pytest.fixture
+def all_provider_keys_set(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Giả lập môi trường ĐÃ cấu hình đủ API key cho mọi nhà cung cấp LLM.
+
+    PATCH /admin/ai-provider giờ dựng thử provider trước khi ghi, nên việc đổi
+    sang một nhà cung cấp chỉ thành công khi key của nó có mặt. CI KHÔNG đặt
+    GROQ_API_KEY/GEMINI_API_KEY (xem job "Test / Integration" trong ci.yml),
+    còn máy dev thì thường có trong `.env` — không ghim lại thì cùng một test sẽ
+    xanh ở máy và đỏ trên CI.
+
+    Chỉ ghim nhà cung cấp NÀO có trường khoá: Settings là pydantic model nên gán
+    một tên lạ (vd `ollama_api_key`) ném ValueError, `raising=False` không đỡ được.
+    Ollama xác thực bằng `ollama_base_url`.
+    """
+    for name in _PROVIDERS_WITH_API_KEY:
+        monkeypatch.setattr(settings, f"{name}_api_key", f"test-{name}-key")
 
 
 def _plan_payload(**overrides: object) -> dict:
@@ -1412,6 +1444,159 @@ class TestAdminAiCosts:
 
 
 # ---------------------------------------------------------------------------
+# GET /admin/ai-provider
+# ---------------------------------------------------------------------------
+
+
+class TestAdminGetAiProvider:
+    async def test_returns_current_provider(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        headers = await _admin_headers(client, db_session)
+        resp = await client.get("/api/v1/admin/ai-provider", headers=headers)
+        assert resp.status_code == 200
+        assert resp.json()["data"]["llm_provider"] in SUPPORTED_LLM_PROVIDERS
+
+    async def test_second_configuration_row_is_rejected_by_the_db(
+        self, db_session: AsyncSession
+    ) -> None:
+        """Bảng cấu hình phải chỉ có MỘT dòng — ràng buộc ở CSDL, không chỉ quy ước.
+
+        Nếu lọt dòng thứ hai, repository dùng `select(...)` không LIMIT/ORDER BY
+        nên nhà cung cấp LLM toàn hệ thống thành không xác định, mà
+        ProviderFactory lại đọc bảng này ở MỌI request AI.
+        """
+        from sqlalchemy.exc import IntegrityError
+
+        with pytest.raises(IntegrityError):
+            await db_session.execute(
+                insert(AIProviderConfigurationModel).values(
+                    llm_provider="gemini",
+                )
+            )
+            await db_session.flush()
+
+    async def test_non_admin_returns_403(self, client: AsyncClient) -> None:
+        headers = await _user_headers(client)
+        resp = await client.get("/api/v1/admin/ai-provider", headers=headers)
+        assert resp.status_code == 403
+
+    async def test_unauthenticated_returns_401(self, client: AsyncClient) -> None:
+        resp = await client.get("/api/v1/admin/ai-provider")
+        assert resp.status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# PATCH /admin/ai-provider
+# ---------------------------------------------------------------------------
+
+
+class TestAdminUpdateAiProvider:
+    async def test_switches_provider_and_persists(
+        self, client: AsyncClient, db_session: AsyncSession, all_provider_keys_set: None
+    ) -> None:
+        headers = await _admin_headers(client, db_session)
+
+        current = await client.get("/api/v1/admin/ai-provider", headers=headers)
+        assert current.status_code == 200
+        active = current.json()["data"]["llm_provider"]
+        # Pick any supported provider other than the active one so the PATCH is a real change.
+        target = next(p for p in sorted(SUPPORTED_LLM_PROVIDERS) if p != active)
+
+        resp = await client.patch(
+            "/api/v1/admin/ai-provider",
+            json={"llm_provider": target, "llm_model": _a_model_for(target)},
+            headers=headers,
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["data"]["llm_provider"] == target
+
+        after = await client.get("/api/v1/admin/ai-provider", headers=headers)
+        assert after.json()["data"]["llm_provider"] == target
+
+    async def test_unsupported_provider_returns_422(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """Nhà cung cấp lạ bị chặn ở tầng schema (Literal), trước khi vào service."""
+        headers = await _admin_headers(client, db_session)
+
+        before = await client.get("/api/v1/admin/ai-provider", headers=headers)
+        active = before.json()["data"]["llm_provider"]
+
+        resp = await client.patch(
+            "/api/v1/admin/ai-provider",
+            json={"llm_provider": "not-a-real-provider"},
+            headers=headers,
+        )
+        assert resp.status_code == 422
+
+        # Provider đang dùng phải giữ nguyên — request hỏng không được đổi cấu hình.
+        after = await client.get("/api/v1/admin/ai-provider", headers=headers)
+        assert after.json()["data"]["llm_provider"] == active
+
+    async def test_missing_provider_returns_422(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        headers = await _admin_headers(client, db_session)
+        resp = await client.patch("/api/v1/admin/ai-provider", json={}, headers=headers)
+        assert resp.status_code == 422
+
+    async def test_provider_without_api_key_is_refused_not_persisted(
+        self,
+        client: AsyncClient,
+        db_session: AsyncSession,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Đổi sang nhà cung cấp chưa có API key phải bị từ chối NGAY, không ghi.
+
+        Đây là kịch bản làm sập toàn bộ AI: tên nhà cung cấp hợp lệ nên schema
+        cho qua, nhưng provider ném RuntimeError lúc khởi tạo vì thiếu key. Nếu
+        cứ ghi rồi trả 200, ProviderFactory đọc lại dòng này ở MỌI request AI và
+        cả bốn generator trả 500 cho tới khi có người đổi ngược lại.
+        """
+        headers = await _admin_headers(client, db_session)
+
+        before = await client.get("/api/v1/admin/ai-provider", headers=headers)
+        active = before.json()["data"]["llm_provider"]
+        # Chỉ xét nhà cung cấp DÙNG key — ollama không có key nên không dựng được
+        # kịch bản "thiếu key" với nó.
+        target = next(p for p in _PROVIDERS_WITH_API_KEY if p != active)
+
+        # Nhà cung cấp đích không có key; nhà cung cấp đang dùng thì có.
+        monkeypatch.setattr(settings, f"{target}_api_key", "")
+        if f"{active}_api_key" in type(settings).model_fields:
+            monkeypatch.setattr(settings, f"{active}_api_key", f"test-{active}-key")
+
+        resp = await client.patch(
+            "/api/v1/admin/ai-provider",
+            json={"llm_provider": target, "llm_model": _a_model_for(target)},
+            headers=headers,
+        )
+        assert resp.status_code == 422, resp.text
+        assert target in resp.json()["error"]["message"]
+
+        # Quan trọng nhất: cấu hình KHÔNG được đổi.
+        after = await client.get("/api/v1/admin/ai-provider", headers=headers)
+        assert after.json()["data"]["llm_provider"] == active
+
+    async def test_non_admin_returns_403(self, client: AsyncClient) -> None:
+        headers = await _user_headers(client)
+        resp = await client.patch(
+            "/api/v1/admin/ai-provider",
+            json={"llm_provider": "gemini"},
+            headers=headers,
+        )
+        assert resp.status_code == 403
+
+    async def test_unauthenticated_returns_401(self, client: AsyncClient) -> None:
+        resp = await client.patch(
+            "/api/v1/admin/ai-provider",
+            json={"llm_provider": "gemini"},
+        )
+        assert resp.status_code == 401
+
+
+# ---------------------------------------------------------------------------
 # GET /admin/audit-logs
 # ---------------------------------------------------------------------------
 
@@ -1482,6 +1667,31 @@ class TestAdminAuditLogs:
         assert resp.status_code == 200
         logs = resp.json()["data"]["data"]
         assert any("full_name=Audited Name" in e["description"] for e in logs)
+
+    async def test_ai_provider_update_creates_audit_log(
+        self, client: AsyncClient, db_session: AsyncSession, all_provider_keys_set: None
+    ) -> None:
+        headers, admin_id = await _admin_headers_with_id(client, db_session)
+
+        current = await client.get("/api/v1/admin/ai-provider", headers=headers)
+        active = current.json()["data"]["llm_provider"]
+        target = next(p for p in sorted(SUPPORTED_LLM_PROVIDERS) if p != active)
+
+        patch = await client.patch(
+            "/api/v1/admin/ai-provider",
+            json={"llm_provider": target, "llm_model": _a_model_for(target)},
+            headers=headers,
+        )
+        assert patch.status_code == 200, patch.text
+
+        resp = await client.get(
+            "/api/v1/admin/audit-logs?event_type=ai_provider.updated", headers=headers
+        )
+        assert resp.status_code == 200
+        mine = [r for r in resp.json()["data"]["data"] if r["actor_user_id"] == admin_id]
+        assert mine, "Đổi nhà cung cấp AI phải ghi nhật ký với actor là admin vừa thao tác"
+        assert target in mine[0]["description"]
+        assert mine[0]["target_type"] == "ai_provider_configuration"
 
     async def test_filter_by_event_type(
         self, client: AsyncClient, db_session: AsyncSession
@@ -2096,6 +2306,10 @@ class TestGetAiProviderEndpoint:
 
 
 class TestUpdateAiProviderEndpoint:
+    @pytest.fixture(autouse=True)
+    def _keys(self, all_provider_keys_set: None) -> None:
+        """Đổi nhà cung cấp giờ đòi dựng thử provider, nên phải có key."""
+
     @pytest.mark.parametrize(
         ("provider", "model"),
         [
