@@ -492,6 +492,20 @@ async def update_template(
     return ApiResponse.ok(AdminTemplateResponse.model_validate(template))
 
 
+@router.delete("/templates/{template_id}", status_code=204)
+async def delete_template(
+    template_id: uuid.UUID,
+    admin: AdminUser,
+    db: DBSession,
+) -> None:
+    """Xoá một mẫu hệ thống khỏi thư viện.
+
+    Đề xuất/hợp đồng đã tạo từ mẫu không bị ảnh hưởng (nội dung đã được sao chép sang).
+    Chỉ chặn khi còn mẫu phái sinh trỏ vào mẫu này — khi đó trả 409.
+    """
+    await AdminService(db=db).delete_template(template_id, admin_id=uuid.UUID(admin.sub))
+
+
 # ---------------------------------------------------------------------------
 # Feature Flags
 # ---------------------------------------------------------------------------

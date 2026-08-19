@@ -2,7 +2,9 @@
 
 import uuid
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 
+import pytest
 from httpx import AsyncClient
 from sqlalchemy import insert, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -12,9 +14,18 @@ from src.infrastructure.database.models import (
     FeatureFlagModel,
     PlanModel,
     SubscriptionModel,
+    SubscriptionPaymentModel,
+    SystemTemplateModel,
     UserModel,
 )
 from src.infrastructure.database.seeders.plans import PlansSeeder
+from src.main import app
+from src.shared.dependencies.ai import get_ai_facade
+from tests.conftest import grant_ai_plan
+from tests.integration.modules.proposals.test_generate_from_deal import (
+    _make_deal,
+    _PermissiveAIFacade,
+)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -1920,6 +1931,218 @@ class TestAdminUpdateTemplate:
             headers=headers,
         )
         assert resp.status_code == 403
+
+
+# ---------------------------------------------------------------------------
+# DELETE /admin/templates/{template_id}
+# ---------------------------------------------------------------------------
+
+
+class TestAdminDeleteTemplate:
+    async def _create_template(self, client: AsyncClient, headers: dict, **overrides) -> dict:
+        resp = await client.post(
+            "/api/v1/admin/templates",
+            json={
+                "name": f"Template {uuid.uuid4().hex[:6]}",
+                "template_type": "proposal",
+                "content": {"blocks": []},
+                "is_active": False,
+                **overrides,
+            },
+            headers=headers,
+        )
+        assert resp.status_code == 201, resp.text
+        return resp.json()["data"]
+
+    async def test_delete_template_returns_204(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        headers = await _admin_headers(client, db_session)
+        template = await self._create_template(client, headers)
+
+        resp = await client.delete(f"/api/v1/admin/templates/{template['id']}", headers=headers)
+        assert resp.status_code == 204, resp.text
+        assert resp.content == b""
+
+    async def test_deleted_template_is_gone_from_list(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        headers = await _admin_headers(client, db_session)
+        template = await self._create_template(client, headers)
+
+        await client.delete(f"/api/v1/admin/templates/{template['id']}", headers=headers)
+
+        listed = (await client.get("/api/v1/admin/templates", headers=headers)).json()["data"]
+        assert template["id"] not in [t["id"] for t in listed]
+
+    async def test_deleting_twice_returns_404(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        headers = await _admin_headers(client, db_session)
+        template = await self._create_template(client, headers)
+
+        first = await client.delete(f"/api/v1/admin/templates/{template['id']}", headers=headers)
+        assert first.status_code == 204
+        second = await client.delete(f"/api/v1/admin/templates/{template['id']}", headers=headers)
+        assert second.status_code == 404
+
+    async def test_template_with_derived_children_returns_409(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        headers, admin_id = await _admin_headers_with_id(client, db_session)
+        parent = await self._create_template(client, headers, name="Parent Template")
+
+        # `parent_template_id` chưa có đường đi qua API — chèn thẳng mẫu con vào DB để
+        # dựng đúng tình huống khoá ngoại mà endpoint phải chặn.
+        await db_session.execute(
+            insert(SystemTemplateModel).values(
+                template_type="proposal",
+                name="Derived Template",
+                content={"blocks": []},
+                parent_template_id=uuid.UUID(parent["id"]),
+                created_by_admin_id=uuid.UUID(admin_id),
+            )
+        )
+        await db_session.flush()
+
+        resp = await client.delete(f"/api/v1/admin/templates/{parent['id']}", headers=headers)
+        assert resp.status_code == 409
+
+        listed = (await client.get("/api/v1/admin/templates", headers=headers)).json()["data"]
+        assert parent["id"] in [t["id"] for t in listed]
+
+    async def test_delete_writes_audit_log(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        headers = await _admin_headers(client, db_session)
+        template = await self._create_template(client, headers, name="Audited Template")
+
+        await client.delete(f"/api/v1/admin/templates/{template['id']}", headers=headers)
+
+        logs = (
+            await client.get(
+                "/api/v1/admin/audit-logs?event_type=template.deleted", headers=headers
+            )
+        ).json()["data"]["data"]
+        assert any(entry["target_id"] == template["id"] for entry in logs)
+
+    async def test_deleting_the_child_unblocks_the_parent(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """409 phải là tình huống gỡ được, không phải ngõ cụt."""
+        headers, admin_id = await _admin_headers_with_id(client, db_session)
+        parent = await self._create_template(client, headers, name="Parent")
+
+        child_id = uuid.uuid4()
+        await db_session.execute(
+            insert(SystemTemplateModel).values(
+                id=child_id,
+                template_type="proposal",
+                name="Child",
+                content={"blocks": []},
+                parent_template_id=uuid.UUID(parent["id"]),
+                created_by_admin_id=uuid.UUID(admin_id),
+            )
+        )
+        await db_session.flush()
+
+        assert (
+            await client.delete(f"/api/v1/admin/templates/{parent['id']}", headers=headers)
+        ).status_code == 409
+
+        assert (
+            await client.delete(f"/api/v1/admin/templates/{child_id}", headers=headers)
+        ).status_code == 204
+        assert (
+            await client.delete(f"/api/v1/admin/templates/{parent['id']}", headers=headers)
+        ).status_code == 204
+
+    async def test_delete_active_template_succeeds(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """Mẫu đang bật (freelancer đang chọn được) vẫn xoá thẳng — không phải chỉ mẫu nháp."""
+        headers = await _admin_headers(client, db_session)
+        template = await self._create_template(client, headers, is_active=True)
+
+        resp = await client.delete(f"/api/v1/admin/templates/{template['id']}", headers=headers)
+        assert resp.status_code == 204, resp.text
+
+    async def test_malformed_uuid_returns_422(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        headers = await _admin_headers(client, db_session)
+        resp = await client.delete("/api/v1/admin/templates/not-a-uuid", headers=headers)
+        assert resp.status_code == 422
+
+    async def test_delete_nonexistent_template_returns_404(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        headers = await _admin_headers(client, db_session)
+        resp = await client.delete(f"/api/v1/admin/templates/{uuid.uuid4()}", headers=headers)
+        assert resp.status_code == 404
+
+    async def test_non_admin_returns_403(self, client: AsyncClient) -> None:
+        headers = await _user_headers(client)
+        resp = await client.delete(f"/api/v1/admin/templates/{uuid.uuid4()}", headers=headers)
+        assert resp.status_code == 403
+
+    async def test_unauthenticated_returns_401(self, client: AsyncClient) -> None:
+        resp = await client.delete(f"/api/v1/admin/templates/{uuid.uuid4()}")
+        assert resp.status_code == 401
+
+
+class TestDeletedTemplateDoesNotBreakGeneratedDocuments:
+    """Kiểm chứng lời hứa trung tâm của endpoint xoá mẫu.
+
+    Cả thiết kế (xoá cứng thay vì xoá mềm) đứng trên đúng một khẳng định: nội dung mẫu
+    được SAO CHÉP vào `proposals.content` lúc sinh, không có cột nào trỏ ngược lại bảng
+    mẫu. Nếu khẳng định đó sai thì xoá một mẫu sẽ làm hỏng báo giá của khách hàng — nên
+    nó phải được chứng minh bằng đường đi thật, không phải bằng đọc lược đồ.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _permissive_ai(self):
+        app.dependency_overrides[get_ai_facade] = lambda: _PermissiveAIFacade()
+        yield
+        app.dependency_overrides.pop(get_ai_facade, None)
+
+    async def test_proposal_survives_deletion_of_its_source_template(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        admin_h = await _admin_headers(client, db_session)
+        template = (
+            await client.post(
+                "/api/v1/admin/templates",
+                json={
+                    "name": "Mẫu báo giá chuẩn",
+                    "template_type": "proposal",
+                    "content": {"body": "Điều khoản chuẩn: đặt cọc 50%."},
+                    "is_active": True,
+                },
+                headers=admin_h,
+            )
+        ).json()["data"]
+
+        user_h = await _user_headers(client)
+        user_id = (await client.get("/api/v1/users/me", headers=user_h)).json()["data"]["id"]
+        await grant_ai_plan(db_session, uuid.UUID(user_id))
+        deal_id = await _make_deal(client, user_h)
+
+        gen = await client.post(
+            f"/api/v1/proposals/generate-from-deal/{deal_id}?template_id={template['id']}",
+            headers=user_h,
+        )
+        assert gen.status_code == 201, gen.text
+        proposal = gen.json()["data"]
+
+        deleted = await client.delete(
+            f"/api/v1/admin/templates/{template['id']}", headers=admin_h
+        )
+        assert deleted.status_code == 204, deleted.text
+
+        after = await client.get(f"/api/v1/proposals/{proposal['id']}", headers=user_h)
+        assert after.status_code == 200, after.text
+        assert after.json()["data"]["content"] == proposal["content"]
 
 
 # ---------------------------------------------------------------------------

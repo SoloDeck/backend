@@ -411,6 +411,17 @@ class AdminRepository:
             select(SystemTemplateModel).where(SystemTemplateModel.id == template_id)
         )
 
+    async def count_child_templates(self, template_id: uuid.UUID) -> int:
+        return await self.db.scalar(
+            select(func.count(SystemTemplateModel.id)).where(
+                SystemTemplateModel.parent_template_id == template_id
+            )
+        ) or 0
+
+    async def delete_template(self, template: SystemTemplateModel) -> None:
+        await self.db.delete(template)
+        await self.db.flush()
+
     # -------------------------------------------------------------------------
     # Feature Flags
     # -------------------------------------------------------------------------

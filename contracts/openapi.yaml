@@ -3549,6 +3549,22 @@ paths:
           $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/Conflict'
+    delete:
+      tags: [Admin]
+      summary: Delete a plan
+      description: |
+        Permanently removes the plan. Only possible while nothing references it —
+        returns 409 if any subscription or payment record still points at the plan,
+        listing how many. To retire a plan that still has subscribers, PATCH it with
+        `is_active=false` instead: that hides it from the catalog and leaves existing
+        subscriptions untouched.
+      responses:
+        '204':
+          description: Plan deleted
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
 
   /admin/ai-costs:
     get:
@@ -3708,6 +3724,22 @@ paths:
                     properties:
                       data:
                         $ref: '#/components/schemas/SystemTemplateResponse'
+    delete:
+      tags: [Admin]
+      summary: Delete a system template
+      description: |
+        Permanently removes the template from the library. Proposals and contracts already
+        generated from it are unaffected — template content is copied into the document at
+        generation time, nothing points back at this row. Returns 409 only if other
+        templates were derived from this one (`parent_template_id`); deactivate with
+        `is_active=false` instead if you only want to hide it from AI generation.
+      responses:
+        '204':
+          description: Template deleted
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
 
   /admin/feature-flags:
     get:
