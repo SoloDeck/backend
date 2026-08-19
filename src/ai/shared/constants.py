@@ -53,7 +53,12 @@ SUPPORTED_LLM_PROVIDERS: frozenset[str] = frozenset(get_args(LLMProviderName))
 # có cấu trúc chứ không đọc văn xuôi.
 #
 # Danh sách model đổi theo thời gian; kiểm bằng `GET https://api.groq.com/openai/v1/models`
-# với chính khoá đang dùng, đừng đoán theo tên.  #Huynh
+# và `GET https://generativelanguage.googleapis.com/v1beta/models` với chính khoá đang dùng,
+# đừng đoán theo tên.  #Huynh
+#
+# ĐÃ KIỂM 2026-08-19 bằng khoá dev: Groq còn `openai/gpt-oss-120b`; `llama-3.3-70b-versatile`
+# và `llama-3.1-8b-instant` KHÔNG còn trong danh sách (chỉ còn mấy bản llama-prompt-guard,
+# không phải model hội thoại). Gemini còn cả `gemini-2.5-flash` lẫn `gemini-3.5-flash-lite`.
 
 SUPPORTED_LLM_MODELS: dict[str, set[str]] = {
     "groq": {
@@ -61,6 +66,7 @@ SUPPORTED_LLM_MODELS: dict[str, set[str]] = {
     },
     "gemini": {
         "gemini-2.5-flash",
+        "gemini-3.5-flash-lite",
     },
     "ollama": {
         "qwen3:4b",

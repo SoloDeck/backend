@@ -2315,6 +2315,7 @@ class TestUpdateAiProviderEndpoint:
         [
             ("groq", "openai/gpt-oss-120b"),
             ("gemini", "gemini-2.5-flash"),
+            ("gemini", "gemini-3.5-flash-lite"),
             ("ollama", "qwen3:4b"),
         ],
     )
