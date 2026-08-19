@@ -84,9 +84,37 @@ class TestCreateReminder:
         resp = await client.post("/api/v1/reminders", json={"target_type": "deal"}, headers=headers)
         assert resp.status_code == 422
 
+    async def test_invalid_channel_returns_422_not_500(self, client: AsyncClient) -> None:
+        headers = await _auth(client)
+        deal_id = await _make_deal_id(client, headers)
+        resp = await client.post(
+            "/api/v1/reminders",
+            json=_reminder_payload(deal_id) | {"channel": "sms"},
+            headers=headers,
+        )
+        assert resp.status_code == 422
+
+    async def test_invalid_reminder_type_returns_422_not_500(self, client: AsyncClient) -> None:
+        headers = await _auth(client)
+        deal_id = await _make_deal_id(client, headers)
+        resp = await client.post(
+            "/api/v1/reminders",
+            json=_reminder_payload(deal_id, reminder_type="not_a_real_type"),
+            headers=headers,
+        )
+        assert resp.status_code == 422
+
     async def test_unauthenticated_returns_401(self, client: AsyncClient) -> None:
         resp = await client.post("/api/v1/reminders", json=_reminder_payload(str(uuid.uuid4())))
         assert resp.status_code == 401
+
+    async def test_past_scheduled_at_returns_422(self, client: AsyncClient) -> None:
+        headers = await _auth(client)
+        deal_id = await _make_deal_id(client, headers)
+        payload = _reminder_payload(deal_id)
+        payload["scheduled_at"] = (datetime.now(UTC) - timedelta(days=1)).isoformat()
+        resp = await client.post("/api/v1/reminders", json=payload, headers=headers)
+        assert resp.status_code == 422
 
 
 # ---------------------------------------------------------------------------
@@ -235,6 +263,48 @@ class TestUpdateReminder:
             f"/api/v1/reminders/{uuid.uuid4()}", json=_reminder_payload(deal_id)
         )
         assert resp.status_code == 401
+
+    async def test_partial_update_does_not_require_full_payload(
+        self, client: AsyncClient
+    ) -> None:
+        headers = await _auth(client)
+        deal_id = await _make_deal_id(client, headers)
+        reminder = await _create_reminder(client, headers, deal_id, reminder_type="payment_due")
+
+        resp = await client.patch(
+            f"/api/v1/reminders/{reminder['id']}",
+            json={"message_preview": "Just a nudge"},
+            headers=headers,
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()["data"]
+        assert body["message_preview"] == "Just a nudge"
+        assert body["reminder_type"] == "payment_due"
+        assert body["channel"] == "email"
+
+    async def test_invalid_channel_returns_422_not_500(self, client: AsyncClient) -> None:
+        headers = await _auth(client)
+        deal_id = await _make_deal_id(client, headers)
+        reminder = await _create_reminder(client, headers, deal_id)
+
+        resp = await client.patch(
+            f"/api/v1/reminders/{reminder['id']}",
+            json={"channel": "sms"},
+            headers=headers,
+        )
+        assert resp.status_code == 422
+
+    async def test_past_scheduled_at_returns_422(self, client: AsyncClient) -> None:
+        headers = await _auth(client)
+        deal_id = await _make_deal_id(client, headers)
+        reminder = await _create_reminder(client, headers, deal_id)
+
+        resp = await client.patch(
+            f"/api/v1/reminders/{reminder['id']}",
+            json={"scheduled_at": (datetime.now(UTC) - timedelta(days=1)).isoformat()},
+            headers=headers,
+        )
+        assert resp.status_code == 422
 
 
 # ---------------------------------------------------------------------------

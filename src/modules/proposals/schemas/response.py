@@ -27,6 +27,18 @@ class TermTemplateOption(BaseModel):
     #: chọn xong mới phát hiện tờ giấy gần như trống.
     skeleton_blocks: list[str] = []
 
+class PublicProposalResponse(BaseModel):
+    """Client-facing read-only view via share link — no internal IDs exposed."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    version_number: int
+    status: str
+    content: dict
+    sent_at: datetime | None
+    responded_at: datetime | None
+
+
 class ProposalResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

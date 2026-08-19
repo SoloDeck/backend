@@ -10,7 +10,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 
 from src.config.settings import settings
-from src.infrastructure.database.models import TokenBlacklistModel
+from src.infrastructure.database.models import TokenBlacklistModel, UserModel
 from src.shared.dependencies.db import DBSession
 
 _bearer = HTTPBearer(auto_error=True)
@@ -22,6 +22,7 @@ class TokenClaims(BaseModel):
     role: str  # freelancer | admin
     subscription_tier: str  # free | pro | agency
     jti: str  # JWT ID for blacklist check
+    iat: int  # issued-at (unix timestamp) — checked against sessions_revoked_at
 
 
 async def get_current_user(
@@ -30,9 +31,10 @@ async def get_current_user(
 ) -> TokenClaims:
     """Validate JWT and return decoded claims. Raises 401 on any failure.
 
-    Also rejects tokens whose jti was blacklisted by logout or an admin's
-    revoke_user_sessions — signature/expiry alone can't catch either, since
-    both leave the JWT itself untouched and only valid until it naturally expires.
+    Also rejects tokens that were individually blacklisted (logout) or minted
+    before an admin-forced session revocation (suspend, revoke_user_sessions) —
+    signature/expiry alone can't catch either, since both leave the JWT itself
+    untouched and valid until it naturally expires.
     """
     token = credentials.credentials
     try:
@@ -48,10 +50,17 @@ async def get_current_user(
             detail={"error": "UNAUTHORIZED", "message": "Invalid or expired token"},
         ) from err
 
-    is_blacklisted = await db.scalar(
+    blacklisted = await db.scalar(
         select(TokenBlacklistModel.id).where(TokenBlacklistModel.jti == claims.jti)
     )
-    if is_blacklisted is not None:
+    # Deliberately not filtering by deleted_at here — a soft-deleted account's own
+    # endpoints already 404 downstream (see TestDeleteMe.test_deleted_user_cannot_fetch_profile);
+    # this dependency only cares about admin-forced revocation (suspend/revoke_user_sessions).
+    user = await db.scalar(select(UserModel).where(UserModel.id == uuid.UUID(claims.sub)))
+    revoked = blacklisted is not None or user is None or user.status == "suspended"
+    if not revoked and user.sessions_revoked_at is not None:
+        revoked = claims.iat < user.sessions_revoked_at.timestamp()
+    if revoked:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail={"error": "UNAUTHORIZED", "message": "Token has been revoked"},

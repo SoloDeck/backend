@@ -1,3 +1,28 @@
+# =============================================================================
+# DESIGN ARTEFACT — NOT SERVED. Editing this file does not change the API,
+# /docs, or /openapi.json.
+#
+# Until 2026-08-04 this document WAS the served schema: src/main.py's
+# custom_openapi() loaded it verbatim. The code outgrew it without anyone
+# noticing — 148 operations here against 175 implemented — so 35 working
+# endpoints were invisible in Swagger and could not be called from /docs at
+# all. Among them PATCH /proposals/{id}/price, POST /proposals/ai-generate,
+# every /notifications route, and the whole reminder rules/preview/send group.
+# They read as unimplemented to anyone consulting the docs page.
+#
+# The live schema is now generated from the routes registered in src/main.py,
+# so it cannot drift again. This file is kept for two things only:
+#   1. the original contract-first design record (see x-contract-verification)
+#   2. DTO shape reference — doc comments across src/ai/** still cite it for
+#      ContractContentDTO, FollowUpGenerationResponse and friends, and those
+#      shapes remain accurate.
+#
+# It is NOT a reliable answer to "does endpoint X exist?". Ask the running app:
+#   curl -s localhost:8000/openapi.json | jq '.paths | keys'
+#
+# Do not spend time hand-syncing the drift. That rebuilds the second source of
+# truth this change removed.
+# =============================================================================
 openapi: 3.1.0
 info:
   title: SoloDesk API
@@ -377,11 +402,29 @@ paths:
       tags: [Auth]
       summary: Invalidate current session
       description: |
-        Blacklists the caller's access token in Redis. Any subsequent request carrying
-        the same token returns 401. The refresh token is also revoked server-side.
+        Blacklists the caller's access token (stored in Postgres, not Redis). Any
+        subsequent request carrying the same token returns 401. Pass `refresh_token`
+        in the body to also blacklist it — without it, the refresh token stays valid
+        until it naturally expires (up to 30 days), so anyone else holding it can
+        still mint new access tokens after this call.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LogoutRequest'
       responses:
-        '204':
+        '200':
           description: Logged out
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/MessageResponse'
         '401':
           $ref: '#/components/responses/Unauthorized'
 
@@ -424,10 +467,11 @@ paths:
   /auth/password-reset/request:
     post:
       tags: [Auth]
-      summary: Request a password reset email
+      summary: Request a password reset OTP by email
       description: |
-        Always returns 204 regardless of whether the email is registered, to prevent
-        email enumeration. The reset link is valid for 1 hour.
+        Always responds the same way regardless of whether the email is registered, to
+        prevent email enumeration. Sends a 6-digit OTP (not a link) valid for 15 minutes.
+        Not currently rate-limited.
       security: []
       requestBody:
         required: true
@@ -436,18 +480,28 @@ paths:
             schema:
               $ref: '#/components/schemas/PasswordResetRequestBody'
       responses:
-        '204':
-          description: Reset email sent (always 204 regardless of whether email exists)
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
+        '200':
+          description: OTP sent if the email is registered (same response either way)
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/MessageResponse'
 
   /auth/password-reset/confirm:
     post:
       tags: [Auth]
-      summary: Apply new password using reset token
+      summary: Apply new password using the emailed OTP
       description: |
-        Token is single-use and expires after 1 hour. On success, all existing sessions
-        for the account are revoked immediately.
+        OTP is single-use and expires after 15 minutes. On success, all of the account's
+        existing sessions (access and refresh tokens already issued) are invalidated
+        immediately, same mechanism as an admin-forced session revocation. Invalid,
+        expired, and already-used OTPs all return the identical 401 — deliberately not
+        distinguished, to avoid leaking which case applies to a guesser.
       security: []
       requestBody:
         required: true
@@ -456,16 +510,19 @@ paths:
             schema:
               $ref: '#/components/schemas/PasswordResetConfirmRequest'
       responses:
-        '204':
+        '200':
           description: Password updated
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '410':
-          description: Token expired or already used
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/MessageResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
 
   # -------------------------------------------------------------------------
   # USERS
@@ -1262,8 +1319,13 @@ paths:
       description: |
         Stage transitions are **forward-only**. Terminal stages (`completed_and_billed`,
         `lost`) cannot be exited. Business prerequisites:
-        - Transitioning to `active` requires at least one accepted proposal.
-        - Transitioning to `completed_and_billed` requires at least one invoice linked to the deal.
+        - Transitioning to `active` requires at least one accepted proposal AND a contract
+          with the client's signature recorded (`signed_by_client_at` set) — an accepted
+          proposal alone is not enough.
+        - Transitioning to `completed_and_billed` requires every payment-milestone task
+          ("Thu tiền:", auto-generated on the linked project from the contract's payment
+          milestones once the deal goes active) to be marked done. A deal with no payment
+          milestones at all is not blocked. Does NOT require a linked invoice.
         - Moving to `lost` or `completed_and_billed` sets `closed_at` and auto-cancels all pending reminders.
       requestBody:
         required: true
@@ -1283,7 +1345,7 @@ paths:
                     properties:
                       data:
                         $ref: '#/components/schemas/DealResponse'
-        '400':
+        '409':
           description: Invalid transition or missing prerequisites
           content:
             application/json:
@@ -2223,7 +2285,9 @@ paths:
       summary: Create an invoice
       description: |
         An invoice **must** have `contract_id` or `deal_id` (or both) — standalone
-        invoices are rejected. Requires at least one line item. `total` is calculated
+        invoices are rejected. Also requires either `subtotal` or at least one
+        `line_items` entry — when `subtotal` is omitted, it's computed by summing
+        `quantity * unit_price` across `line_items`. `total` is calculated
         server-side as `subtotal + tax_amount`; the invoice starts in `draft` status.
       requestBody:
         required: true
@@ -4572,6 +4636,7 @@ components:
             - FORBIDDEN
             - NOT_FOUND
             - CONFLICT
+            - EXPIRED
             - BUSINESS_RULE_VIOLATION
             - SUBSCRIPTION_REQUIRED
             - AI_QUOTA_EXCEEDED
@@ -4712,6 +4777,15 @@ components:
         google_web_client_id:
           type: string
 
+    LogoutRequest:
+      type: object
+      properties:
+        refresh_token:
+          type: string
+          description: |
+            Optional. If provided, also blacklisted so it can't be used to mint a new
+            access token — without it, only the current access token is invalidated.
+
     PasswordResetRequestBody:
       type: object
       required: [email]
@@ -4722,10 +4796,12 @@ components:
 
     PasswordResetConfirmRequest:
       type: object
-      required: [token, new_password]
+      required: [otp, new_password]
       properties:
-        token:
+        otp:
           type: string
+          pattern: '^\d{6}$'
+          description: 6-digit OTP sent via email
         new_password:
           type: string
           format: password
@@ -5318,6 +5394,7 @@ components:
           $ref: '#/components/schemas/ClientType'
         name:
           type: string
+          minLength: 1
           maxLength: 255
         email:
           type: string
@@ -5342,6 +5419,10 @@ components:
       properties:
         name:
           type: string
+          minLength: 1
+          maxLength: 255
+        type:
+          $ref: '#/components/schemas/ClientType'
         email:
           type: string
           format: email
@@ -6330,9 +6411,11 @@ components:
         contract_id:
           type: string
           format: uuid
+          description: At least one of contract_id/deal_id is required; both may be set.
         deal_id:
           type: string
           format: uuid
+          description: At least one of contract_id/deal_id is required; both may be set.
         issue_date:
           type: string
           format: date
@@ -6350,6 +6433,9 @@ components:
           type: number
           format: decimal
           default: 0
+          minimum: 0
+          maximum: 1
+          description: Fraction of subtotal, e.g. 0.10 for 10% VAT — not a percentage.
         notes:
           type: string
         line_items:
@@ -6383,6 +6469,9 @@ components:
         tax_rate:
           type: number
           format: decimal
+          minimum: 0
+          maximum: 1
+          description: Fraction of subtotal, e.g. 0.10 for 10% VAT — not a percentage.
         notes:
           type: string
         line_items:

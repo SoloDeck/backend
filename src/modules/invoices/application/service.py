@@ -96,8 +96,30 @@ class InvoicesService:
         user_id: uuid.UUID,
         status: str | None = None,
         invoice_number: str | None = None,
-    ) -> list:
-        return await self.repo.list_all(user_id, status=status, invoice_number=invoice_number)
+        from_issue_date: date | None = None,
+        to_issue_date: date | None = None,
+        from_due_date: date | None = None,
+        to_due_date: date | None = None,
+        overdue_only: bool = False,
+        sort_by: str = "issue_date",
+        sort_order: str = "desc",
+        page: int = 1,
+        page_size: int = 20,
+    ) -> tuple[list, int]:
+        return await self.repo.list_all(
+            user_id,
+            status=status,
+            invoice_number=invoice_number,
+            from_issue_date=from_issue_date,
+            to_issue_date=to_issue_date,
+            from_due_date=from_due_date,
+            to_due_date=to_due_date,
+            overdue_only=overdue_only,
+            sort_by=sort_by,
+            sort_order=sort_order,
+            page=page,
+            page_size=page_size,
+        )
 
     async def get_one(self, user_id: uuid.UUID, invoice_id: uuid.UUID):  # type: ignore[return]
         return await self._get_invoice(user_id, invoice_id)

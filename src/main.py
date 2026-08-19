@@ -3,13 +3,12 @@
 import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from pathlib import Path
 from typing import Any
 
 import structlog
-import yaml
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.openapi.utils import get_openapi
 from fastapi.responses import HTMLResponse, JSONResponse
 from sqlalchemy import text
 
@@ -27,6 +26,7 @@ from src.modules.analytics.api.router import router as analytics_router
 # Module routers
 from src.modules.auth.api.router import router as auth_router
 from src.modules.clients.api.router import router as clients_router
+from src.modules.contracts.api.public_router import router as public_contracts_router
 from src.modules.contracts.api.router import router as contracts_router
 from src.modules.deals.api.public_router import router as public_intake_router
 from src.modules.deals.api.router import router as deals_router
@@ -38,6 +38,7 @@ from src.modules.notifications.api.router import router as notifications_router
 from src.modules.payments.api.public_router import router as public_payments_router
 from src.modules.payments.api.router import router as payments_router
 from src.modules.projects.api.router import router as projects_router
+from src.modules.proposals.api.public_router import router as public_proposals_router
 from src.modules.proposals.api.router import router as proposals_router
 from src.modules.reminders.api.router import router as reminders_router
 from src.modules.subscriptions.api.router import router as subscriptions_router
@@ -158,25 +159,76 @@ app = FastAPI(
 )
 
 
+# Version namespace every router is mounted under. Defined here rather than beside the
+# include_router calls because the OpenAPI helpers below need it first.
+API_V1 = "/api/v1"
+
+# Origins only. `_relativize_paths` appends the shared prefix below, so these must
+# NOT already end in `/api/v1` — otherwise Swagger would post to `/api/v1/api/v1/...`.
+_OPENAPI_SERVERS: list[dict[str, str]] = [
+    {"url": "http://localhost:8000", "description": "Local development"},
+    {"url": "https://api-staging.solodesk.space", "description": "Staging"},
+    {"url": "https://api.solodesk.space", "description": "Production"},
+]
+
+
+def _relativize_paths(schema: dict[str, Any]) -> dict[str, Any]:
+    """Move the shared `/api/v1` prefix out of the path keys and into the server URLs.
+
+    Every router is mounted under `API_V1`, so `get_openapi` emits it on all 133 paths
+    and the endpoint list at `/docs` reads `/api/v1/...` over and over. Declaring it
+    once per server instead is equivalent for the client — Swagger concatenates
+    `servers[0].url` with the path — and leaves the list readable.
+
+    Bails out unchanged if anything is mounted outside the prefix. Appending the prefix
+    to the servers while some path did not carry it would silently point that endpoint
+    at a URL that does not exist; a repetitive but correct document beats a tidy broken
+    one.
+    """
+    paths: dict[str, Any] = schema.get("paths") or {}
+    if not paths or not all(p.startswith(API_V1) for p in paths):
+        return schema
+
+    schema["paths"] = {(p.removeprefix(API_V1) or "/"): item for p, item in paths.items()}
+    schema["servers"] = [
+        {**server, "url": server["url"] + API_V1} for server in schema.get("servers", [])
+    ]
+    return schema
+
+
 def custom_openapi() -> dict[str, Any]:
-    """Serve the contract-first OpenAPI document while API routers are scaffolded."""
+    """Build the OpenAPI document from the routes actually registered on the app.
+
+    This used to serve `contracts/openapi.yaml` — a hand-maintained document from the
+    contract-first bootstrap, back when the routers were still scaffolding. The code
+    outgrew it: 35 implemented endpoints had accumulated that the file never gained,
+    among them `PATCH /proposals/{id}/price`, `POST /proposals/ai-generate`, every
+    `/notifications` route and the whole reminder rules/preview/send group. Because
+    Swagger renders this document, those endpoints were invisible at `/docs` and
+    could not be called from there at all — they looked unimplemented to anyone
+    reading the docs page, including us.
+
+    `contracts/openapi.yaml` is kept as a design artefact. It is no longer the served
+    truth, so it can no longer drift away from the implementation unnoticed.
+    """
     if app.openapi_schema:
         return app.openapi_schema
 
-    contract_path = Path(__file__).resolve().parents[1] / "contracts" / "openapi.yaml"
-    with contract_path.open(encoding="utf-8") as spec_file:
-        schema = yaml.safe_load(spec_file)
+    schema = get_openapi(
+        title=app.title,
+        version=app.version,
+        description=app.description,
+        routes=app.routes,
+    )
 
-    # In development, promote the localhost server to the top so Swagger UI
-    # sends requests to the local instance instead of production.
+    # Swagger UI sends "Try it out" requests to servers[0]. Outside production, put
+    # localhost first so the docs page drives the local instance, not the deployed API.
+    servers = list(_OPENAPI_SERVERS)
     if settings.debug or settings.app_env == "development":
-        servers: list[dict[str, Any]] = schema.get("servers", [])
-        local = [s for s in servers if "localhost" in s.get("url", "")]
-        others = [s for s in servers if "localhost" not in s.get("url", "")]
-        if local:
-            schema["servers"] = local + others
+        servers.sort(key=lambda s: "localhost" not in s["url"])
+    schema["servers"] = servers
 
-    app.openapi_schema = schema
+    app.openapi_schema = _relativize_paths(schema)
     return app.openapi_schema
 
 
@@ -206,14 +258,14 @@ setup_exception_handlers(app)
 # ---------------------------------------------------------------------------
 # Routers — API v1
 # ---------------------------------------------------------------------------
-API_V1 = "/api/v1"
-
 app.include_router(auth_router, prefix=f"{API_V1}/auth", tags=["Auth"])
 app.include_router(users_router, prefix=f"{API_V1}/users", tags=["Users"])
 app.include_router(subscriptions_router, prefix=f"{API_V1}/subscriptions", tags=["Subscriptions"])
 app.include_router(clients_router, prefix=f"{API_V1}/clients", tags=["Clients"])
 app.include_router(deals_router, prefix=f"{API_V1}/deals", tags=["Deals"])
+app.include_router(public_proposals_router, prefix=f"{API_V1}/proposals/public", tags=["Public"])
 app.include_router(proposals_router, prefix=f"{API_V1}/proposals", tags=["Proposals"])
+app.include_router(public_contracts_router, prefix=f"{API_V1}/contracts/public", tags=["Public"])
 app.include_router(contracts_router, prefix=f"{API_V1}/contracts", tags=["Contracts"])
 app.include_router(public_invoices_router, prefix=f"{API_V1}/invoices/public", tags=["Public"])
 app.include_router(invoices_router, prefix=f"{API_V1}/invoices", tags=["Invoices"])

@@ -4,7 +4,6 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 from sqlalchemy import func, or_, select
-from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -16,11 +15,9 @@ from src.infrastructure.database.models import (
     DealModel,
     FeatureFlagModel,
     PlanModel,
-    RefreshTokenModel,
     SubscriptionModel,
     SubscriptionPaymentModel,
     SystemTemplateModel,
-    TokenBlacklistModel,
     UserModel,
 )
 
@@ -143,27 +140,6 @@ class AdminRepository:
                 UserModel.deleted_at.is_(None),
             )
         ) or 0
-
-    async def get_user_refresh_tokens(self, user_id: uuid.UUID) -> list:
-        now = datetime.now(UTC)
-        result = await self.db.execute(
-            select(RefreshTokenModel).where(
-                RefreshTokenModel.user_id == user_id,
-                RefreshTokenModel.expires_at > now,
-                RefreshTokenModel.revoked_at.is_(None),
-            )
-        )
-        return list(result.scalars().all())
-
-    async def blacklist_refresh_token(
-        self, jti: str, user_id: uuid.UUID, expires_at: datetime
-    ) -> None:
-        stmt = (
-            pg_insert(TokenBlacklistModel)
-            .values(jti=jti, user_id=user_id, expires_at=expires_at)
-            .on_conflict_do_nothing(index_elements=["jti"])
-        )
-        await self.db.execute(stmt)
 
     # -------------------------------------------------------------------------
     # Plans

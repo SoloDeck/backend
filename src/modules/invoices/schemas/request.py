@@ -18,7 +18,12 @@ class InvoiceRequest(BaseModel):
     deal_id: uuid.UUID | None = None
     issue_date: date | None = None
     subtotal: Decimal | None = None
-    tax_rate: Decimal = Decimal("0")
+    tax_rate: Decimal = Field(
+        default=Decimal("0"),
+        ge=0,
+        le=1,
+        description="Fraction of subtotal, e.g. 0.10 for 10% VAT — not a percentage.",
+    )
     currency: str = "VND"
     due_date: date
     notes: str | None = None
@@ -40,7 +45,12 @@ class InvoiceRequest(BaseModel):
 class InvoiceUpdateRequest(BaseModel):
     due_date: date | None = None
     subtotal: Decimal | None = None
-    tax_rate: Decimal | None = None
+    tax_rate: Decimal | None = Field(
+        default=None,
+        ge=0,
+        le=1,
+        description="Fraction of subtotal, e.g. 0.10 for 10% VAT — not a percentage.",
+    )
     notes: str | None = None
     line_items: list[InvoiceLineItemRequest] | None = None
 

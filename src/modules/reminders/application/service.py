@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.modules.reminders.infrastructure.repository import RemindersRepository
-from src.modules.reminders.schemas.request import ReminderRequest
+from src.modules.reminders.schemas.request import CreateReminderRequest, UpdateReminderRequest
 from src.shared.exceptions.domain import NotFoundError
 
 
@@ -25,7 +25,7 @@ class RemindersService:
             raise NotFoundError(f"Reminder {reminder_id} not found")
         return reminder
 
-    async def create(self, user_id: uuid.UUID, payload: ReminderRequest):  # type: ignore[return]
+    async def create(self, user_id: uuid.UUID, payload: CreateReminderRequest):  # type: ignore[return]
         return await self.repo.create(
             owner_user_id=user_id,
             target_type=payload.target_type,
@@ -49,13 +49,14 @@ class RemindersService:
     async def get_one(self, user_id: uuid.UUID, reminder_id: uuid.UUID):  # type: ignore[return]
         return await self._get_reminder(user_id, reminder_id)
 
-    async def update(self, user_id: uuid.UUID, reminder_id: uuid.UUID, payload: ReminderRequest):  # type: ignore[return]
+    async def update(self, user_id: uuid.UUID, reminder_id: uuid.UUID, payload: UpdateReminderRequest):  # type: ignore[return]
         reminder = await self._get_reminder(user_id, reminder_id)
-        reminder.scheduled_at = payload.scheduled_at
-        reminder.message_preview = payload.message_preview
-        reminder.channel = payload.channel
-        reminder.reminder_type = payload.reminder_type
-        reminder.attachments = payload.attachments
+        if payload.scheduled_at is not None:
+            reminder.scheduled_at = payload.scheduled_at
+        if payload.message_preview is not None:
+            reminder.message_preview = payload.message_preview
+        if payload.channel is not None:
+            reminder.channel = payload.channel
         return await self.repo.save(reminder)
 
     async def cancel(self, user_id: uuid.UUID, reminder_id: uuid.UUID) -> None:
