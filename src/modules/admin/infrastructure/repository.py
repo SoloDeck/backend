@@ -401,7 +401,7 @@ class AdminRepository:
         await self.db.flush()
         await self.db.refresh(configuration)
         return configuration
-    
+
     # -------------------------------------------------------------------------
     # System Templates
     # -------------------------------------------------------------------------

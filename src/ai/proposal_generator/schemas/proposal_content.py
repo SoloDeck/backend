@@ -1,13 +1,13 @@
 from typing import Any
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator
 
 # Hai hàm ép kiểu này giờ nằm ở src/ai/shared/text_coercion.py vì contract_generator
 # cũng cần đúng như vậy.  #Huynh
 from src.ai.shared.text_coercion import to_text as _to_text
 from src.ai.shared.text_coercion import to_text_list as _to_text_list
 
-from .proposal_document import PaymentMilestone, default_payment_milestones
+from .proposal_document import PaymentMilestone
 
 
 class ProposalContent(BaseModel):
@@ -153,11 +153,12 @@ class ProposalContent(BaseModel):
             items.append({"label": label, "percent": percent, "amount": amount, "due": due})
         return items
 
-    @model_validator(mode="after")
-    def _ensure_payment_milestones(self) -> "ProposalContent":
-        """Model không trả mốc có cấu trúc (hay chỉ ghi văn xuôi ở `payment_terms`) thì điền
-        lịch chuẩn 50/50 — prompt vốn đã yêu cầu mặc định này. Nhờ vậy mọi báo giá luôn có
-        mốc để render bảng thanh toán VÀ để Stage 2 sinh task "Thu tiền:".  #Huynh"""
-        if not self.payment_milestones:
-            self.payment_milestones = default_payment_milestones()
-        return self
+    # ĐÃ BỎ: validator tự điền lịch 50/50 khi model không trả mốc nào.
+    #
+    # Nó có lý khi báo giá thu tiền theo mốc %. Giờ thu theo HẠNG MỤC, và prompt đã yêu cầu
+    # model trả `payment_milestones: []` — giữ validator thì mọi báo giá mới lại mọc ra một
+    # lịch 50/50 ma, mâu thuẫn với chính bảng chi phí in ngay bên trên nó.
+    #
+    # Lưới an toàn không mất: `billing_task_payloads_for_deal` vẫn rơi về
+    # `default_payment_milestones()` khi một báo giá không có hạng mục LẪN không có mốc, nên
+    # không có deal nào đi tới lúc ký hợp đồng mà không có gì để thu.  #Huynh

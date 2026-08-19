@@ -7,6 +7,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from decimal import Decimal
 
+import httpx
 from google import genai
 from google.genai.types import GenerateContentConfig
 from groq import Groq
@@ -17,8 +18,6 @@ from src.config.settings import settings
 from src.ai.shared.constants import (
     SUPPORTED_LLM_MODELS,
 )
-
-import httpx
 
 
 # ==========================================================
@@ -66,6 +65,8 @@ class BaseLLMProvider(ABC):
 # ==========================================================
 
 class GroqProvider(BaseLLMProvider):
+    # Model không còn cố định ở đây — admin chọn trong `SUPPORTED_LLM_MODELS`
+    # (xem ghi chú về việc Groq gỡ dòng Llama trong `src/ai/shared/constants.py`).
 
     def __init__(self, model: str):
         super().__init__(model)

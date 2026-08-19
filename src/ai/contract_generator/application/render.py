@@ -3,6 +3,11 @@ from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader
 
+from src.shared.domain.template_blocks import (
+    CONTRACT_CLAUSE_DEFAULTS,
+    CONTRACT_SECTION_DEFAULTS,
+)
+
 from ..schemas.contract_document import ContractDocument
 
 
@@ -25,7 +30,14 @@ class ContractPdfRenderer:
         # `editable=True`: render CẢ những điều khoản đang trống (revision/ip/termination/
         # bổ sung) thành ô rỗng có `data-field` để người dùng bấm vào gõ. Bản đọc-only/PDF
         # thì bỏ qua điều trống cho tờ giấy sạch. Cùng một template, khác đúng một cờ.  #Huynh
-        return template.render(**document.model_dump(), editable=editable)
+        return template.render(
+            **document.model_dump(),
+            editable=editable,
+            # Tên mục là DỮ LIỆU: bảng mặc định ở một nơi duy nhất (Python),
+            # template chỉ tra bảng. Mẫu của admin ghi đè qua `section_titles`.
+            section_defaults=CONTRACT_SECTION_DEFAULTS,
+            clause_defaults=CONTRACT_CLAUSE_DEFAULTS,
+        )
 
     def render_pdf(self, document: ContractDocument) -> bytes:
         from weasyprint import HTML  # lazy: requires GTK system libs

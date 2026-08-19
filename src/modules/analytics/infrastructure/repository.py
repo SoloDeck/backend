@@ -11,11 +11,9 @@ from src.infrastructure.database.models import (
     DealModel,
     InvoiceModel,
     ProjectModel,
-    ProposalModel,
     TaskModel,
     UsageRecordModel,
 )
-from src.modules.tasks.application.service import PAYMENT_TASK_PREFIX
 
 
 @dataclass
@@ -87,21 +85,26 @@ class AnalyticsRepository:
         }
 
     async def milestone_rows(self, owner_user_id: uuid.UUID) -> list[dict]:
-        """Dữ liệu THÔ để tính tiền theo mốc thanh toán, mỗi deal một dòng.
+        """Mỗi TASK THU TIỀN một dòng:
+        `{deal_id, client_id, client_name, label, amount, collected}`.
 
-        Trả về `{deal_id, client_id, client_name, final_price, content, done_titles}` —
-        phép tính (chia % ra tiền, đối chiếu mốc với task) để tầng application lo, xem
-        `application/milestone_money.py`.
+        Tập deal được tính là **deal ĐÃ CÓ TASK THU TIỀN**, không lọc theo giai đoạn. Task thu
+        tiền sinh ra lúc GHI NHẬN HỢP ĐỒNG ĐÃ KÝ, còn deal chỉ vào `active` khi freelancer bấm
+        "Bắt đầu triển khai" — hai việc tách nhau. Lọc theo `stage` thì deal đã ký mà chưa bấm
+        triển khai bị bỏ ra ngoài, và bảng lại thiếu tiền đúng như lỗi đang phải sửa (đã bắt
+        được bằng test tích hợp, không phải đoán).
 
-        Tập deal được tính là **deal ĐÃ CÓ TASK "Thu tiền:"**, không lọc theo giai đoạn.
-        Task thu tiền sinh ra lúc GHI NHẬN HỢP ĐỒNG ĐÃ KÝ, còn deal chỉ vào `active` khi
-        freelancer bấm "Bắt đầu triển khai" — hai việc tách nhau. Lọc theo `stage` thì deal
-        đã ký mà chưa bấm triển khai bị bỏ ra ngoài, và bảng lại thiếu tiền đúng như lỗi
-        đang phải sửa (đã bắt được bằng test tích hợp, không phải đoán).
+        Đòi `billing_amount IS NOT NULL` chứ KHÔNG rơi về tiền tố tên: task cũ mà migration
+        `a4b5c6d7e8f9` cố ý không backfill (tên đã sửa, tổng lệch giá deal) thì để nó vắng mặt
+        ở đây — cộng nửa vời vào bảng tiền còn tệ hơn thiếu hẳn, vì con số trông vẫn có vẻ đúng.
+        Guard "hoàn thành dự án" vẫn bắt được chúng qua lối rơi về theo tiền tố.
 
-        Tách vài truy vấn nhỏ thay vì một join lớn: một freelancer có vài chục deal, ghép
-        trong Python rẻ hơn nhiều so với công sức đọc lại một câu SQL bốn tầng sau này.
-        Mỗi truy vấn đều lọc theo chủ sở hữu, không dựa vào join để chặn rò dữ liệu.  #Huynh
+        Không còn phải đọc báo giá: tiền nằm sẵn trên task. Bản cũ phải tra `proposals.content`
+        rồi chia % và khớp mốc với TÊN TASK — bớt được hẳn một truy vấn và cả một lớp phép tính.
+
+        Tách vài truy vấn nhỏ thay vì một join lớn: một freelancer có vài chục deal, ghép trong
+        Python rẻ hơn nhiều so với công sức đọc lại một câu SQL bốn tầng sau này. Mỗi truy vấn
+        đều lọc theo chủ sở hữu, không dựa vào join để chặn rò dữ liệu.  #Huynh
         """
         projects = (
             await self.db.execute(
@@ -120,35 +123,30 @@ class AnalyticsRepository:
         # project đã xác thực chủ ở trên chứ không dựa vào join.
         tasks = (
             await self.db.execute(
-                select(TaskModel.entity_id, TaskModel.title, TaskModel.status).where(
+                select(
+                    TaskModel.entity_id,
+                    TaskModel.title,
+                    TaskModel.status,
+                    TaskModel.billing_amount,
+                ).where(
                     TaskModel.entity_type == "project",
                     TaskModel.entity_id.in_(list(deal_by_project.keys())),
-                    TaskModel.title.like(f"{PAYMENT_TASK_PREFIX}%"),
+                    TaskModel.billing_amount.is_not(None),
                 )
             )
         ).all()
-
-        done_by_deal: dict[uuid.UUID, set[str]] = {}
-        deal_ids: set[uuid.UUID] = set()
-        for project_id, title, status in tasks:
-            deal_id = deal_by_project.get(project_id)
-            if deal_id is None:
-                continue
-            deal_ids.add(deal_id)
-            if status == "done":
-                done_by_deal.setdefault(deal_id, set()).add(title)
-
-        if not deal_ids:
+        if not tasks:
             return []
+
+        deal_ids = {
+            deal_by_project[project_id]
+            for project_id, _, _, _ in tasks
+            if project_id in deal_by_project
+        }
 
         deals = (
             await self.db.execute(
-                select(
-                    DealModel.id,
-                    DealModel.client_id,
-                    DealModel.estimated_value,
-                    ClientModel.name,
-                )
+                select(DealModel.id, DealModel.client_id, ClientModel.name)
                 .join(ClientModel, ClientModel.id == DealModel.client_id)
                 .where(
                     DealModel.owner_user_id == owner_user_id,
@@ -157,32 +155,27 @@ class AnalyticsRepository:
                 )
             )
         ).all()
-        if not deals:
+        client_by_deal = {row[0]: (row[1], row[2]) for row in deals}
+        if not client_by_deal:
             return []
 
-        # Báo giá ĐÃ CHỐT của từng deal — nguồn của các mốc thanh toán.
-        proposals = (
-            await self.db.execute(
-                select(ProposalModel.deal_id, ProposalModel.content).where(
-                    ProposalModel.owner_user_id == owner_user_id,
-                    ProposalModel.deal_id.in_([row[0] for row in deals]),
-                    ProposalModel.status == "accepted",
-                )
+        rows: list[dict] = []
+        for project_id, title, status, amount in tasks:
+            deal_id = deal_by_project.get(project_id)
+            client = client_by_deal.get(deal_id) if deal_id else None
+            if client is None:
+                continue  # deal đã xoá mềm hoặc không thuộc chủ này
+            rows.append(
+                {
+                    "deal_id": deal_id,
+                    "client_id": client[0],
+                    "client_name": client[1],
+                    "label": title,
+                    "amount": amount,
+                    "collected": status == "done",
+                }
             )
-        ).all()
-        content_by_deal = {row[0]: row[1] for row in proposals}
-
-        return [
-            {
-                "deal_id": deal_id,
-                "client_id": client_id,
-                "client_name": client_name,
-                "final_price": estimated_value,
-                "content": content_by_deal.get(deal_id) or {},
-                "done_titles": done_by_deal.get(deal_id, set()),
-            }
-            for deal_id, client_id, estimated_value, client_name in deals
-        ]
+        return rows
 
     async def revenue_monthly(self, owner_user_id: uuid.UUID, since: date) -> list[dict]:
         """Doanh thu gom theo tháng, tính từ `since` trở đi.

@@ -7507,8 +7507,8 @@ components:
           description: >-
             Must be a model belonging to the selected `llm_provider`, otherwise the
             request is rejected with 422.
-            groq: llama-3.3-70b-versatile, llama-3.1-8b-instant.
-            gemini: gemini-2.5-flash, gemini-3.5-flash-lite.
+            groq: openai/gpt-oss-120b.
+            gemini: gemini-2.5-flash.
             ollama: qwen3:4b.
           type: string
           example: gemini-2.5-flash

@@ -1,8 +1,8 @@
 import json
 from typing import Any
 
-from src.ai.shared.llm_provider import BaseLLMProvider
 from src.ai.shared.json_output import extract_json_object
+from src.ai.shared.llm_provider import BaseLLMProvider
 from src.ai.shared.prompt import load_prompt
 
 from ..schemas.proposal_content import ProposalContent

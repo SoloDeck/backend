@@ -23,6 +23,11 @@ from src.modules.contracts.schemas.response import (
 )
 from src.shared.dependencies.ai import AIFacadeDep
 from src.shared.dependencies.auth import CurrentUserId
+from src.shared.domain.template_blocks import (
+    skeleton_block_labels,
+    template_block_labels,
+    template_preview,
+)
 from src.shared.responses.response import ApiResponse, PaginatedResponse
 
 router = APIRouter()
@@ -80,7 +85,19 @@ async def list_contract_term_templates(
 ) -> ApiResponse[list[TermTemplateOption]]:
     """Mẫu điều khoản hợp đồng freelancer được chọn (theo nghề + dùng chung, đang bật)."""
     templates = await ContractsService(db=db).list_term_templates(user_id)
-    return ApiResponse.ok([TermTemplateOption(id=t.id, name=t.name) for t in templates])
+    return ApiResponse.ok(
+        [
+            TermTemplateOption(
+                id=t.id,
+                name=t.name,
+                profession=t.profession,
+                blocks=template_block_labels(t.content, "contract"),
+                preview=template_preview(t.content, "contract"),
+                skeleton_blocks=skeleton_block_labels(t.content, "contract"),
+            )
+            for t in templates
+        ]
+    )
 
 
 @router.get("/{contract_id}", response_model=ApiResponse[ContractResponse])
@@ -153,6 +170,24 @@ async def ai_generate_contract_content(
 ) -> ApiResponse[ContractResponse]:
     contract = await ContractsService(db=db).generate_content(
         user_id, contract_id, ai, template_id=template_id
+    )
+    return ApiResponse.ok(ContractResponse.model_validate(contract))
+
+
+@router.post("/{contract_id}/from-template", response_model=ApiResponse[ContractResponse])
+async def fill_contract_from_template(
+    contract_id: uuid.UUID,
+    user_id: CurrentUserId,
+    db: DBSession,
+    template_id: uuid.UUID | None = Query(default=None),
+) -> ApiResponse[ContractResponse]:
+    """Điền hợp đồng từ KHUNG mẫu — đường thứ hai, không đi qua AI.
+
+    Song sinh với `/generate` ngay trên, khác đúng một chỗ: không có `AIFacadeDep`. Frontend đổi
+    một lời gọi là chuyển được chế độ.  #Huynh
+    """
+    contract = await ContractsService(db=db).fill_from_template(
+        user_id, contract_id, template_id=template_id
     )
     return ApiResponse.ok(ContractResponse.model_validate(contract))
 

@@ -3,12 +3,14 @@
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.ai.facade import AIFacade
 from src.ai.lead_qualifier.scoring import (
+    build_gap_summary,
     compute_readiness,
     compute_win_likelihood,
     level_from_score,
@@ -81,6 +83,7 @@ _EXPECTED_QUALIFICATION_KEYS = frozenset(
 # trỏ vào một khối không tồn tại — AI không hề báo lỗi, nó chỉ lặng lẽ chấm sai. Có test khoá
 # hai phía lại với nhau (`test_tieu_de_khoi_khop_voi_prompt`).  #Huynh
 SCORED_BLOCK_HEADING = "## YÊU CẦU DỰ ÁN — DÙNG ĐỂ CHẤM ĐIỂM"
+UPDATED_BLOCK_HEADING = "## KHÁCH TRẢ LỜI THÊM — MỚI HƠN, ƯU TIÊN HƠN KHỐI TRÊN"
 EXCLUDED_BLOCK_HEADING = "## KHÔNG PHẢI LỜI KHÁCH — CẤM DÙNG ĐỂ CHẤM ĐIỂM"
 
 
@@ -132,6 +135,7 @@ class DealsService:
             currency=payload.currency,
             notes=payload.notes,
             desired_timeline=payload.desired_timeline,
+            client_budget=payload.client_budget,
             project_type=payload.project_type,
             service_category=payload.service_category,
             pricing_tier=payload.pricing_tier,
@@ -384,11 +388,20 @@ class DealsService:
         title: str | None = None,
         stage: str | None = None,
         client_id: uuid.UUID | None = None,
+        archived: bool | None = None,
+        sort_by: str = "updated_at",
         page: int = 1,
         page_size: int = 20,
     ) -> tuple[list, int]:
         return await self.repo.list_all(
-            user_id, title=title, stage=stage, client_id=client_id, page=page, page_size=page_size
+            user_id,
+            title=title,
+            stage=stage,
+            client_id=client_id,
+            archived=archived,
+            sort_by=sort_by,
+            page=page,
+            page_size=page_size,
         )
 
     async def list_intakes(
@@ -405,6 +418,33 @@ class DealsService:
 
     async def update(self, user_id: uuid.UUID, deal_id: uuid.UUID, payload: DealRequest):  # type: ignore[return]
         deal = await self._get_deal(user_id, deal_id)
+
+        # KHÔNG cho đổi giá sau khi đã sinh task thu tiền.
+        #
+        # Task thu tiền chốt số tiền vào `tasks.billing_amount` ngay lúc sinh. Trước đây tiền
+        # được chia lại theo % mỗi lần cần nên nó tự trôi theo `estimated_value`; giờ thì
+        # không. Sửa giá ở đây là bảng doanh thu (cộng từ task) và phễu (cộng từ deal) kể hai
+        # con số khác nhau, mà không có gì trên màn hình báo.
+        #
+        # So RỒI MỚI chặn, không chặn cả trường: frontend gửi `estimated_value` ở MỌI lần sửa
+        # deal (`NewDealModal.tsx`), chặn thẳng là không đổi nổi cái tiêu đề. Muốn đổi giá thật
+        # thì đi cửa phụ lục hợp đồng (`ContractsService.amend`).  #Huynh
+        new_value = getattr(payload, "estimated_value", None)
+        if new_value is not None and Decimal(new_value) != Decimal(deal.estimated_value or 0):
+            # Đọc thẳng repository, KHÔNG dùng `get_or_create_for_deal`: một cái guard mà lại
+            # tạo ra project như tác dụng phụ thì hỏng.
+            from src.modules.projects.infrastructure.repository import ProjectRepository
+            from src.modules.tasks.application.service import PAYMENT_TASK_PREFIX, TaskService
+
+            project = await ProjectRepository(self.db).get_by_deal_id(deal_id, user_id)
+            if project is not None and await TaskService(self.db).repo.has_billing_tasks(
+                "project", project.id, PAYMENT_TASK_PREFIX
+            ):
+                raise BusinessRuleError(
+                    "Deal này đã có công việc thu tiền nên không đổi giá trực tiếp được — "
+                    "các khoản phải thu đã chốt theo giá cũ. Hãy lập phụ lục hợp đồng."
+                )
+
         for field in (
             "title",
             "source",
@@ -413,6 +453,7 @@ class DealsService:
             "currency",
             "notes",
             "desired_timeline",
+            "client_budget",
             "project_type",
             "service_category",
             "pricing_tier",
@@ -531,18 +572,20 @@ class DealsService:
         if target == DealStage.ACTIVE:
             from src.modules.projects.application.service import ProjectService
             from src.modules.proposals.application.service import (
-                payment_task_payloads_for_deal,
+                billing_task_payloads_for_deal,
             )
             from src.modules.tasks.application.service import TaskService
 
             project = await ProjectService(db=self.db).get_or_create_for_deal(
                 deal_id, user_id, name=deal.title
             )
-            # Mốc thanh toán của báo giá đã chốt → task "Thu tiền:" trên project. Idempotent
-            # (bỏ title trùng) nên chuyển active nhiều lần cũng không nhân đôi.  #Huynh
-            payloads = await payment_task_payloads_for_deal(self.db, deal_id, user_id)
+            # Hạng mục chi phí của báo giá đã chốt → task thu tiền trên project. Idempotent
+            # theo "project đã có task thu tiền chưa" (KHÔNG theo tên): deal cũ đã có task
+            # "Thu tiền: ..." theo mốc % mà lại sinh thêm bộ theo hạng mục thì tên nào cũng
+            # khác nhau, dedupe theo tên không bắt được, và doanh thu cộng đôi.  #Huynh
+            payloads = await billing_task_payloads_for_deal(self.db, deal_id, user_id)
             if payloads:
-                await TaskService(self.db).create_many_for_entity(
+                await TaskService(self.db).create_billing_tasks_for_entity(
                     "project", project.id, user_id, payloads
                 )
         return saved
@@ -597,6 +640,9 @@ class DealsService:
         lead_level = level_from_score(score)
         result["suggested_lead_score"] = lead_level  # ghi đè nhãn model tự đoán
         result["score_breakdown"] = readiness_breakdown
+        # Nửa còn lại của câu hỏi "vì sao có con điểm đó": vì sao MẤT phần điểm kia, và cần
+        # gì để lên. Tra từ barem nên không tốn lượt AI nào.  #Huynh
+        result["score_gaps"] = build_gap_summary(score, readiness_breakdown)
 
         _confidence_map = {
             "HOT": AIConfidence.high(),
@@ -712,8 +758,14 @@ class DealsService:
         await self._get_deal(user_id, deal_id)  # 404 nếu deal không phải của người này
         return await self.repo.list_lead_scores(deal_id, user_id)
 
-    async def save_latest_qualification(self, user_id: uuid.UUID, deal_id: uuid.UUID):
-        """Chốt bản chấm mới nhất — đây là thứ tab "Tài liệu" hiển thị.
+    async def save_qualification(
+        self,
+        user_id: uuid.UUID,
+        deal_id: uuid.UUID,
+        qualification_id: uuid.UUID | None = None,
+        gap_acknowledged: bool = False,
+    ):
+        """Đóng dấu một bản chấm là ĐÃ CHỐT — đây là thứ tab "Tài liệu" hiển thị.
 
         Hai tab có vai trò khác nhau và trước đây không tài nào phân biệt được:
 
@@ -726,22 +778,40 @@ class DealsService:
         liệu mất nghĩa. Trước đây nút Lưu chỉ đổi giai đoạn deal, không đánh dấu gì cả — nên
         giao diện báo "đã lưu vào tab Tài liệu" mà sang đó chẳng thấy gì.
 
-        Chốt bản MỚI NHẤT chứ không nhận id từ ngoài: bảng đánh giá luôn hiển thị đúng lần
-        chấm vừa xong, nên "chốt cái tôi đang xem" và "chốt bản mới nhất" là một. Nhận id từ
-        client thì lại phải kiểm id đó có thuộc deal này không — thêm một cửa để sai.
+        ``qualification_id`` = chốt ĐÚNG bản đó; bỏ trống thì chốt bản mới nhất.
+
+        Bản đầu chỉ chốt được bản mới nhất, với lý do "bảng đánh giá luôn hiển thị lần chấm
+        vừa xong nên hai thứ đó là một". Lý do ấy sai trong một luồng có thật: freelancer
+        chấm xong QUÊN chốt rồi dọn mất tác vụ, sau đó vào tab Lịch sử mở lại bản cũ để chốt.
+        Lúc này "bản đang xem" KHÔNG còn là "bản mới nhất" — chốt bản mới nhất là đóng dấu
+        nhầm dòng, mà người dùng không hề biết. Không có đường này thì họ buộc phải chấm lại,
+        tốn một lượt AI cho một kết quả đã có sẵn.
+
+        Bù lại đúng như lo ngại ban đầu: nhận id từ ngoài thì phải kiểm id đó thuộc deal này
+        và thuộc chủ sở hữu này — `get_lead_score_by_id` lọc cả ba vế.
 
         Bấm lưu nhiều lần thì mỗi lần là một mốc riêng; KHÔNG xoá dấu chốt của bản cũ. Người
         dùng chấm lại rồi chốt lại là có hai bản đã chốt thật, giống báo giá có nhiều phiên
-        bản.  #Huynh
+        bản.
+
+        ``gap_acknowledged`` = giao diện đã cảnh báo bản này chưa đủ 100 điểm và người dùng
+        vẫn chọn chốt. Ghi lại vì nhìn một bản 27/100 đã chốt thì không phân biệt được "hệ
+        thống để lọt" với "người dùng biết rõ và tự chịu trách nhiệm".  #Huynh
         """
         await self._get_deal(user_id, deal_id)  # 404 nếu deal không phải của người này
 
-        latest = await self.repo.get_latest_lead_score(deal_id, user_id)
-        if latest is None:
-            raise NotFoundError("Deal chưa có bản đánh giá nào để lưu")
+        if qualification_id is not None:
+            target = await self.repo.get_lead_score_by_id(qualification_id, deal_id, user_id)
+            if target is None:
+                raise NotFoundError("Không tìm thấy bản đánh giá này trong deal")
+        else:
+            target = await self.repo.get_latest_lead_score(deal_id, user_id)
+            if target is None:
+                raise NotFoundError("Deal chưa có bản đánh giá nào để lưu")
 
-        latest.saved_at = datetime.now(UTC)
-        return await self.repo.save(latest)
+        target.saved_at = datetime.now(UTC)
+        target.gap_acknowledged = gap_acknowledged
+        return await self.repo.save(target)
 
     async def _build_inquiry_context(self, deal_model, user_id: uuid.UUID) -> str:
         """Dựng ngữ cảnh gửi cho lead qualifier — HAI khối, và ranh giới nằm ĐÚNG chỗ.
@@ -793,8 +863,24 @@ class DealsService:
             requirement.append(f"- Ngân sách khách nêu: {client_budget}")
         if client_timeline:
             requirement.append(f"- Thời gian khách muốn: {client_timeline}")
+
+        # KHỐI 1B — thứ freelancer HỎI ĐƯỢC KHÁCH SAU khi đọc brief, ghi vào ô "Bổ sung
+        # thông tin". Ưu tiên CAO HƠN brief.
+        #
+        # Vì sao phải tách riêng chứ không nối tiếp vào danh sách trên: brief có thể nói
+        # ngược lại. Ca thật đã đo được — brief ghi "Về ngân sách thì bên mình chưa chốt con
+        # số cụ thể", freelancer hỏi thêm rồi ghi "120 triệu", và AI chấm ngân sách 0 điểm
+        # với lý do "khách chưa chốt con số". Nó không sai: hai dòng ngang hàng, brief nói
+        # nhiều hơn nên thắng.
+        #
+        # Nhưng ĐÚNG ra thì dòng của freelancer phải thắng — brief là bản khách viết TRƯỚC,
+        # còn đây là câu trả lời hỏi được SAU, thu thập đúng để lấp chỗ đang thiếu. Không có
+        # thứ tự ưu tiên thì cả vòng "bổ sung rồi chấm lại" thành vô nghĩa.  #Huynh
+        updates: list[str] = []
+        if deal_model.client_budget:
+            updates.append(f"- Ngân sách khách nêu: {deal_model.client_budget}")
         if deal_model.desired_timeline:
-            requirement.append(f"- Thời hạn ghi nhận được: {deal_model.desired_timeline}")
+            updates.append(f"- Thời hạn khách nêu: {deal_model.desired_timeline}")
 
         # KHỐI 2 — ĐÚNG một ô, và ô này bị cấm chấm. Trống thì không in khối nào cả: một tiêu
         # đề rỗng chỉ tổ mời model đi tìm xem "khối kia" nằm ở đâu.
@@ -806,6 +892,8 @@ class DealsService:
             )
 
         blocks: list[str] = [SCORED_BLOCK_HEADING, *requirement]
+        if updates:
+            blocks += ["", UPDATED_BLOCK_HEADING, *updates]
         if excluded:
             blocks += ["", EXCLUDED_BLOCK_HEADING, *excluded]
         return "\n".join(blocks)

@@ -1,8 +1,9 @@
 import uuid
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
-from sqlalchemy import func, or_, select, update
+from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.infrastructure.database.models import (
@@ -18,6 +19,7 @@ from src.infrastructure.database.models import (
     ReminderModel,
     UserModel,
 )
+from src.modules.deals.domain.value_objects.deal_stage import ARCHIVE_AFTER_DAYS, DealStage
 
 
 @dataclass
@@ -285,6 +287,8 @@ class DealsRepository:
         title: str | None = None,
         stage: str | None = None,
         client_id: uuid.UUID | None = None,
+        archived: bool | None = None,
+        sort_by: str = "updated_at",
         page: int = 1,
         page_size: int = 20,
     ) -> tuple[list, int]:
@@ -295,6 +299,9 @@ class DealsRepository:
             conditions.append(DealModel.stage == stage)
         if client_id is not None:
             conditions.append(DealModel.client_id == client_id)
+        if archived is not None:
+            in_archive = self._archived_predicate()
+            conditions.append(in_archive if archived else ~in_archive)
         total = (
             await self.db.scalar(select(func.count()).select_from(DealModel).where(*conditions))
             or 0
@@ -303,13 +310,45 @@ class DealsRepository:
         result = await self.db.execute(
             select(DealModel)
             .where(*conditions)
-            # Sắp theo ngày cập nhật mới nhất: deal vừa đổi giai đoạn/sửa thông tin
-            # luôn nổi lên đầu danh sách (tránh cảnh "chuyển status xong nhảy xuống giữa").
-            .order_by(DealModel.updated_at.desc())
+            .order_by(*self._list_order(sort_by))
             .offset(offset)
             .limit(page_size)
         )
         return list(result.scalars().all()), total
+
+    @staticmethod
+    def _archived_predicate():  # type: ignore[no-untyped-def]
+        """Dự án ĐÃ VÀO KHO: hoàn thành, và đóng cách đây quá `ARCHIVE_AFTER_DAYS`.
+
+        `closed_at IS NOT NULL` là điều kiện bắt buộc chứ không thừa: deal cũ sinh trước khi
+        có cột này để trống ngày đóng, mà `NULL < <ngày>` trong SQL cho ra NULL (không phải
+        TRUE) — nên nếu viết ẩu thì chúng rơi ra khỏi CẢ hai nhánh: không nằm trên bảng, cũng
+        không nằm trong kho. Biến mất hẳn.
+
+        Chỉ tính `completed_and_billed`. `lost` cũng phình y hệt nhưng đợt này cố ý chưa đụng
+        tới — mở rộng sau chỉ là thêm giai đoạn vào đây.  #Huynh
+        """
+        cutoff = datetime.now(UTC) - timedelta(days=ARCHIVE_AFTER_DAYS)
+        return and_(
+            DealModel.stage == DealStage.COMPLETED_AND_BILLED.value,
+            DealModel.closed_at.isnot(None),
+            DealModel.closed_at < cutoff,
+        )
+
+    @staticmethod
+    def _list_order(sort_by: str):  # type: ignore[no-untyped-def]
+        """Thứ tự trả về của danh sách deal.
+
+        `updated_at` (mặc định) cho bảng Kanban: deal vừa đổi giai đoạn/sửa thông tin nổi lên
+        đầu, tránh cảnh "chuyển giai đoạn xong nhảy xuống giữa danh sách".
+
+        `closed_at` cho ngăn kéo kho: ở đó thứ tự đúng là NGÀY ĐÓNG, không phải lần chạm cuối
+        — sửa một chữ trong dự án cũ không được phép đẩy nó lên đầu kho. Kèm `id` làm khoá
+        chót để phân trang không bao giờ hoà (bản ghi nhảy giữa hai trang).  #Huynh
+        """
+        if sort_by == "closed_at":
+            return (DealModel.closed_at.desc().nullslast(), DealModel.id)
+        return (DealModel.updated_at.desc(), DealModel.id)
 
     async def create_lead_score(
         self,
@@ -391,21 +430,32 @@ class DealsRepository:
         - ``actual_value IS NOT NULL``: TIỀN THẬT THU ĐƯỢC, không phải `estimated_value`
           (con số freelancer tự ước lúc mới tạo deal, thường sai).
         - ``LIMIT 10`` gần nhất: giá năm 2023 không còn đúng cho năm 2026.
+        - ``deleted_at IS NULL``: dự án freelancer đã loại bỏ thì cũng đã loại bỏ khỏi lịch sử
+          giá. Thiếu điều kiện này (bản trước thiếu) là neo giá vào những deal mà chính chủ
+          coi như không tồn tại.
 
-        Lọc theo ``service_category`` chính là lời giải cho chuyện "một freelancer làm nhiều
-        nghề": lịch sử báo giá thiết kế không được dùng để định giá dự án lập trình.  #Huynh
+        Sắp theo ``closed_at`` chứ KHÔNG phải ``updated_at``: "gần nhất" ở đây là gần nhất về
+        thời điểm CHỐT DEAL, không phải lần chạm cuối. Bản trước dùng `updated_at`, mà cột đó
+        có `onupdate` + trigger PG — nên chỉ cần sửa một chữ trong một dự án cũ là bộ mười mốc
+        neo giá xáo lại, và giá gợi ý cho báo giá kế tiếp đổi mà không ai chạm vào giá. Lỗi
+        này im lặng tuyệt đối. Cũng nhờ vậy mà việc lưu kho (suy ra từ `closed_at`, không ghi
+        gì) không thể ảnh hưởng tới định giá.  #Huynh
+
+        Kho lưu trữ KHÔNG lọc ở đây: freelancer càng lâu năm thì càng nhiều dự án nằm trong
+        kho, lọc bỏ là càng làm lâu càng mất mốc giá — đúng ngược ý đồ.
         """
 
         def _recent_won(extra_filter=None):  # type: ignore[no-untyped-def]
             stmt = select(DealModel.actual_value).where(
                 DealModel.owner_user_id == owner_user_id,
-                DealModel.stage == "completed_and_billed",
+                DealModel.deleted_at.is_(None),
+                DealModel.stage == DealStage.COMPLETED_AND_BILLED.value,
                 DealModel.actual_value.isnot(None),
                 DealModel.actual_value > 0,
             )
             if extra_filter is not None:
                 stmt = stmt.where(extra_filter)
-            return stmt.order_by(DealModel.updated_at.desc()).limit(10)
+            return stmt.order_by(DealModel.closed_at.desc().nullslast()).limit(10)
 
         any_category = list(await self.db.scalars(_recent_won()))
 
@@ -453,4 +503,26 @@ class DealsRepository:
             )
             .order_by(LeadScoreModel.generated_at.desc())
             .limit(1)
+        )
+
+    async def get_lead_score_by_id(
+        self,
+        lead_score_id: uuid.UUID,
+        deal_id: uuid.UUID,
+        owner_user_id: uuid.UUID,
+    ):
+        """Một bản chấm CỤ THỂ của deal, hoặc None.
+
+        Lọc bằng CẢ ba: id bản chấm, id deal, và chủ sở hữu. Thiếu vế `deal_id` thì biết id
+        một bản chấm là chốt được nó sang deal khác của chính mình; thiếu vế chủ sở hữu thì
+        chốt được bản chấm của người khác.  #Huynh
+        """
+        return await self.db.scalar(
+            select(LeadScoreModel)
+            .join(DealModel, DealModel.id == LeadScoreModel.deal_id)
+            .where(
+                LeadScoreModel.id == lead_score_id,
+                LeadScoreModel.deal_id == deal_id,
+                DealModel.owner_user_id == owner_user_id,
+            )
         )

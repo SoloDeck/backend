@@ -905,7 +905,7 @@ async def test_get_platform_metrics_returns_repo_result() -> None:
 class AIProviderConfigStub:
     id: uuid.UUID = field(default_factory=uuid.uuid4)
     llm_provider: str = "groq"
-    llm_model: str = "llama-3.3-70b-versatile"
+    llm_model: str = "openai/gpt-oss-120b"
     updated_by: uuid.UUID | None = None
 
 
@@ -933,10 +933,8 @@ class TestUpdateAiProviderConfiguration:
     @pytest.mark.parametrize(
         ("provider", "model"),
         [
-            ("groq", "llama-3.3-70b-versatile"),
-            ("groq", "llama-3.1-8b-instant"),
+            ("groq", "openai/gpt-oss-120b"),
             ("gemini", "gemini-2.5-flash"),
-            ("gemini", "gemini-3.5-flash-lite"),
             ("ollama", "qwen3:4b"),
         ],
     )
@@ -984,7 +982,7 @@ class TestUpdateAiProviderConfiguration:
         ("provider", "model"),
         [
             ("groq", "gemini-2.5-flash"),
-            ("gemini", "llama-3.3-70b-versatile"),
+            ("gemini", "openai/gpt-oss-120b"),
             ("ollama", "gemini-2.5-flash"),
         ],
     )
@@ -1017,12 +1015,12 @@ class TestUpdateAiProviderConfiguration:
 
         result = await service.update_ai_provider_configuration(
             llm_provider="  GROQ  ".strip(),
-            llm_model="  llama-3.1-8b-instant  ",
+            llm_model="  openai/gpt-oss-120b  ",
             admin_id=uuid.uuid4(),
         )
 
         assert result.llm_provider == "groq"
-        assert result.llm_model == "llama-3.1-8b-instant"
+        assert result.llm_model == "openai/gpt-oss-120b"
 
     async def test_missing_configuration_raises(self) -> None:
         service = AdminService(db=AsyncMock(), repo=_ai_repo(None))
@@ -1030,6 +1028,6 @@ class TestUpdateAiProviderConfiguration:
         with pytest.raises(NotFoundError):
             await service.update_ai_provider_configuration(
                 llm_provider="groq",
-                llm_model="llama-3.3-70b-versatile",
+                llm_model="openai/gpt-oss-120b",
                 admin_id=uuid.uuid4(),
             )

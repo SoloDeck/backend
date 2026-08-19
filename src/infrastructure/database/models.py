@@ -595,6 +595,13 @@ class DealModel(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     currency: Mapped[str] = mapped_column(String(3), nullable=False, server_default="VND")
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     desired_timeline: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # Ngân sách KHÁCH nêu, ghi lại sau khi freelancer hỏi được — ĐƯỢC chấm điểm.
+    #
+    # Khác hẳn `estimated_value` ngay bên trên: đó là con số freelancer TỰ ƯỚC để tính doanh
+    # thu, và nó bị cấm dùng để chấm điểm (xem `_build_inquiry_context`). Không có cột này
+    # thì freelancer gọi điện hỏi được ngân sách xong chẳng có chỗ nào để ghi — biết mình
+    # thiếu gì mà vẫn không vá được, luồng đứt ngay đó.  #Huynh
+    client_budget: Mapped[str | None] = mapped_column(String(255), nullable=True)
     project_type: Mapped[str | None] = mapped_column(String(200), nullable=True)
     service_category: Mapped[str | None] = mapped_column(String(200), nullable=True)
     pricing_tier: Mapped[str | None] = mapped_column(String(100), nullable=True)
@@ -828,6 +835,15 @@ class LeadScoreModel(Base):
     # Nullable, và mọi dòng cũ đều NULL: bản chấm trước khi có tính năng này thì đúng là chưa
     # ai chốt cả, đừng đoán hộ.  #Huynh
     saved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # Freelancer đã được cảnh báo là bản này chưa đủ 100 điểm, và vẫn chọn chốt.
+    #
+    # Không có cờ này thì nhìn vào một bản đã chốt 27/100 sẽ không phân biệt được "hệ thống
+    # để lọt" với "người dùng biết rõ và tự chịu trách nhiệm". Số điểm thiếu thì suy lại được
+    # từ `breakdown`, nhưng việc CÓ ĐƯỢC CẢNH BÁO thì không suy ra từ đâu cả.
+    #
+    # Dòng cũ để `false`: trước đây không có cảnh báo nào, nên không ai từng chấp nhận gì.
+    gap_acknowledged: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
 
     __table_args__ = (
         Index("idx_lead_scores_deal", "deal_id"),
@@ -1462,7 +1478,7 @@ class AIProviderConfigurationModel(Base):
     )
 
     # Model cụ thể đang được sử dụng bởi provider.
-    # Ví dụ: llama-3.3-70b-versatile, gemini-2.5-flash, llama3.2:3b.
+    # Ví dụ: openai/gpt-oss-120b, gemini-2.5-flash, qwen3:4b.
     llm_model: Mapped[str] = mapped_column(
         String(100),
         nullable=False,
@@ -1542,6 +1558,45 @@ class TaskModel(UUIDMixin, TimestampMixin, Base):
         UUID(as_uuid=True), ForeignKey("invoices.id", ondelete="SET NULL"), nullable=True
     )
 
+    # Số tiền task này phải thu. KHÔNG NULL = đây là task THU TIỀN.
+    #
+    # Trước đây dấu nhận biết là tiền tố tên `"Thu tiền: "`, và tiền thì tính lại mỗi lần cần
+    # bằng cách tra báo giá đã chốt rồi khớp mốc VỚI TÊN TASK. Đổi tên task một chữ là đứt:
+    # không xuất được hoá đơn, và bảng doanh thu âm thầm coi mốc đó chưa thu. Một cột thì
+    # không đứt được.
+    #
+    # Chốt số tiền vào đây là ĐÚNG chứ không phải chụp ảnh cẩu thả: lúc sinh task, báo giá
+    # đang ở trạng thái `accepted` — trạng thái cuối, `update`/`set_price` đều chặn — nên con
+    # số nguồn không thể đổi về sau. Muốn đổi giá thì đi cửa phụ lục hợp đồng.
+    #
+    # `>= 0` chứ không `> 0`: hạng mục 0 đồng vẫn phải hiện trên bảng việc để freelancer thấy
+    # mà sửa, thay vì biến mất im lặng. Chặn 0 đồng là việc của cổng gửi báo giá.  #Huynh
+    billing_amount: Mapped[Decimal | None] = mapped_column(Numeric(15, 2), nullable=True)
+
+    # Thu TRƯỚC khi làm hay thu KHI XONG — `on_signing` / `on_completion`, chép từ hạng mục
+    # chi phí lúc sinh task (`pdf_content.DUE_TYPE_LABELS`).
+    #
+    # Không dùng enum Postgres: hai giá trị này là chuyện NGHIỆP VỤ còn đang định hình, mà
+    # thêm giá trị vào enum Postgres phải có migration riêng và khoá bảng. `String(20)` +
+    # hằng số bên Python đủ chặt cho một thứ chỉ chính code này ghi.
+    #
+    # NULL với task cũ (trước khi có cột này) và với task freelancer tự thêm.  #Huynh
+    billing_due_type: Mapped[str | None] = mapped_column(String(20), nullable=True)
+
+    # Thứ tự hiển thị TRONG một entity. Với task thu tiền, đây chính là thứ tự hạng mục chi
+    # phí trên tờ báo giá — freelancer kéo sắp lại ở mục 7 thì bảng việc phải theo.
+    #
+    # Vì sao KHÔNG suy ra được từ `created_at`: `created_at` dùng `server_default=func.now()`,
+    # mà `now()` của PostgreSQL trả về thời điểm bắt đầu TRANSACTION. Cả lô task thu tiền sinh
+    # trong một transaction nên `created_at` BẰNG NHAU tuyệt đối — `ORDER BY created_at` là
+    # hoà hoàn toàn, thứ tự do planner quyết và đổi giữa các lần truy vấn.
+    #
+    # Tên `position` theo `ChecklistItemModel.position` (anh em gần nhất, cùng module) chứ
+    # không theo `sort_order` — cái đó là của các dòng chứng từ tiền (hoá đơn, mốc hợp đồng).
+    #
+    # NOT NULL + mặc định 0: task tự thêm cũng có thứ tự, không phải xử lý NULL ở mọi chỗ sort.
+    position: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+
     # `selectin` chứ không lazy mặc định: danh sách công việc trả về hàng chục task một lúc,
     # lazy-load là N+1 truy vấn — và trong ngữ cảnh async thì lazy-load còn NỔ hẳn
     # (`MissingGreenlet`) chứ không chỉ chậm.
@@ -1558,6 +1613,21 @@ class TaskModel(UUIDMixin, TimestampMixin, Base):
     __table_args__ = (
         Index("idx_tasks_entity", "entity_type", "entity_id"),
         Index("idx_tasks_entity_status", "entity_type", "entity_id", "status"),
+        # Phục vụ đúng `list_by_entity` — lọc theo entity rồi sắp theo thứ tự hiển thị.
+        Index("idx_tasks_entity_position", "entity_type", "entity_id", "position"),
+        # Chỉ mục PHẦN theo ENTITY trước: hai truy vấn dùng nó (guard đóng dự án, bảng doanh
+        # thu) đều lọc theo entity rồi mới tới cờ thu tiền. Chỉ mục trần trên `billing_amount`
+        # thì không phục vụ được truy vấn nào.
+        Index(
+            "idx_tasks_billing",
+            "entity_type",
+            "entity_id",
+            postgresql_where=text("billing_amount IS NOT NULL"),
+        ),
+        CheckConstraint(
+            "billing_amount IS NULL OR billing_amount >= 0",
+            name="ck_tasks_billing_amount_non_negative",
+        ),
     )
 
 

@@ -214,9 +214,17 @@ async def test_revenue_tinh_theo_moc_thanh_toan_cua_hop_dong_da_ky(client: Async
                 "deal_id": deal["id"],
                 "content": {
                     "title": "Báo giá theo mốc",
-                    "payment_milestones": [
-                        {"label": "Đặt cọc khi ký hợp đồng", "percent": 50},
-                        {"label": "Thanh toán khi bàn giao", "percent": 50},
+                    "pricing_items": [
+                        {
+                            "label": "Đặt cọc khi ký hợp đồng",
+                            "amount": 50_000_000,
+                            "due_type": "on_signing",
+                        },
+                        {
+                            "label": "Thanh toán khi bàn giao",
+                            "amount": 50_000_000,
+                            "due_type": "on_completion",
+                        },
                     ],
                 },
             },
@@ -259,13 +267,15 @@ async def test_revenue_tinh_theo_moc_thanh_toan_cua_hop_dong_da_ky(client: Async
         )
         assert resp.status_code == 200, resp.text
 
-    # Ký hợp đồng xong là đã có project + 2 task "Thu tiền:".
+    # Ký hợp đồng xong là đã có project + 2 task thu tiền.
     projects = (await client.get("/api/v1/projects", headers=headers)).json()["data"]
     project_id = next(p["id"] for p in projects if p["deal_id"] == deal["id"])
     tasks = (
         await client.get(f"/api/v1/projects/{project_id}/tasks", headers=headers)
     ).json()["data"]
-    payment_tasks = [t for t in tasks if t["title"].startswith("Thu tiền:")]
+    # Nhận biết task thu tiền bằng `billing_amount`, KHÔNG bằng tiền tố trong tên: tên task
+    # giờ là nhãn hạng mục nguyên văn do freelancer đặt.
+    payment_tasks = [t for t in tasks if t.get("billing_amount")]
     assert len(payment_tasks) == 2, [t["title"] for t in tasks]
 
     # Chưa thu đồng nào: tất cả nằm ở "còn phải thu".

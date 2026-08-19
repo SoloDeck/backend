@@ -36,7 +36,7 @@ def upgrade() -> None:
         SET llm_model = CASE llm_provider
             WHEN 'gemini' THEN 'gemini-2.5-flash'
             WHEN 'ollama' THEN 'qwen3:4b'
-            ELSE 'llama-3.3-70b-versatile'
+            ELSE 'openai/gpt-oss-120b'
         END
         WHERE llm_model IS NULL
         """

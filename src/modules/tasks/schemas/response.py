@@ -48,7 +48,20 @@ class TaskResponse(BaseModel):
     status: TaskStatus
     deadline: datetime | None
     checklist_items: list[ChecklistItemResponse] = []
-    # Chỉ có với task "Thu tiền:" đã xuất hóa đơn. `None` nghĩa là chưa xuất — frontend hiện
+    # Số tiền phải thu. KHÔNG NULL = đây là task THU TIỀN — frontend dựa vào đúng cột này để
+    # vẽ nút hóa đơn và để đếm mốc chưa thu, thay cho việc dò tiền tố tên như trước.
+    #
+    # Chỉ ĐỌC: không có trong body tạo/sửa task. Cho client tự đặt số tiền là cho phép đúc ra
+    # một task thu tiền số tuỳ ý rồi xuất hóa đơn gửi khách bằng con số đó.  #Huynh
+    billing_amount: Decimal | None = None
+    # `on_signing` = đòi được NGAY; `on_completion` = đòi khi công việc xong. `None` với task
+    # cũ / task freelancer tự thêm. Frontend dùng để vẽ nhãn "Thu ngay" và để hỏi lại khi xuất
+    # hóa đơn cho việc chưa tick xong. Chỉ ĐỌC, y như `billing_amount`.  #Huynh
+    billing_due_type: str | None = None
+    # Thứ tự hiển thị trong entity. Với task thu tiền, đây là thứ tự hạng mục trên tờ báo giá.
+    # Chỉ ĐỌC — client không đặt được, hệ thống tự gán khi tạo.  #Huynh
+    position: int = 0
+    # Chỉ có với task thu tiền ĐÃ xuất hóa đơn. `None` nghĩa là chưa xuất — frontend hiện
     # nút "Tạo & gửi hóa đơn", còn có rồi thì hiện nhãn theo `invoice.status`.
     invoice: TaskInvoiceSummary | None = None
     created_at: datetime
