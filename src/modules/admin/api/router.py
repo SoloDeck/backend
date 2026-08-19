@@ -153,10 +153,10 @@ async def reinstate_user(
 @router.delete("/users/{user_id}/sessions", status_code=204)
 async def revoke_user_sessions(
     user_id: uuid.UUID,
-    _: AdminUser,
+    admin: AdminUser,
     db: DBSession,
 ) -> Response:
-    await AdminService(db=db).revoke_user_sessions(user_id)
+    await AdminService(db=db).revoke_user_sessions(user_id, admin_id=uuid.UUID(admin.sub))
     return Response(status_code=204)
 
 
@@ -502,6 +502,20 @@ async def update_template(
 ) -> ApiResponse[AdminTemplateResponse]:
     template = await AdminService(db=db).update_template(template_id, payload)
     return ApiResponse.ok(AdminTemplateResponse.model_validate(template))
+
+
+@router.delete("/templates/{template_id}", status_code=204)
+async def delete_template(
+    template_id: uuid.UUID,
+    admin: AdminUser,
+    db: DBSession,
+) -> None:
+    """Xoá một mẫu hệ thống khỏi thư viện.
+
+    Đề xuất/hợp đồng đã tạo từ mẫu không bị ảnh hưởng (nội dung đã được sao chép sang).
+    Chỉ chặn khi còn mẫu phái sinh trỏ vào mẫu này — khi đó trả 409.
+    """
+    await AdminService(db=db).delete_template(template_id, admin_id=uuid.UUID(admin.sub))
 
 
 # ---------------------------------------------------------------------------

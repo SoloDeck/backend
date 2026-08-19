@@ -145,6 +145,7 @@ class AdminService:
         entity = AdminUser(id=user.id, email=user.email, role=user.role, status=user.status)
         entity.suspend(is_last_active_admin=is_last_active_admin)
         user.status = entity.status
+        user.sessions_revoked_at = datetime.now(UTC)
 
         user = await self.repo.save(user)
         await self.repo.create_audit_log(
@@ -174,16 +175,18 @@ class AdminService:
         )
         return user
 
-    async def revoke_user_sessions(self, user_id: uuid.UUID) -> None:
-        now = datetime.now(UTC)
-        tokens = await self.repo.get_user_refresh_tokens(user_id)
-        for token in tokens:
-            await self.repo.blacklist_refresh_token(
-                jti=token.token_hash,
-                user_id=user_id,
-                expires_at=token.expires_at,
-            )
-            token.revoked_at = now
+    async def revoke_user_sessions(self, user_id: uuid.UUID, *, admin_id: uuid.UUID) -> None:
+        user = await self.get_user(user_id)
+        user.sessions_revoked_at = datetime.now(UTC)
+
+        user = await self.repo.save(user)
+        await self.repo.create_audit_log(
+            event_type="user.sessions_revoked",
+            actor_user_id=admin_id,
+            target_type="user",
+            target_id=user_id,
+            description=f"Admin revoked all sessions for user {user.email}",
+        )
 
     # -------------------------------------------------------------------------
     # Plans
@@ -628,6 +631,39 @@ class AdminService:
         if payload.plan_tier_required is not None:
             template.plan_tier_required = payload.plan_tier_required
         return await self.repo.save(template)
+
+    async def delete_template(
+        self, template_id: uuid.UUID, *, admin_id: uuid.UUID | None = None
+    ) -> None:
+        """Xoá hẳn một mẫu hệ thống khỏi thư viện.
+
+        An toàn với đề xuất/hợp đồng đã tạo: lúc sinh tài liệu, nội dung mẫu được COPY vào
+        `proposals.content` / `contracts.content`, không có cột nào trỏ ngược về bảng mẫu.
+        Ràng buộc duy nhất là `system_templates.parent_template_id` (mẫu con phái sinh) —
+        còn mẫu con thì chặn, vì xoá cha sẽ vỡ khoá ngoại.  #Huynh
+        """
+        template = await self.repo.get_template(template_id)
+        if template is None:
+            raise NotFoundError(f"Template {template_id} not found")
+
+        child_count = await self.repo.count_child_templates(template_id)
+        if child_count:
+            raise BusinessRuleError(
+                f"Không xoá được mẫu '{template.name}': còn {child_count} mẫu phái sinh từ nó. "
+                "Hãy xoá các mẫu con trước, hoặc đặt is_active=false để ẩn mẫu này."
+            )
+
+        # Ghi nhật ký TRƯỚC khi xoá, cùng lối với `delete_plan`: `target_id` cố ý không có
+        # khoá ngoại (xem models.py) nên bản ghi sống sót sau khi mẫu biến mất, và đọc
+        # thuộc tính trước `delete()` + `flush()` thì khỏi chạm vào instance đã tách phiên.
+        await self.repo.create_audit_log(
+            event_type="template.deleted",
+            actor_user_id=admin_id,
+            target_type="template",
+            target_id=template.id,
+            description=f"Admin xoá mẫu '{template.name}'",
+        )
+        await self.repo.delete_template(template)
 
     @staticmethod
     def _clean_profession(profession: str | None) -> str | None:

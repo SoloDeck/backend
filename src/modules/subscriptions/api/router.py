@@ -8,11 +8,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.infrastructure.database.session import get_db_session
 from src.modules.subscriptions.application.service import SubscriptionsService
 from src.modules.subscriptions.domain.entities.subscription_payment import PaymentProvider
-from src.modules.subscriptions.schemas.request import CreateSubscriptionCheckoutRequest
+from src.modules.subscriptions.schemas.request import (
+    ChangePlanRequest,
+    CreateSubscriptionCheckoutRequest,
+)
 from src.modules.subscriptions.schemas.response import (
     PaymentIntentResponse,
     PlanResponse,
     SubscriptionResponse,
+    UsageRecordResponse,
 )
 from src.shared.dependencies.auth import CurrentUserId
 from src.shared.dependencies.payments import MomoClientDep
@@ -53,10 +57,39 @@ async def create_checkout(
     return ApiResponse.created(PaymentIntentResponse.from_model(payment))
 
 
-@router.post("/cancel", response_model=ApiResponse[SubscriptionResponse])
+@router.post("/me/cancel", response_model=ApiResponse[SubscriptionResponse])
 async def cancel_subscription(
     user_id: CurrentUserId,
     db: DBSession,
 ) -> ApiResponse[SubscriptionResponse]:
     sub = await SubscriptionsService(db=db).cancel_subscription(user_id)
     return ApiResponse.ok(sub)
+
+
+@router.post("/me/upgrade", response_model=ApiResponse[SubscriptionResponse])
+async def upgrade_subscription(
+    payload: ChangePlanRequest,
+    user_id: CurrentUserId,
+    db: DBSession,
+) -> ApiResponse[SubscriptionResponse]:
+    sub = await SubscriptionsService(db=db).upgrade_subscription(user_id, payload.plan_id)
+    return ApiResponse.ok(sub)
+
+
+@router.post("/me/downgrade", response_model=ApiResponse[SubscriptionResponse])
+async def downgrade_subscription(
+    payload: ChangePlanRequest,
+    user_id: CurrentUserId,
+    db: DBSession,
+) -> ApiResponse[SubscriptionResponse]:
+    sub = await SubscriptionsService(db=db).downgrade_subscription(user_id, payload.plan_id)
+    return ApiResponse.ok(sub)
+
+
+@router.get("/me/usage", response_model=ApiResponse[UsageRecordResponse])
+async def get_usage(
+    user_id: CurrentUserId,
+    db: DBSession,
+) -> ApiResponse[UsageRecordResponse]:
+    usage = await SubscriptionsService(db=db).get_usage(user_id)
+    return ApiResponse.ok(usage)

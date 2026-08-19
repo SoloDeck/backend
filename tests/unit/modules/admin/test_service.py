@@ -38,6 +38,7 @@ class UserStub:
     full_name: str = "Test User"
     phone: str | None = None
     deleted_at: datetime | None = None
+    sessions_revoked_at: datetime | None = None
 
 
 @dataclass
@@ -83,12 +84,6 @@ class FeatureFlagStub:
     rollout_percentage: int = 0
     target_user_ids: list[uuid.UUID] | None = None
     description: str | None = None
-
-
-@dataclass
-class RefreshTokenStub:
-    token_hash: str
-    expires_at: datetime
 
 
 def _repo(**overrides) -> AsyncMock:
@@ -286,26 +281,24 @@ class TestReinstateUser:
 
 
 class TestRevokeUserSessions:
-    async def test_blacklists_every_active_token(self) -> None:
-        user_id = uuid.uuid4()
-        tokens = [
-            RefreshTokenStub(token_hash="jti-1", expires_at=datetime.now(UTC) + timedelta(days=1)),
-            RefreshTokenStub(token_hash="jti-2", expires_at=datetime.now(UTC) + timedelta(days=2)),
-        ]
-        repo = _repo(get_user_refresh_tokens=tokens)
+    async def test_sets_sessions_revoked_at_and_logs_audit(self) -> None:
+        user = UserStub(id=uuid.uuid4())
+        repo = _repo(get_user=user)
         service = AdminService(db=AsyncMock(), repo=repo)
 
-        await service.revoke_user_sessions(user_id)
+        before = datetime.now(UTC)
+        await service.revoke_user_sessions(user.id, admin_id=uuid.uuid4())
 
-        assert repo.blacklist_refresh_token.await_count == 2
+        assert user.sessions_revoked_at is not None
+        assert user.sessions_revoked_at >= before
+        repo.create_audit_log.assert_awaited_once()
 
-    async def test_no_tokens_is_a_noop(self) -> None:
-        repo = _repo(get_user_refresh_tokens=[])
+    async def test_nonexistent_user_raises_not_found(self) -> None:
+        repo = _repo(get_user=None)
         service = AdminService(db=AsyncMock(), repo=repo)
 
-        await service.revoke_user_sessions(uuid.uuid4())
-
-        repo.blacklist_refresh_token.assert_not_awaited()
+        with pytest.raises(NotFoundError):
+            await service.revoke_user_sessions(uuid.uuid4(), admin_id=uuid.uuid4())
 
 
 # ---------------------------------------------------------------------------
@@ -829,6 +822,50 @@ class TestUpdateTemplate:
 
         with pytest.raises(NotFoundError):
             await service.update_template(uuid.uuid4(), AdminUpdateTemplateRequest(name="X"))
+
+
+class TestDeleteTemplate:
+    async def test_success_deletes_and_writes_audit_log(self) -> None:
+        template = TemplateStub(id=uuid.uuid4(), name="Default Proposal")
+        repo = _repo(get_template=template, count_child_templates=0)
+        service = AdminService(db=AsyncMock(), repo=repo)
+        admin_id = uuid.uuid4()
+
+        await service.delete_template(template.id, admin_id=admin_id)
+
+        repo.delete_template.assert_awaited_once_with(template)
+        kwargs = repo.create_audit_log.await_args.kwargs
+        assert kwargs["event_type"] == "template.deleted"
+        assert kwargs["actor_user_id"] == admin_id
+        assert kwargs["target_id"] == template.id
+        assert "Default Proposal" in kwargs["description"]
+
+    async def test_not_found_raises(self) -> None:
+        repo = _repo(get_template=None)
+        service = AdminService(db=AsyncMock(), repo=repo)
+
+        with pytest.raises(NotFoundError):
+            await service.delete_template(uuid.uuid4())
+
+    async def test_template_with_children_raises_business_rule(self) -> None:
+        template = TemplateStub(id=uuid.uuid4(), name="Base")
+        repo = _repo(get_template=template, count_child_templates=2)
+        service = AdminService(db=AsyncMock(), repo=repo)
+
+        with pytest.raises(BusinessRuleError, match="2 mẫu phái sinh"):
+            await service.delete_template(template.id)
+
+        repo.delete_template.assert_not_awaited()
+
+    async def test_blocked_delete_writes_no_audit_log(self) -> None:
+        template = TemplateStub(id=uuid.uuid4(), name="Base")
+        repo = _repo(get_template=template, count_child_templates=1)
+        service = AdminService(db=AsyncMock(), repo=repo)
+
+        with pytest.raises(BusinessRuleError):
+            await service.delete_template(template.id)
+
+        repo.create_audit_log.assert_not_awaited()
 
 
 # ---------------------------------------------------------------------------

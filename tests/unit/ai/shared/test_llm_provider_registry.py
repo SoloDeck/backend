@@ -17,6 +17,7 @@ from src.ai.shared.constants import (
     LLMProviderName,
 )
 from src.ai.shared.llm_provider import _PROVIDERS, BaseLLMProvider, get_llm_provider
+from src.shared.exceptions.domain import AIGenerationError
 from src.config.settings import settings
 from src.modules.admin.schemas.request import AdminUpdateLLMProviderRequest
 
@@ -47,7 +48,7 @@ class TestProviderRegistryConsistency:
         """Thêm nhà cung cấp vào Literal mà quên map trong _PROVIDERS -> fail ở đây.
 
         Nếu không có test này, sai sót chỉ lộ ra khi admin đổi sang nhà cung cấp
-        đó và MỌI request AI trả 500 (ValueError không được map, rơi vào handler
+        đó và MỌI request AI trả 500 (lỗi không được map, rơi vào handler
         catch-all).
         """
         assert set(_PROVIDERS) == SUPPORTED_LLM_PROVIDERS
@@ -87,11 +88,16 @@ class TestGetLLMProvider:
         model = _a_model_for("groq")
         assert type(get_llm_provider("GROQ", model)) is type(get_llm_provider("groq", model))
 
-    def test_unknown_provider_raises_value_error(self) -> None:
-        with pytest.raises(ValueError, match="Unsupported LLM provider"):
+    def test_unknown_provider_raises_ai_generation_error(self) -> None:
+        """AIGenerationError chứ không phải ValueError trần: có sẵn đường ra 502.
+
+        ValueError trần rơi xuống handler cuối và thành 500 trống trơn — đúng lỗi
+        mà #92 đã sửa cho cả tầng này.
+        """
+        with pytest.raises(AIGenerationError, match="không hỗ trợ"):
             get_llm_provider("not-a-real-provider", DEFAULT_LLM_MODEL)
 
-    def test_model_from_another_provider_raises_value_error(self) -> None:
+    def test_model_from_another_provider_is_rejected(self) -> None:
         """Model có thật nhưng của nhà cung cấp KHÁC vẫn phải bị từ chối."""
-        with pytest.raises(ValueError, match="is not supported by provider"):
+        with pytest.raises(AIGenerationError, match="không thuộc nhà cung cấp"):
             get_llm_provider("gemini", _a_model_for("groq"))

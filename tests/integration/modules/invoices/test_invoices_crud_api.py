@@ -125,6 +125,62 @@ class TestListInvoices:
         resp = await client.get("/api/v1/invoices")
         assert resp.status_code == 401
 
+    async def test_response_is_paginated(self, client: AsyncClient) -> None:
+        headers = await _auth_headers(client)
+        await _create_invoice(client, headers)
+        resp = await client.get("/api/v1/invoices", headers=headers)
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert "pagination" in body
+        assert body["pagination"]["total"] >= 1
+        assert body["pagination"]["page"] == 1
+
+    async def test_pagination_page_size(self, client: AsyncClient) -> None:
+        headers = await _auth_headers(client)
+        for _ in range(3):
+            await _create_invoice(client, headers)
+        resp = await client.get("/api/v1/invoices?page_size=2&page=1", headers=headers)
+        body = resp.json()
+        assert len(body["data"]) == 2
+        assert body["pagination"]["total"] >= 3
+
+    async def test_filter_by_issue_date_range(self, client: AsyncClient) -> None:
+        headers = await _auth_headers(client)
+        await _create_invoice(
+            client, headers, issue_date=date(2027, 2, 1).isoformat(), due_date="2027-02-28"
+        )
+        await _create_invoice(
+            client, headers, issue_date=date(2027, 6, 1).isoformat(), due_date="2027-06-28"
+        )
+        resp = await client.get(
+            "/api/v1/invoices?from_issue_date=2027-02-01&to_issue_date=2027-02-28",
+            headers=headers,
+        )
+        data = resp.json()["data"]
+        assert len(data) == 1
+        assert data[0]["issue_date"] == "2027-02-01"
+
+    async def test_sort_by_due_date_asc(self, client: AsyncClient) -> None:
+        headers = await _auth_headers(client)
+        await _create_invoice(client, headers, due_date="2027-09-01")
+        await _create_invoice(client, headers, due_date="2027-01-01")
+        resp = await client.get(
+            "/api/v1/invoices?sort_by=due_date&sort_order=asc", headers=headers
+        )
+        due_dates = [inv["due_date"] for inv in resp.json()["data"]]
+        assert due_dates == sorted(due_dates)
+
+    async def test_overdue_only_excludes_future_due_dates(self, client: AsyncClient) -> None:
+        headers = await _auth_headers(client)
+        await _create_invoice(client, headers, due_date="2027-12-31")
+        resp = await client.get("/api/v1/invoices?overdue_only=true", headers=headers)
+        assert resp.json()["pagination"]["total"] == 0
+
+    async def test_invalid_sort_by_returns_422(self, client: AsyncClient) -> None:
+        headers = await _auth_headers(client)
+        resp = await client.get("/api/v1/invoices?sort_by=not_a_real_column", headers=headers)
+        assert resp.status_code == 422
+
 
 # ---------------------------------------------------------------------------
 # GET /invoices/{id}

@@ -26,6 +26,10 @@ class AlreadyExistsError(DomainError):
     """Uniqueness constraint violated (e.g. duplicate client email)."""
 
 
+class ExpiredError(DomainError):
+    """Resource existed but is no longer valid (e.g. an expired share link). HTTP 410."""
+
+
 # ---------------------------------------------------------------------------
 # Authorization errors
 # ---------------------------------------------------------------------------

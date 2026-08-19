@@ -20,9 +20,10 @@ from src.modules.subscriptions.domain.exceptions.exceptions import (
     PlanNotPurchasableError,
     SubscriptionNotCancellableError,
 )
+from src.modules.subscriptions.application.ai_usage import AiUsageService
 from src.modules.subscriptions.infrastructure.repository import SubscriptionsRepository
-from src.modules.subscriptions.schemas.response import SubscriptionResponse
-from src.shared.exceptions.domain import NotFoundError
+from src.modules.subscriptions.schemas.response import SubscriptionResponse, UsageRecordResponse
+from src.shared.exceptions.domain import DomainError, NotFoundError
 
 log = structlog.get_logger(__name__)
 
@@ -358,6 +359,103 @@ class SubscriptionsService:
         sub.cancelled_at = datetime.now(UTC)
         sub = await self.repo.save(sub)
         return self._to_subscription_response(sub, plan)
+
+    async def upgrade_subscription(
+        self, user_id: uuid.UUID, plan_id: uuid.UUID
+    ) -> SubscriptionResponse:
+        """Immediate plan switch — starts a fresh billing period now (same convention
+        as a confirmed checkout payment, see handle_payment_callback), so AI quota
+        naturally reads as 0 used for the new period without a separate reset step."""
+        sub = await self.repo.get_subscription(user_id)
+        if sub is None:
+            raise NotFoundError("No subscription found")
+        current_plan = await self.repo.get_plan(sub.plan_id)
+        new_plan = await self.repo.get_plan(plan_id)
+        if new_plan is None or not new_plan.is_active:
+            raise NotFoundError(f"Plan {plan_id} not found")
+        if current_plan is not None and new_plan.price_monthly <= current_plan.price_monthly:
+            raise DomainError(
+                "Target plan is not more expensive than the current plan. "
+                "Use /subscriptions/me/downgrade instead."
+            )
+
+        now = datetime.now(UTC)
+        sub.plan_id = new_plan.id
+        sub.status = "active"
+        sub.cancel_at_period_end = False
+        sub.cancelled_at = None
+        sub.current_period_start = now
+        sub.current_period_end = now + timedelta(days=_BILLING_PERIOD_DAYS)
+        sub = await self.repo.save(sub)
+
+        await self.repo.create_billing_event(
+            user_id=user_id,
+            subscription_id=sub.id,
+            event_type="subscription_upgraded",
+            amount=Decimal("0"),
+            currency="VND",
+            event_metadata={
+                "previous_plan_id": str(current_plan.id) if current_plan else None,
+                "new_plan_id": str(new_plan.id),
+            },
+        )
+        return self._to_subscription_response(sub, new_plan)
+
+    async def downgrade_subscription(
+        self, user_id: uuid.UUID, plan_id: uuid.UUID
+    ) -> SubscriptionResponse:
+        """Schedules a lapse at current_period_end — the same mechanism as
+        cancel_subscription (cancel_at_period_end=True), since expire_lapsed_subscriptions
+        only knows how to land a lapsed subscription on the FREE plan, not on an
+        arbitrary specific paid tier. `plan_id` is validated (must be cheaper than the
+        current plan) and recorded on the billing event for audit purposes, but does
+        NOT currently change what plan the user lands on at period end — that's always
+        free, exactly like an explicit cancel. Landing on a specific cheaper PAID plan
+        would need a scheduled-plan-id column and updated expiry logic; out of scope here.
+        """
+        sub = await self.repo.get_subscription(user_id)
+        if sub is None:
+            raise NotFoundError("No subscription found")
+        current_plan = await self.repo.get_plan(sub.plan_id)
+        new_plan = await self.repo.get_plan(plan_id)
+        if new_plan is None or not new_plan.is_active:
+            raise NotFoundError(f"Plan {plan_id} not found")
+        if current_plan is not None and new_plan.price_monthly >= current_plan.price_monthly:
+            raise DomainError(
+                "Target plan is not cheaper than the current plan. "
+                "Use /subscriptions/me/upgrade instead."
+            )
+        if sub.cancel_at_period_end:
+            raise SubscriptionNotCancellableError(
+                "Subscription is already scheduled to change at period end"
+            )
+
+        sub.cancel_at_period_end = True
+        sub.cancelled_at = datetime.now(UTC)
+        sub = await self.repo.save(sub)
+
+        await self.repo.create_billing_event(
+            user_id=user_id,
+            subscription_id=sub.id,
+            event_type="subscription_downgrade_scheduled",
+            amount=Decimal("0"),
+            currency="VND",
+            event_metadata={"requested_plan_id": str(new_plan.id)},
+        )
+        return self._to_subscription_response(sub, current_plan)
+
+    async def get_usage(self, user_id: uuid.UUID) -> UsageRecordResponse:
+        sub = await self.repo.get_subscription(user_id)
+        if sub is None:
+            raise NotFoundError("No subscription found")
+        summary = await AiUsageService(self.db).summary(user_id)
+        return UsageRecordResponse(
+            user_id=user_id,
+            billing_period_start=summary["period_start"],
+            billing_period_end=summary["period_end"],
+            ai_generations_used=summary["used"],
+            ai_generations_limit=summary["limit"],
+        )
 
     async def expire_lapsed_subscriptions(self) -> int:
         """Downgrade every subscription whose paid period has ended back to

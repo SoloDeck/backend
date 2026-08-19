@@ -404,16 +404,57 @@ class DealsRepository:
         owner_user_id: uuid.UUID,
         entry_type: str,
         description: str,
+        previous_stage: str | None = None,
+        new_stage: str | None = None,
     ):
         entry = DealActivityEntryModel(
             deal_id=deal_id,
             owner_user_id=owner_user_id,
             entry_type=entry_type,
             description=description,
+            previous_stage=previous_stage,
+            new_stage=new_stage,
         )
         self.db.add(entry)
         await self.db.flush()
         return entry
+
+    async def list_activity(
+        self,
+        deal_id: uuid.UUID,
+        owner_user_id: uuid.UUID,
+        entry_type: str | None = None,
+        sort_order: str = "desc",
+        page: int = 1,
+        page_size: int = 20,
+    ) -> tuple[list, int]:
+        filters = [
+            DealActivityEntryModel.deal_id == deal_id,
+            DealActivityEntryModel.owner_user_id == owner_user_id,
+        ]
+        if entry_type is not None:
+            filters.append(DealActivityEntryModel.entry_type == entry_type)
+
+        total = (
+            await self.db.scalar(
+                select(func.count()).select_from(DealActivityEntryModel).where(*filters)
+            )
+            or 0
+        )
+
+        ordered = (
+            DealActivityEntryModel.created_at.desc()
+            if sort_order == "desc"
+            else DealActivityEntryModel.created_at.asc()
+        )
+        result = await self.db.execute(
+            select(DealActivityEntryModel)
+            .where(*filters)
+            .order_by(ordered)
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+        )
+        return list(result.scalars().all()), total
 
     async def comparable_deal_values(
         self, owner_user_id: uuid.UUID, service_category: str | None

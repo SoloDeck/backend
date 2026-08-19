@@ -80,6 +80,10 @@ class DealStageRequest(BaseModel):
         return self.target_stage
 
 
+class AddNoteRequest(BaseModel):
+    description: str = Field(min_length=1)
+
+
 class PublicIntakeRequest(BaseModel):
     """Body for the public (unauthenticated) lead intake form.
 

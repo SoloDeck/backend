@@ -5,21 +5,39 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 
-class ProposalRequest(BaseModel):
+class CreateProposalRequest(BaseModel):
+    """status is deliberately NOT accepted here — every proposal starts as draft.
+    Previously this schema let the caller set status directly (default "draft" but
+    settable to anything), so a client could create a proposal already "sent" or
+    "accepted" and skip every rule transition_status() enforces (pricing must be
+    set, payment milestones must sum to 100%, share_token generation, superseding
+    an existing sent proposal, etc). Status now only ever changes via /send or
+    PATCH .../status.
+
+    Siết chỗ này càng đáng giá từ khi soạn báo giá thủ công (từ khung mẫu, không cần AI)
+    trở thành lối đi CHÍNH chứ không còn là ngách."""
+
     deal_id: uuid.UUID
-    content: dict
-    # CỐ Ý khoá về đúng "draft". Trước đây đây là `str` tự do và `create()` ghi thẳng vào DB, nên
-    # `POST /proposals {"status": "accepted"}` tạo ngay một báo giá ĐÃ CHẤP NHẬN — bỏ qua toàn bộ
-    # `transition_status`: cổng chưa-chốt-giá, cổng hạng mục 0đ, cổng tổng-lệch-giá-chào và cả
-    # bảng chuyển trạng thái hợp lệ. Từ đó tạo hợp đồng được luôn.
-    #
-    # Mọi chuyển trạng thái phải đi qua `PATCH /proposals/{id}/status`, nơi các cổng đó sống.
-    # Siết bây giờ vì đường tạo thủ công vừa trở thành lối đi CHÍNH, không còn là ngách.  #Huynh
+    content: dict = Field(default_factory=dict)
+    # Khoá cứng về "draft" thay vì BỎ HẲN trường: bỏ hẳn thì pydantic lặng lẽ nuốt
+    # `{"status": "accepted"}` và trả 201 một bản nháp, client tưởng đã thành công.
+    # Giữ Literal để sai là báo 422 ngay tại cửa.
     status: Literal["draft"] = "draft"
+
+
+class UpdateProposalRequest(BaseModel):
+    content: dict | None = None
 
 
 class ProposalStatusRequest(BaseModel):
     status: str = Field(..., description="Target status: sent, accepted, rejected, expired")
+
+
+class ProposalRespondRequest(BaseModel):
+    """Client's accept/reject decision, submitted via the public share link."""
+
+    decision: Literal["accepted", "rejected"]
+    note: str | None = None
 
 
 class AiProposalRequest(BaseModel):
