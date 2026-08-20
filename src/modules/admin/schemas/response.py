@@ -170,3 +170,4 @@ class AdminPlatformMetricsResponse(BaseModel):
 
 class AdminLLMProviderResponse(BaseModel):
     llm_provider: str
+    llm_model: str

@@ -5,6 +5,8 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, EmailStr, Field
 
+from src.ai.shared.constants import LLMProviderName
+
 # Ràng buộc HÌNH DẠNG, khớp đúng cột `subscription_plans.price_monthly NUMERIC(10, 2)`
 # (infrastructure/database/models.py). Không có nó thì `price_monthly: -5` hay
 # `99999999999` đi thẳng xuống Postgres và nổ thành 500 trần, thay vì 422 nói được sai gì.
@@ -84,8 +86,8 @@ class AdminUpdateFeatureFlagRequest(BaseModel):
 
 
 class AdminUpdateLLMProviderRequest(BaseModel):
-    llm_provider: Literal[
-        "groq",
-        "gemini",
-        "openai",
-    ]
+    # Dùng chung LLMProviderName với get_llm_provider() để danh sách nhà cung
+    # cấp chỉ tồn tại ở MỘT nơi (src/ai/shared/constants.py). Chính bản Literal
+    # viết tay ở đây từng làm "ollama" không chọn được dù mọi tầng dưới đã hỗ trợ.
+    llm_provider: LLMProviderName
+    llm_model: str

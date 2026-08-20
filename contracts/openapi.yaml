@@ -7608,19 +7608,31 @@ components:
 
     AdminLLMProviderResponse:
       type: object
-      required: [llm_provider]
+      required: [llm_provider, llm_model]
       properties:
         llm_provider:
           type: string
-          enum: [groq, gemini, openai]
+          enum: [groq, gemini, ollama]
+        llm_model:
+          type: string
+          example: gemini-2.5-flash
 
     AdminUpdateLLMProviderRequest:
       type: object
-      required: [llm_provider]
+      required: [llm_provider, llm_model]
       properties:
         llm_provider:
           type: string
-          enum: [groq, gemini, openai]
+          enum: [groq, gemini, ollama]
+        llm_model:
+          description: >-
+            Must be a model belonging to the selected `llm_provider`, otherwise the
+            request is rejected with 422.
+            groq: openai/gpt-oss-120b.
+            gemini: gemini-2.5-flash, gemini-3.5-flash-lite.
+            ollama: qwen3:4b.
+          type: string
+          example: gemini-2.5-flash
 
     PlatformMetricsResponse:
       type: object
