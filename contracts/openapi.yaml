@@ -3453,6 +3453,77 @@ paths:
         '422':
           $ref: '#/components/responses/UnprocessableEntity'
 
+  /admin/payments:
+    get:
+      tags: [Admin]
+      summary: List subscription payment transactions (admin-only)
+      description: |
+        Read-only listing of every subscription payment transaction across the platform —
+        which freelancer bought which plan, when, how much, and the outcome. Backed by the
+        existing `subscription_payments` table; no new storage.
+
+        Read-only by design. There is deliberately NO refund action and NO export endpoint
+        on this resource — do not add them client-side by calling other endpoints.
+
+        `search` matches the paying user's email or full name (case-insensitive, partial).
+        `from_date`/`to_date` filter on `created_at` (when the transaction was initiated),
+        not on `paid_at`, so pending and failed attempts stay visible in a date window.
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - name: status
+          in: query
+          description: Filter by payment status. Value set is identical to the DB enum `subscription_payment_status`.
+          schema:
+            $ref: '#/components/schemas/PaymentIntentStatus'
+        - name: provider
+          in: query
+          description: Filter by payment provider (DB enum `payment_provider`).
+          schema:
+            $ref: '#/components/schemas/PaymentProvider'
+        - name: search
+          in: query
+          description: Case-insensitive partial match on the paying user's email or full name.
+          schema:
+            type: string
+        - name: from_date
+          in: query
+          description: Inclusive lower bound on `created_at`.
+          schema:
+            type: string
+            format: date-time
+        - name: to_date
+          in: query
+          description: Inclusive upper bound on `created_at`.
+          schema:
+            type: string
+            format: date-time
+        - name: sort_by
+          in: query
+          schema:
+            type: string
+            enum: [created_at, paid_at, amount]
+            default: created_at
+        - $ref: '#/components/parameters/SortOrder'
+      responses:
+        '200':
+          description: Paginated payment transaction list
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponseBase'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/AdminPaymentPagedResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+
   /admin/plans:
     get:
       tags: [Admin]
@@ -7346,6 +7417,83 @@ components:
           type: string
           format: date-time
           description: When the override expires (returns to normal plan). Must be in the future.
+
+    AdminPaymentResponse:
+      type: object
+      description: |
+        One row of the `subscription_payments` table, denormalised with the paying user's
+        identity and the purchased plan's name via LEFT OUTER JOIN — user and plan fields
+        are therefore nullable (the referenced row may be soft-deleted or removed).
+      required: [id, user_id, plan_id, provider, status, amount, currency, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        user_email:
+          type: string
+          format: email
+          nullable: true
+          description: Null when the joined user row is missing.
+        user_full_name:
+          type: string
+          nullable: true
+        plan_id:
+          type: string
+          format: uuid
+        plan_name:
+          type: string
+          nullable: true
+          description: Null when the joined plan row is missing.
+        provider:
+          $ref: '#/components/schemas/PaymentProvider'
+        status:
+          $ref: '#/components/schemas/PaymentIntentStatus'
+        amount:
+          type: number
+          format: decimal
+          description: |
+            Numeric(10,2). NOTE — pydantic v2 serialises `Decimal` as a JSON **string**
+            (e.g. "199000.00"), so clients must accept string-or-number and parse before
+            formatting. Never do arithmetic on the raw value.
+        currency:
+          type: string
+          minLength: 3
+          maxLength: 3
+          examples: VND
+        provider_reference:
+          type: string
+          nullable: true
+          description: Provider-side transaction id. Null until the provider responds.
+        paid_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: Null unless status is `succeeded`.
+        created_at:
+          type: string
+          format: date-time
+
+    AdminPaymentPagedResponse:
+      type: object
+      description: |
+        Admin list envelope, matching the implemented convention used by
+        `AdminAiCostPagedResponse` — this object is itself the `data` of `ApiResponseBase`.
+      required: [data, total, page, page_size]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/AdminPaymentResponse'
+        total:
+          type: integer
+          description: Total rows matching the filters, before pagination.
+        page:
+          type: integer
+        page_size:
+          type: integer
 
     AdminCreatePlanRequest:
       type: object
