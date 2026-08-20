@@ -6748,6 +6748,14 @@ components:
           type: string
           format: uuid
           nullable: true
+        order_code:
+          type: string
+          nullable: true
+          description: |
+            Short human-typeable order code (e.g. `SD7K2M9PQR`) that the payer writes into
+            the bank-transfer memo. Populated for bank-reconciliation providers (`sepay`);
+            null for redirect gateways and for intents created before the field existed.
+          example: SD7K2M9PQR
           description: Target plan being purchased, when this intent is subscription-targeted.
         provider:
           $ref: '#/components/schemas/PaymentProvider'
