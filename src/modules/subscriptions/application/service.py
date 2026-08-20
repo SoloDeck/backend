@@ -11,7 +11,6 @@ import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config.settings import settings
-from src.infrastructure.redis.client import get_redis
 from src.modules.subscriptions.application.ai_usage import AiUsageService
 from src.modules.subscriptions.application.payment_gateway import PaymentGateway
 from src.modules.subscriptions.domain.entities.subscription_payment import (
@@ -50,14 +49,12 @@ _BILLING_PERIOD_DAYS = 30
 _FREE_PLAN_PERIOD_DAYS = 36500
 
 
-# Bộ hãm dự phòng, chỉ dùng khi Redis không gọi được. Cấp TIẾN TRÌNH: N worker thì tối đa
-# N lượt hỏi mỗi cửa sổ thay vì 1 — kém chính xác hơn Redis nhưng vẫn có chặn trên, và N
-# nhỏ. Điểm mấu chốt là nó không bao giờ TẮT đường đối soát.
+# Bộ hãm, cấp TIẾN TRÌNH. Xem `_may_query_provider` để biết vì sao KHÔNG dùng Redis.
 _query_last_seen: dict[uuid.UUID, float] = {}
 
 
 def _may_query_in_process(payment_id: uuid.UUID) -> bool:
-    """Phiên bản `_may_query_provider` không cần Redis.
+    """Hãm bằng bộ đếm trong tiến trình.
 
     Dọn rác ngay trong lời gọi thay vì để một job riêng: số đơn đang chờ trả tiền cùng lúc
     rất nhỏ, nên quét hết dict mỗi lần vẫn rẻ hơn nhiều so với việc thêm một cơ chế dọn.
@@ -324,34 +321,24 @@ class SubscriptionsService:
         thanh toán sinh ra tới 40 lượt gọi ra ngoài, mỗi lượt chờ tối đa
         `momo_timeout_seconds` — vừa tự bắn vào hạn mức của mình, vừa làm màn hình ì.
 
-        Ưu tiên Redis vì nó hãm được trên TẤT CẢ worker; nhưng Redis hỏng thì lùi về bộ đếm
-        trong tiến trình chứ KHÔNG tắt tính năng.
+        CỐ Ý đếm trong tiến trình chứ KHÔNG dùng Redis.
 
-        Bản đầu tui viết "Redis hỏng thì trả False" và tưởng đó là hướng an toàn. Nó không
-        an toàn, nó là một cái công tắc ngầm: Redis chớp một nhịp là đường cứu giao dịch
-        biến mất, chỉ để lại một dòng log mà không ai đọc. Chính môi trường test đã lộ ra
-        điều đó — ở đó `REDIS_URL` trỏ `localhost`, không có Redis, nên tính năng này sẽ
-        KHÔNG BAO GIỜ được chạy trong CI.
+        Bản đầu tôi dùng Redis để hãm chung cho mọi worker. Nó làm CI đỏ ở
+        `test_generate_on_sent_proposal_returns_409` — một test của module `proposals`, không
+        dính gì tới thanh toán. Nguyên nhân: `get_redis()` dựng một client mới mỗi lần gọi,
+        hàm này chạy mỗi 3 giây theo nhịp dò của frontend, và socket rò ra sinh
+        `ResourceWarning: unclosed socket` dạng *unraisable* — loại cảnh báo KHÔNG nổ ở nơi
+        gây ra mà nổ ở test nào chạm bộ thu gom rác trước.
 
-        Bộ đếm trong tiến trình hãm kém hơn (mỗi worker một bộ, N worker thì tối đa N lượt
-        hỏi mỗi cửa sổ) nhưng vẫn có chặn trên, và N nhỏ. Thà hỏi hơi nhiều còn hơn tắt.
+        Đóng client rồi đóng cả pool ở cuối phiên test đều KHÔNG dứt được, vì cảnh báo phát
+        ra giữa chừng. Và lỗi chỉ hiện trên CI: container test ở máy không có Redis nên nhánh
+        đó chưa bao giờ chạy thật — xanh ở máy, đỏ trên CI.
+
+        Cái giá của việc bỏ Redis: mỗi worker giữ bộ đếm riêng, nên N worker thì tối đa N lượt
+        hỏi mỗi cửa sổ thay vì 1. N nhỏ, và một lượt hỏi MoMo rất rẻ. Đổi lấy việc bớt hẳn một
+        lớp hỏng hóc là đáng.  #Huynh
         """
-        try:
-            redis = await get_redis()
-            acquired = await redis.set(
-                f"payments:query-throttle:{payment_id}",
-                "1",
-                nx=True,
-                ex=_QUERY_THROTTLE_SECONDS,
-            )
-        except Exception as exc:  # noqa: BLE001
-            log.warning(
-                "payments.query_throttle_fallback_in_process",
-                payment_id=str(payment_id),
-                error_type=type(exc).__name__,
-            )
-            return _may_query_in_process(payment_id)
-        return bool(acquired)
+        return _may_query_in_process(payment_id)
 
     async def _expire_if_overdue(self, payment):
         """Lazily flip a stale pending checkout to `expired` on read, rather
