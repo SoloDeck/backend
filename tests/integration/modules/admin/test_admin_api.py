@@ -2,7 +2,6 @@
 
 import uuid
 from datetime import UTC, datetime, timedelta
-from decimal import Decimal
 
 import pytest
 from httpx import AsyncClient
@@ -1382,6 +1381,196 @@ class TestAdminOverrideSubscription:
             json={},
             headers=headers,
         )
+        assert resp.status_code == 403
+
+
+# ---------------------------------------------------------------------------
+# GET /admin/payments
+# ---------------------------------------------------------------------------
+
+
+PLAN_NAME_MARKER = "Payments Test Plan"
+
+
+async def _ensure_subscription(
+    db_session: AsyncSession, user_id: str
+) -> tuple[uuid.UUID, uuid.UUID]:
+    """Return (subscription_id, plan_id), creating a plan + subscription if absent.
+
+    Registration does not necessarily create a subscription row, and
+    `subscriptions.user_id` is UNIQUE — so reuse an existing one when present.
+    """
+    sub = (
+        await db_session.execute(
+            select(SubscriptionModel).where(SubscriptionModel.user_id == uuid.UUID(user_id))
+        )
+    ).scalar_one_or_none()
+    if sub is not None:
+        return sub.id, sub.plan_id
+
+    plan_id = uuid.uuid4()
+    await db_session.execute(
+        insert(PlanModel).values(
+            id=plan_id,
+            name=f"{PLAN_NAME_MARKER} {uuid.uuid4().hex[:6]}",
+            slug=f"pay-test-{uuid.uuid4().hex[:6]}",
+            price_monthly="199000.00",
+            currency="VND",
+        )
+    )
+    sub_id = uuid.uuid4()
+    now = datetime.now(UTC)
+    await db_session.execute(
+        insert(SubscriptionModel).values(
+            id=sub_id,
+            user_id=uuid.UUID(user_id),
+            plan_id=plan_id,
+            status="active",
+            current_period_start=now,
+            current_period_end=now + timedelta(days=30),
+        )
+    )
+    await db_session.flush()
+    return sub_id, plan_id
+
+
+async def _seed_payment(
+    db_session: AsyncSession, user_id: str, **overrides: object
+) -> uuid.UUID:
+    """Insert one subscription_payments row for the user's subscription."""
+    sub_id, plan_id = await _ensure_subscription(db_session, user_id)
+
+    payment_id = uuid.uuid4()
+    values: dict = {
+        "id": payment_id,
+        "user_id": uuid.UUID(user_id),
+        "subscription_id": sub_id,
+        "plan_id": plan_id,
+        "provider": "momo",
+        "status": "succeeded",
+        "amount": "199000.00",
+        "currency": "VND",
+        "provider_reference": "MOMO-TEST-1",
+        "expires_at": datetime.now(UTC) + timedelta(hours=1),
+        "paid_at": datetime.now(UTC),
+    }
+    values.update(overrides)
+    await db_session.execute(insert(SubscriptionPaymentModel).values(**values))
+    await db_session.flush()
+    return payment_id
+
+
+class TestAdminPayments:
+    async def test_returns_paginated_envelope(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        headers = await _admin_headers(client, db_session)
+        resp = await client.get("/api/v1/admin/payments", headers=headers)
+        assert resp.status_code == 200
+        body = resp.json()["data"]
+        assert set(body) == {"data", "total", "page", "page_size"}
+        assert body["page"] == 1
+        assert body["page_size"] == 20
+
+    async def test_row_includes_buyer_and_plan(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """Admin cần biết ai mua gói nào — response join sẵn user + plan."""
+        headers, admin_id = await _admin_headers_with_id(client, db_session)
+        admin_email = (await client.get("/api/v1/users/me", headers=headers)).json()["data"][
+            "email"
+        ]
+        payment_id = await _seed_payment(db_session, admin_id)
+
+        resp = await client.get("/api/v1/admin/payments", headers=headers)
+        assert resp.status_code == 200
+        rows = resp.json()["data"]["data"]
+        mine = [r for r in rows if r["id"] == str(payment_id)]
+        assert mine, "Giao dịch vừa seed phải xuất hiện"
+        row = mine[0]
+        assert row["user_id"] == admin_id
+        assert row["user_email"] == admin_email
+        assert row["plan_name"] is not None
+        assert row["provider"] == "momo"
+        assert row["status"] == "succeeded"
+        assert row["currency"] == "VND"
+        assert row["provider_reference"] == "MOMO-TEST-1"
+        # Decimal được pydantic serialise thành chuỗi — client phải parse trước khi tính.
+        assert float(row["amount"]) == 199000.00
+        assert row["paid_at"] is not None
+        assert row["created_at"] is not None
+
+    async def test_status_filter_excludes_other_statuses(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        headers, admin_id = await _admin_headers_with_id(client, db_session)
+        succeeded_id = await _seed_payment(db_session, admin_id)
+        failed_id = await _seed_payment(
+            db_session, admin_id, status="failed", paid_at=None, provider_reference=None
+        )
+
+        resp = await client.get("/api/v1/admin/payments?status=failed", headers=headers)
+        assert resp.status_code == 200
+        ids = [r["id"] for r in resp.json()["data"]["data"]]
+        assert str(failed_id) in ids
+        assert str(succeeded_id) not in ids
+
+    async def test_search_matches_buyer_email(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        headers, admin_id = await _admin_headers_with_id(client, db_session)
+        payment_id = await _seed_payment(db_session, admin_id)
+        admin_email = (await client.get("/api/v1/users/me", headers=headers)).json()["data"][
+            "email"
+        ]
+
+        resp = await client.get(
+            f"/api/v1/admin/payments?search={admin_email.split('@')[0]}", headers=headers
+        )
+        assert resp.status_code == 200
+        ids = [r["id"] for r in resp.json()["data"]["data"]]
+        assert str(payment_id) in ids
+
+    async def test_search_no_match_returns_empty(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        headers, admin_id = await _admin_headers_with_id(client, db_session)
+        await _seed_payment(db_session, admin_id)
+
+        resp = await client.get(
+            "/api/v1/admin/payments?search=nobody-matches-this", headers=headers
+        )
+        assert resp.status_code == 200
+        assert resp.json()["data"]["total"] == 0
+
+    async def test_invalid_status_returns_422(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        headers = await _admin_headers(client, db_session)
+        resp = await client.get("/api/v1/admin/payments?status=bogus", headers=headers)
+        assert resp.status_code == 422
+
+    async def test_invalid_sort_by_returns_422(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        headers = await _admin_headers(client, db_session)
+        resp = await client.get("/api/v1/admin/payments?sort_by=secret_col", headers=headers)
+        assert resp.status_code == 422
+
+    async def test_page_size_over_limit_returns_422(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        headers = await _admin_headers(client, db_session)
+        resp = await client.get("/api/v1/admin/payments?page_size=500", headers=headers)
+        assert resp.status_code == 422
+
+    async def test_unauthenticated_returns_401(self, client: AsyncClient) -> None:
+        resp = await client.get("/api/v1/admin/payments")
+        assert resp.status_code == 401
+
+    async def test_non_admin_returns_403(self, client: AsyncClient) -> None:
+        headers = await _user_headers(client)
+        resp = await client.get("/api/v1/admin/payments", headers=headers)
         assert resp.status_code == 403
 
 

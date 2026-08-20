@@ -40,6 +40,12 @@ _AI_SORT_COLS = {
     "occurred_at": AiCostRecordModel.occurred_at,
 }
 
+_PAYMENT_SORT_COLS = {
+    "created_at": SubscriptionPaymentModel.created_at,
+    "paid_at": SubscriptionPaymentModel.paid_at,
+    "amount": SubscriptionPaymentModel.amount,
+}
+
 
 @dataclass
 class AdminRepository:
@@ -231,6 +237,60 @@ class AdminRepository:
         return await self.db.scalar(
             select(SubscriptionModel).where(SubscriptionModel.id == subscription_id)
         )
+
+    # -------------------------------------------------------------------------
+    # Subscription Payments
+    # -------------------------------------------------------------------------
+
+    async def list_payments_paginated(
+        self,
+        *,
+        status: str | None = None,
+        provider: str | None = None,
+        search: str | None = None,
+        from_date: datetime | None = None,
+        to_date: datetime | None = None,
+        sort_by: str = "created_at",
+        sort_order: str = "desc",
+        page: int = 1,
+        page_size: int = 20,
+    ) -> tuple[list, int]:
+        # Join users + subscription_plans để admin thấy "ai mua gói nào".
+        # outerjoin vì user/plan có thể đã bị xoá — giao dịch vẫn phải hiện (đối soát thuế).
+        base_q = (
+            select(SubscriptionPaymentModel, UserModel, PlanModel)
+            .outerjoin(UserModel, UserModel.id == SubscriptionPaymentModel.user_id)
+            .outerjoin(PlanModel, PlanModel.id == SubscriptionPaymentModel.plan_id)
+        )
+        if status is not None:
+            base_q = base_q.where(SubscriptionPaymentModel.status == status)
+        if provider is not None:
+            base_q = base_q.where(SubscriptionPaymentModel.provider == provider)
+        if search is not None:
+            base_q = base_q.where(
+                or_(
+                    UserModel.email.ilike(f"%{search}%"),
+                    UserModel.full_name.ilike(f"%{search}%"),
+                )
+            )
+        # Lọc theo created_at (lúc khởi tạo giao dịch), KHÔNG phải paid_at —
+        # để giao dịch pending/failed vẫn nằm trong khoảng ngày đang xem.
+        if from_date is not None:
+            base_q = base_q.where(SubscriptionPaymentModel.created_at >= from_date)
+        if to_date is not None:
+            base_q = base_q.where(SubscriptionPaymentModel.created_at <= to_date)
+
+        total = await self.db.scalar(
+            select(func.count()).select_from(base_q.subquery())
+        ) or 0
+
+        sort_col = _PAYMENT_SORT_COLS.get(sort_by, SubscriptionPaymentModel.created_at)
+        ordered = sort_col.desc() if sort_order == "desc" else sort_col.asc()
+        data_q = base_q.order_by(ordered).offset((page - 1) * page_size).limit(page_size)
+
+        result = await self.db.execute(data_q)
+        # Mỗi hàng = (SubscriptionPaymentModel, UserModel | None, PlanModel | None).
+        return list(result.all()), total
 
     # -------------------------------------------------------------------------
     # Audit Logs

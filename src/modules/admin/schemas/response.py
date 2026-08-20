@@ -115,6 +115,38 @@ class AdminAiCostPagedResponse(BaseModel):
     totals: AdminAiCostTotals
 
 
+class AdminPaymentResponse(BaseModel):
+    """Một giao dịch trong `subscription_payments`, kèm email/tên người mua và tên gói.
+
+    `user_email`, `user_full_name`, `plan_name` đến từ LEFT OUTER JOIN nên có thể null.
+    `amount` là Decimal — pydantic v2 serialise ra JSON **string** (vd "199000.00"),
+    giống `AdminAiCostResponse.estimated_cost_usd`; client phải parse trước khi tính.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    user_id: uuid.UUID
+    user_email: str | None = None
+    user_full_name: str | None = None
+    plan_id: uuid.UUID
+    plan_name: str | None = None
+    provider: str
+    status: str
+    amount: Decimal
+    currency: str
+    provider_reference: str | None = None
+    paid_at: datetime | None = None
+    created_at: datetime
+
+
+class AdminPaymentPagedResponse(BaseModel):
+    data: list[AdminPaymentResponse]
+    total: int
+    page: int
+    page_size: int
+
+
 class AdminAuditLogResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
