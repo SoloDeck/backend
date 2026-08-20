@@ -874,7 +874,7 @@ paths:
         `/subscriptions/me/upgrade`, the plan switch does not happen immediately —
         it is applied by `POST /payments/webhooks/{provider}` once the provider
         confirms payment. Poll `GET /payments/intents/{payment_intent_id}` for status.
-        Only the `momo` provider is currently supported.
+        Supported providers: `momo`, `zalopay`.
       requestBody:
         required: true
         content:
@@ -4556,7 +4556,7 @@ components:
 
     PaymentProvider:
       type: string
-      enum: [momo, bank_transfer, vnpay, manual]
+      enum: [momo, zalopay, bank_transfer, vnpay, manual]
 
     PaymentIntentStatus:
       type: string

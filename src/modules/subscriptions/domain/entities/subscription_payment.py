@@ -9,6 +9,7 @@ from src.shared.exceptions.domain import InvalidStateTransitionError
 
 class PaymentProvider(StrEnum):
     MOMO = "momo"
+    ZALOPAY = "zalopay"
 
 
 class SubscriptionPaymentStatus(StrEnum):

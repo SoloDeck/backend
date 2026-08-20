@@ -52,8 +52,12 @@ from sqlalchemy.pool import NullPool  # noqa: E402
 import src.infrastructure.database.models  # noqa: F401,E402 — registers all ORM models with Base
 from src.infrastructure.database.session import get_db_session  # noqa: E402
 from src.integrations.momo.client import MockMomoClient  # noqa: E402
+from src.integrations.zalopay.client import MockZaloPayClient  # noqa: E402
 from src.main import app  # noqa: E402
-from src.shared.dependencies.payments import get_momo_client  # noqa: E402
+from src.shared.dependencies.payments import (  # noqa: E402
+    get_momo_client,
+    get_zalopay_client,
+)
 
 # ── Helpers that run once at import time (before the event loop starts) ────────
 
@@ -145,6 +149,10 @@ async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient]:
     app.dependency_overrides[get_db_session] = override_db
     # MomoClient calls MoMo's real sandbox over the network — never that in tests.
     app.dependency_overrides[get_momo_client] = lambda: MockMomoClient()
+    # Bắt buộc phải override CẢ HAI cổng. Thiếu dòng dưới, mọi test chạm tới
+    # ZaloPay sẽ gọi ra sb-openapi.zalopay.vn thật — treo trên CI (không có mạng
+    # ra ngoài) và phụ thuộc vào một sandbox của bên thứ ba khi chạy local.
+    app.dependency_overrides[get_zalopay_client] = lambda: MockZaloPayClient()
     async with AsyncClient(
         transport=ASGITransport(app=app),
         base_url="http://test",

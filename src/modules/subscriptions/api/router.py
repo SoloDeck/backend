@@ -19,7 +19,7 @@ from src.modules.subscriptions.schemas.response import (
     UsageRecordResponse,
 )
 from src.shared.dependencies.auth import CurrentUserId
-from src.shared.dependencies.payments import MomoClientDep
+from src.shared.dependencies.payments import MomoClientDep, ZaloPayClientDep
 from src.shared.responses.response import ApiResponse
 
 router = APIRouter()
@@ -50,8 +50,11 @@ async def create_checkout(
     user_id: CurrentUserId,
     db: DBSession,
     momo_client: MomoClientDep,
+    zalopay_client: ZaloPayClientDep,
 ) -> ApiResponse[PaymentIntentResponse]:
-    payment = await SubscriptionsService(db=db, momo_client=momo_client).initiate_checkout(
+    payment = await SubscriptionsService(
+        db=db, momo_client=momo_client, zalopay_client=zalopay_client
+    ).initiate_checkout(
         user_id, payload.plan_id, PaymentProvider(payload.provider), payload.return_url
     )
     return ApiResponse.created(PaymentIntentResponse.from_model(payment))

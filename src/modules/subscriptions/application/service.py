@@ -63,15 +63,40 @@ class SubscriptionsService:
     db: AsyncSession
     repo: SubscriptionsRepository | None = None
     momo_client: PaymentGateway | None = None
+    zalopay_client: PaymentGateway | None = None
 
     def __post_init__(self) -> None:
         if self.repo is None:
             self.repo = SubscriptionsRepository(self.db)
 
     def _gateway(self, provider: PaymentProvider) -> PaymentGateway:
-        if provider != PaymentProvider.MOMO or self.momo_client is None:
+        """Adapter cho cổng được chọn.
+
+        Bản trước hard-code `provider != PaymentProvider.MOMO`, nên thêm cổng thứ hai là
+        phải sửa đúng dòng này — dễ quên, và quên thì mọi checkout ZaloPay chết bằng một
+        `RuntimeError` 500 trần. Giữ dạng bảng để cổng thứ ba chỉ là thêm một dòng.
+        """
+        gateway = {
+            PaymentProvider.MOMO: self.momo_client,
+            PaymentProvider.ZALOPAY: self.zalopay_client,
+        }.get(provider)
+        if gateway is None:
             raise RuntimeError(f"No payment gateway configured for provider '{provider}'")
-        return self.momo_client
+        return gateway
+
+    @staticmethod
+    def _notify_url(provider: PaymentProvider) -> str:
+        """Webhook server-to-server của TỪNG cổng.
+
+        Bản trước truyền thẳng `settings.momo_ipn_url` cho mọi provider. Với một cổng thì
+        vô hại; với hai cổng thì ZaloPay sẽ gọi callback vào đúng cái webhook của MoMo —
+        payload đi lạc đường, chữ ký không bao giờ khớp, và tiền đã thu thật thì không
+        bao giờ kích hoạt được gói.
+        """
+        return {
+            PaymentProvider.MOMO: settings.momo_ipn_url,
+            PaymentProvider.ZALOPAY: settings.zalopay_callback_url,
+        }[provider]
 
     async def list_plans(self) -> list:
         return await self.repo.list_active_plans()
@@ -110,7 +135,7 @@ class SubscriptionsService:
             amount=plan.price_monthly,
             currency=plan.currency,
             order_info=f"SoloDesk {plan.name} plan upgrade",
-            notify_url=settings.momo_ipn_url,
+            notify_url=self._notify_url(provider),
             redirect_url=return_url,
         )
         payment.pay_url = result.pay_url

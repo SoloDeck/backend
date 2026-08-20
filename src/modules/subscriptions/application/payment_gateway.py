@@ -7,6 +7,20 @@ store outcomes only" — concrete implementations live under src/integrations/.
 from decimal import Decimal
 from typing import Any, NamedTuple, Protocol
 
+from src.shared.exceptions.domain import DomainError
+
+
+class PaymentGatewayError(DomainError):
+    """The provider rejected the request or could not be reached.
+
+    Lives on the PORT, not inside one adapter: every gateway implementation
+    raises it, and the module that catches it must not have to import from
+    `integrations/momo/` to name the exception it is catching.
+    """
+
+    def __init__(self, message: str = "Payment provider request failed") -> None:
+        super().__init__(message)
+
 
 class CreatePaymentResult(NamedTuple):
     pay_url: str | None
