@@ -1,6 +1,7 @@
 """Subscriptions application service."""
 
 import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -14,6 +15,7 @@ from src.modules.subscriptions.domain.entities.subscription_payment import (
     PaymentProvider,
     SubscriptionPayment,
     SubscriptionPaymentStatus,
+    generate_order_code,
 )
 from src.modules.subscriptions.domain.exceptions.exceptions import (
     InvalidPaymentSignatureError,
@@ -64,6 +66,7 @@ class SubscriptionsService:
     repo: SubscriptionsRepository | None = None
     momo_client: PaymentGateway | None = None
     zalopay_client: PaymentGateway | None = None
+    sepay_client: PaymentGateway | None = None
 
     def __post_init__(self) -> None:
         if self.repo is None:
@@ -79,6 +82,7 @@ class SubscriptionsService:
         gateway = {
             PaymentProvider.MOMO: self.momo_client,
             PaymentProvider.ZALOPAY: self.zalopay_client,
+            PaymentProvider.SEPAY: self.sepay_client,
         }.get(provider)
         if gateway is None:
             raise RuntimeError(f"No payment gateway configured for provider '{provider}'")
@@ -96,6 +100,9 @@ class SubscriptionsService:
         return {
             PaymentProvider.MOMO: settings.momo_ipn_url,
             PaymentProvider.ZALOPAY: settings.zalopay_callback_url,
+            # SePay cau hinh webhook MOT LAN tren dashboard chu khong nhan URL theo tung
+            # don. Gia tri nay chi de adapter khop protocol va de doi chieu khi debug.
+            PaymentProvider.SEPAY: settings.sepay_callback_url,
         }[provider]
 
     async def list_plans(self) -> list:
@@ -118,6 +125,11 @@ class SubscriptionsService:
         if plan.price_monthly <= 0:
             raise PlanNotPurchasableError("The free plan does not require checkout")
 
+        # Sinh MỘT LẦN vào biến rồi dùng lại cho cả lúc ghi lẫn lúc gửi sang cổng. Đọc
+        # ngược `payment.order_code` từ bản ghi vừa tạo cũng ra đúng giá trị, nhưng lúc đó
+        # đường đi của dữ liệu phụ thuộc vào việc repo có trả lại nguyên vẹn hay không —
+        # một ràng buộc ngầm, không có gì bắt lỗi nếu nó hỏng.
+        order_code = generate_order_code()
         payment = await self.repo.create_payment(
             user_id=user_id,
             subscription_id=subscription.id,
@@ -126,6 +138,7 @@ class SubscriptionsService:
             status=SubscriptionPaymentStatus.PENDING.value,
             amount=plan.price_monthly,
             currency=plan.currency,
+            order_code=order_code,
             expires_at=datetime.now(UTC) + timedelta(minutes=_CHECKOUT_TTL_MINUTES),
         )
 
@@ -137,6 +150,7 @@ class SubscriptionsService:
             order_info=f"SoloDesk {plan.name} plan upgrade",
             notify_url=self._notify_url(provider),
             redirect_url=return_url,
+            order_code=order_code,
         )
         payment.pay_url = result.pay_url
         payment.deeplink = result.deeplink
@@ -173,16 +187,38 @@ class SubscriptionsService:
         payment.updated_at = entity.updated_at
         return await self.repo.save(payment)
 
-    async def handle_payment_callback(self, provider: PaymentProvider, raw_payload: dict) -> dict:
+    async def _payment_for_callback(self, order_id: str):
+        """Tra bản ghi thanh toán từ mã đơn provider gửi về — UUID HOẶC mã đơn ngắn.
+
+        MoMo/ZaloPay trả lại chính `payment.id` (UUID). Cổng đối soát ngân hàng chỉ biết
+        mã ngắn `SD7K2M9PQR` đọc được từ nội dung chuyển khoản. Thử UUID trước, không phải
+        UUID thì tra theo `order_code` — CHỨ KHÔNG phải báo 404 ngay như bản trước.
+
+        Cả hai đường đều khoá hàng (`with_for_update`): một cổng có thể giao lại callback
+        nhiều lần, và hai lần giao song song đều đọc thấy PENDING là kích hoạt gói hai lần.
+        """
+        try:
+            payment_id = uuid.UUID(order_id)
+        except (ValueError, AttributeError, TypeError):
+            return await self.repo.get_payment_by_order_code_for_update(str(order_id))
+        return await self.repo.get_payment_by_id_for_update(payment_id)
+
+    async def handle_payment_callback(
+        self,
+        provider: PaymentProvider,
+        raw_payload: dict,
+        headers: Mapping[str, str] | None = None,
+    ) -> dict:
+        """`headers` là header HTTP của chính request webhook.
+
+        Bắt buộc phải truyền xuống từ router: cổng kiểu đối soát ngân hàng xác thực bằng
+        header `Authorization` chứ không ký trong thân request. Xem docstring của
+        `PaymentGateway.verify_callback_signature`.
+        """
         gateway = self._gateway(provider)
-        if not gateway.verify_callback_signature(raw_payload):
+        if not gateway.verify_callback_signature(raw_payload, headers):
             raise InvalidPaymentSignatureError()
         parsed = gateway.parse_callback(raw_payload)
-
-        try:
-            payment_id = uuid.UUID(parsed.order_id)
-        except ValueError as exc:
-            raise NotFoundError(f"Unknown order '{parsed.order_id}'") from exc
 
         log.info(
             "payments.callback_received",
@@ -194,7 +230,18 @@ class SubscriptionsService:
         # Row lock held until this request commits/rolls back — serializes
         # concurrent deliveries of the same callback so only one can pass the
         # PENDING check below.
-        payment = await self.repo.get_payment_by_id_for_update(payment_id)
+        # Su kien khong lien quan toi don nao (vd SePay bao mot khoan CHUYEN DI). Ack roi
+        # dung han: tra ve bat ky ma loi nao o day chi khien provider gui lai mai mot su
+        # kien khong bao gio khop duoc don nao.
+        if not parsed.actionable:
+            log.info(
+                "payments.callback_not_actionable",
+                provider=provider.value,
+                reason=parsed.message,
+            )
+            return gateway.build_ack_response(parsed)
+
+        payment = await self._payment_for_callback(parsed.order_id)
         if payment is None:
             raise NotFoundError(f"Unknown order '{parsed.order_id}'")
 

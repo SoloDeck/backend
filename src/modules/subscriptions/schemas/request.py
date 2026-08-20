@@ -19,7 +19,7 @@ class CreateSubscriptionCheckoutRequest(BaseModel):
     # bảng adapter trong `SubscriptionsService._gateway`. Ba chỗ, không có gì ép chúng
     # khớp nhau tự động: thiếu ở đây thì request bị 422 trước khi tới service, thừa ở
     # đây thì lọt xuống rồi chết bằng `RuntimeError` 500 trần.
-    provider: Literal["momo", "zalopay"]
+    provider: Literal["momo", "zalopay", "sepay"]
     return_url: str | None = None
 
     @field_validator("return_url")

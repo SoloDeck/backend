@@ -14,6 +14,7 @@ import hmac
 import re
 import time
 import uuid
+from collections.abc import Mapping
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
@@ -43,8 +44,13 @@ _ORDER_INFO_MAX_LENGTH = 255
 _ORDER_INFO_UNSAFE = re.compile(r"[&=]")
 
 
-__all__ = ["MOMO_MAX_AMOUNT_VND", "MOMO_MIN_AMOUNT_VND", "MockMomoClient", "MomoClient",
-           "PaymentGatewayError"]
+__all__ = [
+    "MOMO_MAX_AMOUNT_VND",
+    "MOMO_MIN_AMOUNT_VND",
+    "MockMomoClient",
+    "MomoClient",
+    "PaymentGatewayError",
+]
 
 
 def _vnd(amount: Decimal | int) -> str:
@@ -218,7 +224,13 @@ class _MomoSignedClient:
             f"&transId={payload['transId']}"
         )
 
-    def verify_callback_signature(self, payload: dict[str, Any]) -> bool:
+    def verify_callback_signature(
+        self, payload: dict[str, Any], headers: Mapping[str, str] | None = None
+    ) -> bool:
+        """MoMo ký ngay TRONG thân request, nên `headers` không dùng tới ở đây.
+
+        Tham số có mặt để khớp protocol `PaymentGateway` — xem docstring bên đó.
+        """
         try:
             expected = self._sign(self._ipn_raw_signature(payload))
         except KeyError:
@@ -323,6 +335,7 @@ class MomoClient(_MomoSignedClient):
         order_info: str,
         notify_url: str,
         redirect_url: str | None = None,
+        order_code: str | None = None,
     ) -> CreatePaymentResult:
         request_id = str(uuid.uuid4())
         amount_int = self._to_whole_vnd(amount, currency)
@@ -431,6 +444,7 @@ class MockMomoClient(_MomoSignedClient):
         order_info: str,
         notify_url: str,
         redirect_url: str | None = None,
+        order_code: str | None = None,
     ) -> CreatePaymentResult:
         request_id = str(uuid.uuid4())
         amount_int = self._to_whole_vnd(amount, currency)

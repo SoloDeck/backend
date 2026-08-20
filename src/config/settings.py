@@ -76,7 +76,6 @@ class Settings(BaseSettings):
     google_android_client_id: str = ""
     google_ios_client_id: str = ""
 
-
     # -----------------------------------------------------------------------
     # Groq
     # -----------------------------------------------------------------------
@@ -164,9 +163,7 @@ class Settings(BaseSettings):
     # zalopay_callback_url (the POST-only webhook) — ZaloPayClient enforces this
     # at request time. Note it travels inside embed_data, not as a top-level
     # parameter, because ZaloPay has no redirect field of its own.
-    zalopay_redirect_url: str = (
-        "https://api.solodesk.space/api/v1/payments/webhooks/zalopay/result"
-    )
+    zalopay_redirect_url: str = "https://api.solodesk.space/api/v1/payments/webhooks/zalopay/result"
     zalopay_timeout_seconds: float = 15.0
     # Cận dưới 1.000đ là mức ZaloPay công bố cho giao dịch trên app. Cận trên để bằng
     # MoMo cho nhất quán giữa hai cổng — trần THẬT của một merchant nằm trong hợp đồng
@@ -174,6 +171,29 @@ class Settings(BaseSettings):
     # Mặc định phải khớp hằng cùng tên trong integrations/zalopay/client.py.
     zalopay_min_amount: int = 1_000
     zalopay_max_amount: int = 50_000_000
+
+    # -----------------------------------------------------------------------
+    # SePay (bank-reconciliation gateway) — https://docs.sepay.vn/
+    #
+    # Khac hai cong tren o cho co ban: SePay KHONG giu tien va khong co API tao
+    # don. Tien vao thang tai khoan ngan hang cua chinh ta; SePay doc bien dong
+    # so du roi ban webhook. Vi vay o day khong co endpoint/secret de goi di —
+    # chi co so tai khoan de dung ma QR, va mot khoa de XAC THUC webhook di vao.
+    #
+    # KHONG co gia tri mac dinh nao la that. Khac hai cong tren (chung dung
+    # sandbox cong khai cua nha cung cap), SePay khong co sandbox dung chung:
+    # tai khoan ngan hang la tai khoan that cua mot nguoi that. De trong nghia la
+    # checkout SePay bao loi ro rang thay vi lang le dung so tai khoan cua nguoi khac.
+    # -----------------------------------------------------------------------
+    sepay_webhook_api_key: str = ""
+    sepay_bank_code: str = ""
+    sepay_account_number: str = ""
+    sepay_qr_base_url: str = "https://vietqr.app/img"
+    # Chi de doi chieu khi debug: webhook duoc cau hinh MOT LAN tren dashboard SePay
+    # chu khong gui kem tung don nhu MoMo/ZaloPay.
+    sepay_callback_url: str = "https://api.solodesk.space/api/v1/payments/webhooks/sepay"
+    sepay_min_amount: int = 1_000
+    sepay_max_amount: int = 50_000_000
 
     # -----------------------------------------------------------------------
     # Storage

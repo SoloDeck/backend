@@ -216,6 +216,10 @@ jobs:
           # không liên quan gì tới chuyện cổng thật hay cổng thử.
           MOMO_IPN_URL=${{ vars.MOMO_IPN_URL }}
           MOMO_REDIRECT_URL=${{ vars.MOMO_REDIRECT_URL }}
+          SEPAY_WEBHOOK_API_KEY=${{ secrets.SEPAY_WEBHOOK_API_KEY }}
+          SEPAY_ACCOUNT_NUMBER=${{ vars.SEPAY_ACCOUNT_NUMBER }}
+          SEPAY_BANK_CODE=${{ vars.SEPAY_BANK_CODE }}
+          SEPAY_CALLBACK_URL=${{ vars.SEPAY_CALLBACK_URL }}
           "@ | Out-File -FilePath .env -Encoding utf8
 
       - name: Pull & deploy
@@ -362,6 +366,10 @@ jobs:
           MOMO_ENDPOINT=${{ vars.MOMO_ENDPOINT }}
           MOMO_IPN_URL=${{ vars.MOMO_IPN_URL }}
           MOMO_REDIRECT_URL=${{ vars.MOMO_REDIRECT_URL }}
+          SEPAY_WEBHOOK_API_KEY=${{ secrets.SEPAY_WEBHOOK_API_KEY }}
+          SEPAY_ACCOUNT_NUMBER=${{ vars.SEPAY_ACCOUNT_NUMBER }}
+          SEPAY_BANK_CODE=${{ vars.SEPAY_BANK_CODE }}
+          SEPAY_CALLBACK_URL=${{ vars.SEPAY_CALLBACK_URL }}
           "@ | Out-File -FilePath .env -Encoding utf8
 
       - name: Pull & deploy
