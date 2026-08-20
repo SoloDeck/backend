@@ -194,12 +194,23 @@ jobs:
           ZALO_APP_SECRET=${{ secrets.ZALO_APP_SECRET }}
           ZALO_OAUTH_REDIRECT_URI=${{ vars.ZALO_OAUTH_REDIRECT_URI }}
           ZALO_WEBHOOK_SECRET=${{ secrets.ZALO_WEBHOOK_SECRET }}
-          MOMO_PARTNER_CODE=${{ vars.MOMO_PARTNER_CODE }}
-          MOMO_ACCESS_KEY=${{ secrets.MOMO_ACCESS_KEY }}
-          MOMO_SECRET_KEY=${{ secrets.MOMO_SECRET_KEY }}
-          MOMO_PARTNER_NAME=${{ vars.MOMO_PARTNER_NAME }}
-          MOMO_STORE_ID=${{ vars.MOMO_STORE_ID }}
-          MOMO_ENDPOINT=${{ vars.MOMO_ENDPOINT }}
+          # MoMo trên staging CỐ Ý không khai — để rơi về bộ mã sandbox công khai đã
+          # ghi sẵn trong src/config/settings.py.
+          #
+          # 20/08/2026: staging từng khai mã merchant thật trỏ vào cổng payment.momo.vn,
+          # và MoMo từ chối MỌI giao dịch với mã 13 "cấu hình doanh nghiệp không chính
+          # xác hoặc tài khoản không hoạt động" — tài khoản merchant đó chưa dùng được.
+          # MoMo không báo sai chữ ký, tức khoá và chữ ký phía mình vẫn đúng; lỗi nằm
+          # hoàn toàn ở phía tài khoản merchant.
+          #
+          # Bỏ khai ở ĐÂY thay vì sửa Environment variables, vì chỉ admin repo mới đụng
+          # được Environments. Giá trị cũ vẫn nằm nguyên trên GitHub, không mất gì.
+          #
+          # MUỐN QUAY LẠI MÃ THẬT: khôi phục 6 dòng MOMO_* mà commit này đã xoá. Sửa
+          # settings.py là VÔ ÍCH — biến môi trường luôn đè lên mặc định trong code.
+          #
+          # Hai dòng dưới PHẢI giữ: đó là địa chỉ server mình để MoMo gọi ngược về,
+          # không liên quan gì tới chuyện cổng thật hay cổng thử.
           MOMO_IPN_URL=${{ vars.MOMO_IPN_URL }}
           MOMO_REDIRECT_URL=${{ vars.MOMO_REDIRECT_URL }}
           "@ | Out-File -FilePath .env -Encoding utf8
