@@ -7,6 +7,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from src.shared.exceptions.domain import (
     AIGenerationError,
+    AIOutputParseError,
     AlreadyExistsError,
     AuthenticationError,
     BusinessRuleError,
@@ -127,10 +128,29 @@ def setup_exception_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(AIGenerationError)
     async def ai_error(_: Request, exc: AIGenerationError) -> JSONResponse:
+        # Client chỉ thấy "AI quota exceeded" chung chung — nếu không log ở đây,
+        # nguyên nhân thật (timeout, lỗi API provider, hay parse fail) biến mất
+        # hoàn toàn khỏi log server, không cách nào truy lại được.
+        _log.error(
+            "ai.generation_failed",
+            error_type=type(exc).__name__,
+            reason=exc.message,
+            raw_output=exc.raw_output[:500] if isinstance(exc, AIOutputParseError) else None,
+            request_id=get_request_id(),
+        )
         return _err(502, ErrorCode.AI_QUOTA_EXCEEDED, exc.message)
 
     @app.exception_handler(DomainError)
     async def domain_fallback(_: Request, exc: DomainError) -> JSONResponse:
+        # Đây là nhánh dự phòng cho subclass DomainError nào chưa có handler riêng —
+        # bản thân việc rơi vào đây thường là dấu hiệu thiếu một handler cụ thể, nên
+        # phải log lại error_type để bắt được thiếu sót đó thay vì lặng lẽ trả 400.
+        _log.error(
+            "domain.unhandled_subclass",
+            error_type=type(exc).__name__,
+            reason=exc.message,
+            request_id=get_request_id(),
+        )
         return _err(400, ErrorCode.BUSINESS_RULE_VIOLATION, exc.message)
 
     @app.exception_handler(Exception)

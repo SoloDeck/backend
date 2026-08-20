@@ -28,6 +28,8 @@ from src.modules.admin.schemas.response import (
     AdminAuditLogResponse,
     AdminFeatureFlagResponse,
     AdminLLMProviderResponse,
+    AdminPaymentPagedResponse,
+    AdminPaymentResponse,
     AdminPlanResponse,
     AdminPlatformMetricsResponse,
     AdminSubscriptionResponse,
@@ -267,6 +269,66 @@ async def override_subscription(
         subscription_id, payload, uuid.UUID(admin.sub)
     )
     return ApiResponse.ok(_sub_to_response(sub, plan))
+
+
+# ---------------------------------------------------------------------------
+# Subscription Payments
+# ---------------------------------------------------------------------------
+
+
+@router.get("/payments", response_model=ApiResponse[AdminPaymentPagedResponse])
+async def list_payments(
+    _: AdminUser,
+    db: DBSession,
+    status: (
+        Literal["pending", "processing", "succeeded", "failed", "expired", "cancelled"] | None
+    ) = Query(default=None),
+    provider: Literal["momo", "bank_transfer", "vnpay", "manual"] | None = Query(default=None),
+    search: str | None = Query(default=None),
+    from_date: datetime | None = Query(default=None),
+    to_date: datetime | None = Query(default=None),
+    sort_by: Literal["created_at", "paid_at", "amount"] = Query(default="created_at"),
+    sort_order: str = Query(default="desc"),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
+) -> ApiResponse[AdminPaymentPagedResponse]:
+    rows, total = await AdminService(db=db).list_payments_paginated(
+        status=status,
+        provider=provider,
+        search=search,
+        from_date=from_date,
+        to_date=to_date,
+        sort_by=sort_by,
+        sort_order=sort_order,
+        page=page,
+        page_size=page_size,
+    )
+    return ApiResponse.ok(
+        AdminPaymentPagedResponse(
+            # Mỗi hàng là (payment, user, plan) do repo outerjoin — user/plan có thể None.
+            data=[
+                AdminPaymentResponse(
+                    id=p.id,
+                    user_id=p.user_id,
+                    user_email=user.email if user is not None else None,
+                    user_full_name=user.full_name if user is not None else None,
+                    plan_id=p.plan_id,
+                    plan_name=plan.name if plan is not None else None,
+                    provider=p.provider,
+                    status=p.status,
+                    amount=p.amount,
+                    currency=p.currency,
+                    provider_reference=p.provider_reference,
+                    paid_at=p.paid_at,
+                    created_at=p.created_at,
+                )
+                for (p, user, plan) in rows
+            ],
+            total=total,
+            page=page,
+            page_size=page_size,
+        )
+    )
 
 
 # ---------------------------------------------------------------------------

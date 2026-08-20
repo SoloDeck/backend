@@ -748,6 +748,60 @@ async def test_list_audit_logs_paginated_passes_filters_through() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Subscription payments
+# ---------------------------------------------------------------------------
+
+
+async def test_list_payments_paginated_uses_contract_defaults() -> None:
+    repo = _repo(list_payments_paginated=([], 0))
+    service = AdminService(db=AsyncMock(), repo=repo)
+
+    assert await service.list_payments_paginated() == ([], 0)
+    repo.list_payments_paginated.assert_awaited_once_with(
+        status=None,
+        provider=None,
+        search=None,
+        from_date=None,
+        to_date=None,
+        sort_by="created_at",
+        sort_order="desc",
+        page=1,
+        page_size=20,
+    )
+
+
+async def test_list_payments_paginated_passes_filters_through() -> None:
+    repo = _repo(list_payments_paginated=([], 0))
+    service = AdminService(db=AsyncMock(), repo=repo)
+    frm = datetime(2026, 1, 1, tzinfo=UTC)
+    to = datetime(2026, 2, 1, tzinfo=UTC)
+
+    await service.list_payments_paginated(
+        status="succeeded",
+        provider="momo",
+        search="alice",
+        from_date=frm,
+        to_date=to,
+        sort_by="amount",
+        sort_order="asc",
+        page=3,
+        page_size=50,
+    )
+
+    repo.list_payments_paginated.assert_awaited_once_with(
+        status="succeeded",
+        provider="momo",
+        search="alice",
+        from_date=frm,
+        to_date=to,
+        sort_by="amount",
+        sort_order="asc",
+        page=3,
+        page_size=50,
+    )
+
+
+# ---------------------------------------------------------------------------
 # AI costs
 # ---------------------------------------------------------------------------
 

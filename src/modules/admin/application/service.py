@@ -444,6 +444,35 @@ class AdminService:
         )
 
     # -------------------------------------------------------------------------
+    # Subscription Payments
+    # -------------------------------------------------------------------------
+
+    async def list_payments_paginated(
+        self,
+        *,
+        status: str | None = None,
+        provider: str | None = None,
+        search: str | None = None,
+        from_date: datetime | None = None,
+        to_date: datetime | None = None,
+        sort_by: str = "created_at",
+        sort_order: str = "desc",
+        page: int = 1,
+        page_size: int = 20,
+    ) -> tuple[list, int]:
+        return await self.repo.list_payments_paginated(
+            status=status,
+            provider=provider,
+            search=search,
+            from_date=from_date,
+            to_date=to_date,
+            sort_by=sort_by,
+            sort_order=sort_order,
+            page=page,
+            page_size=page_size,
+        )
+
+    # -------------------------------------------------------------------------
     # AI Costs
     # -------------------------------------------------------------------------
 

@@ -5,8 +5,13 @@ import structlog
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
+from src.shared.exceptions.domain import AIOutputParseError, DomainError
 from src.shared.exceptions.http import setup_exception_handlers
 from src.shared.logging.middleware import RequestContextMiddleware
+
+
+class _UnmappedDomainError(DomainError):
+    """Stand-in for any DomainError subclass without its own handler."""
 
 
 def _build_app() -> FastAPI:
@@ -17,6 +22,14 @@ def _build_app() -> FastAPI:
     @app.get("/boom")
     async def boom() -> dict:
         raise ValueError("kaboom secret leak")
+
+    @app.get("/ai-boom")
+    async def ai_boom() -> dict:
+        raise AIOutputParseError("could not parse LLM output", raw_output='{"broken": tru')
+
+    @app.get("/domain-boom")
+    async def domain_boom() -> dict:
+        raise _UnmappedDomainError("unmapped rule violated")
 
     return app
 
@@ -47,3 +60,29 @@ class TestUnhandledExceptionLogging:
         assert entry["request_id"]
         # The exception is passed for exc_info so the sink renders its traceback.
         assert isinstance(entry["exc_info"], ValueError)
+
+
+class TestAIErrorLogging:
+    async def test_logs_reason_and_raw_output(self, client: AsyncClient) -> None:
+        with structlog.testing.capture_logs() as logs:
+            await client.get("/ai-boom")
+        errors = [e for e in logs if e["event"] == "ai.generation_failed"]
+        assert len(errors) == 1
+        entry = errors[0]
+        assert entry["log_level"] == "error"
+        assert entry["error_type"] == "AIOutputParseError"
+        assert entry["reason"] == "could not parse LLM output"
+        assert entry["raw_output"] == '{"broken": tru'
+        assert entry["request_id"]
+
+
+class TestDomainFallbackLogging:
+    async def test_logs_unmapped_subclass(self, client: AsyncClient) -> None:
+        with structlog.testing.capture_logs() as logs:
+            await client.get("/domain-boom")
+        errors = [e for e in logs if e["event"] == "domain.unhandled_subclass"]
+        assert len(errors) == 1
+        entry = errors[0]
+        assert entry["log_level"] == "error"
+        assert entry["error_type"] == "_UnmappedDomainError"
+        assert entry["reason"] == "unmapped rule violated"
