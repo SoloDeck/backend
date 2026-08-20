@@ -23,8 +23,8 @@ import structlog
 from src.modules.subscriptions.application.payment_gateway import (
     CallbackResult,
     CreatePaymentResult,
+    PaymentGatewayError,
 )
-from src.shared.exceptions.domain import DomainError
 
 log = structlog.get_logger(__name__)
 
@@ -43,11 +43,8 @@ _ORDER_INFO_MAX_LENGTH = 255
 _ORDER_INFO_UNSAFE = re.compile(r"[&=]")
 
 
-class PaymentGatewayError(DomainError):
-    """The provider rejected the request or could not be reached."""
-
-    def __init__(self, message: str = "Payment provider request failed") -> None:
-        super().__init__(message)
+__all__ = ["MOMO_MAX_AMOUNT_VND", "MOMO_MIN_AMOUNT_VND", "MockMomoClient", "MomoClient",
+           "PaymentGatewayError"]
 
 
 def _vnd(amount: Decimal | int) -> str:

@@ -15,7 +15,11 @@ class ChangePlanRequest(BaseModel):
 
 class CreateSubscriptionCheckoutRequest(BaseModel):
     plan_id: uuid.UUID
-    provider: Literal["momo"]
+    # Phải khớp với `PaymentProvider` (domain/entities/subscription_payment.py) VÀ với
+    # bảng adapter trong `SubscriptionsService._gateway`. Ba chỗ, không có gì ép chúng
+    # khớp nhau tự động: thiếu ở đây thì request bị 422 trước khi tới service, thừa ở
+    # đây thì lọt xuống rồi chết bằng `RuntimeError` 500 trần.
+    provider: Literal["momo", "zalopay"]
     return_url: str | None = None
 
     @field_validator("return_url")

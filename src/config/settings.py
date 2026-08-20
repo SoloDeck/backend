@@ -143,6 +143,39 @@ class Settings(BaseSettings):
     momo_max_amount: int = 50_000_000
 
     # -----------------------------------------------------------------------
+    # ZaloPay (Open API v2 — https://docs.zalopay.vn/docs/specs/order-create/)
+    # Defaults are ZaloPay's own published sandbox test app, committed in their
+    # github.com/zalopay-samples/test-apps repo — same posture as the MoMo block
+    # above: fine for this university project's sandbox, overridable via env.
+    #
+    # TWO keys, and they are NOT interchangeable: key1 signs our outbound
+    # create-order request, key2 verifies ZaloPay's inbound callback. Swapping
+    # them makes every real payment fail signature verification.
+    # -----------------------------------------------------------------------
+    zalopay_app_id: str = "2554"
+    zalopay_key1: str = "sdngKKJmqEMzvh5QQcdD2A9XBSKUNaYn"
+    zalopay_key2: str = "trMrHtvjo6myautxDUiAcYsVtaeQ8nhf"
+    zalopay_app_user: str = "solodesk_user"
+    zalopay_endpoint: str = "https://sb-openapi.zalopay.vn/v2/create"
+    zalopay_query_endpoint: str = "https://sb-openapi.zalopay.vn/v2/query"
+    zalopay_callback_url: str = "https://api.solodesk.space/api/v1/payments/webhooks/zalopay"
+    # Browser landing target after ZaloPay's checkout page. Same rule as
+    # momo_redirect_url: must be configured and must never equal
+    # zalopay_callback_url (the POST-only webhook) — ZaloPayClient enforces this
+    # at request time. Note it travels inside embed_data, not as a top-level
+    # parameter, because ZaloPay has no redirect field of its own.
+    zalopay_redirect_url: str = (
+        "https://api.solodesk.space/api/v1/payments/webhooks/zalopay/result"
+    )
+    zalopay_timeout_seconds: float = 15.0
+    # Cận dưới 1.000đ là mức ZaloPay công bố cho giao dịch trên app. Cận trên để bằng
+    # MoMo cho nhất quán giữa hai cổng — trần THẬT của một merchant nằm trong hợp đồng
+    # chứ không phải hằng số công khai, nên để ở env cho môi trường thật chỉnh.
+    # Mặc định phải khớp hằng cùng tên trong integrations/zalopay/client.py.
+    zalopay_min_amount: int = 1_000
+    zalopay_max_amount: int = 50_000_000
+
+    # -----------------------------------------------------------------------
     # Storage
     # -----------------------------------------------------------------------
     storage_endpoint: str = ""

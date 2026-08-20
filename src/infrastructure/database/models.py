@@ -61,8 +61,18 @@ _billing_event_type = PgEnum(
     name="billing_event_type",
     create_type=False,
 )
+# Danh sách này phải khớp giá trị của ENUM `payment_provider` TRONG DB. Đây là hai chỗ
+# tách rời nhau và không chỗ nào ép chỗ kia: migration a1b2c3d4e5f6 thêm 'zalopay' phía
+# PostgreSQL, còn dòng dưới là phía SQLAlchemy — thiếu một trong hai thì INSERT chết, chỉ
+# khác là chết ở tầng nào và câu báo lỗi trông ra sao.
 _payment_provider = PgEnum(
-    "momo", "bank_transfer", "vnpay", "manual", name="payment_provider", create_type=False
+    "momo",
+    "zalopay",
+    "bank_transfer",
+    "vnpay",
+    "manual",
+    name="payment_provider",
+    create_type=False,
 )
 _subscription_payment_status = PgEnum(
     "pending",

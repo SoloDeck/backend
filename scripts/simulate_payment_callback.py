@@ -1,15 +1,19 @@
 #!/usr/bin/env python
-"""Simulate a MoMo IPN callback against a locally running SoloDesk API.
+"""Simulate a payment-provider callback against a locally running SoloDesk API.
 
-Useful when developing against the real MoMo sandbox but the machine has no
-public IP/tunnel for MoMo's servers to reach `momo_ipn_url` directly — this
-builds a payload signed the same way MoMo's real IPN would be (same keys as
-whatever `MOMO_*` settings are configured) and POSTs it to our webhook
-endpoint, exactly as MoMo's server would.
+Useful when developing against a real provider sandbox but the machine has no
+public IP/tunnel for the provider's servers to reach our webhook directly — this
+builds a payload signed the same way the provider's real callback would be (same
+keys as whatever `MOMO_*` / `ZALOPAY_*` settings are configured) and POSTs it to
+our webhook endpoint, exactly as the provider's server would.
 
 Usage:
     python scripts/simulate_payment_callback.py --order-id <payment id> --amount 199000 \
-        [--outcome success|fail]
+        [--provider momo|zalopay] [--outcome success|fail]
+
+`--outcome fail` chỉ có nghĩa với MoMo. ZaloPay KHÔNG gửi callback thất bại — đơn hỏng
+thì đơn giản là không có callback nào cả, và intent tự hết hạn. Chọn fail với zalopay sẽ
+bị từ chối ngay ở đây thay vì dựng ra một payload mà thực tế không bao giờ tồn tại.
 """
 
 import argparse
@@ -21,29 +25,39 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import httpx
 
-from src.shared.dependencies.payments import get_momo_client
+from src.shared.dependencies.payments import get_momo_client, get_zalopay_client
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--order-id", required=True, help="Payment intent id (== MoMo orderId)")
+    parser.add_argument("--order-id", required=True, help="Payment intent id")
     parser.add_argument("--amount", required=True, type=int, help="Amount in whole VND")
+    parser.add_argument("--provider", choices=["momo", "zalopay"], default="momo")
     parser.add_argument("--outcome", choices=["success", "fail"], default="success")
     parser.add_argument(
         "--base-url", default="http://localhost:8000/api/v1", help="SoloDesk API base URL"
     )
     args = parser.parse_args()
 
-    client = get_momo_client()
-    if args.outcome == "success":
-        payload = client.sign_ipn(order_id=args.order_id, amount=args.amount)
+    if args.provider == "zalopay":
+        if args.outcome == "fail":
+            parser.error(
+                "ZaloPay không có callback thất bại — đơn hỏng thì không có callback nào cả. "
+                "Muốn thử nhánh thất bại thì dùng --provider momo."
+            )
+        payload = get_zalopay_client().sign_callback(order_id=args.order_id, amount=args.amount)
     else:
-        payload = client.sign_ipn(
-            order_id=args.order_id, amount=args.amount, result_code=1, message="Payment failed"
-        )
+        client = get_momo_client()
+        if args.outcome == "success":
+            payload = client.sign_ipn(order_id=args.order_id, amount=args.amount)
+        else:
+            payload = client.sign_ipn(
+                order_id=args.order_id, amount=args.amount, result_code=1, message="Payment failed"
+            )
 
-    response = httpx.post(f"{args.base_url}/payments/webhooks/momo", json=payload, timeout=10)
-    print(f"POST /payments/webhooks/momo -> {response.status_code}")
+    path = f"/payments/webhooks/{args.provider}"
+    response = httpx.post(f"{args.base_url}{path}", json=payload, timeout=10)
+    print(f"POST {path} -> {response.status_code}")
     print(response.json())
 
 

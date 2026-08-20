@@ -4,6 +4,7 @@ from fastapi import Depends
 
 from src.config.settings import settings
 from src.integrations.momo.client import MomoClient
+from src.integrations.zalopay.client import ZaloPayClient
 from src.modules.subscriptions.application.payment_gateway import PaymentGateway
 
 
@@ -24,4 +25,20 @@ def get_momo_client() -> PaymentGateway:
     )
 
 
+def get_zalopay_client() -> PaymentGateway:
+    return ZaloPayClient(
+        app_id=settings.zalopay_app_id,
+        key1=settings.zalopay_key1,
+        key2=settings.zalopay_key2,
+        app_user=settings.zalopay_app_user,
+        endpoint=settings.zalopay_endpoint,
+        query_endpoint=settings.zalopay_query_endpoint,
+        redirect_url=settings.zalopay_redirect_url,
+        timeout_seconds=settings.zalopay_timeout_seconds,
+        min_amount=settings.zalopay_min_amount,
+        max_amount=settings.zalopay_max_amount,
+    )
+
+
 MomoClientDep = Annotated[PaymentGateway, Depends(get_momo_client)]
+ZaloPayClientDep = Annotated[PaymentGateway, Depends(get_zalopay_client)]
