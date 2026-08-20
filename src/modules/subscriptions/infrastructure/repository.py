@@ -98,6 +98,27 @@ class SubscriptionsRepository:
             .with_for_update()
         )
 
+    async def find_recent_succeeded_payment(
+        self, user_id: uuid.UUID, plan_id: uuid.UUID, *, since: datetime
+    ):
+        """Khoản thanh toán THÀNH CÔNG gần nhất của người này cho ĐÚNG gói này.
+
+        Dùng làm bằng chứng "đã trả tiền" cho `upgrade_subscription`. Có mốc `since` vì
+        một khoản trả từ năm ngoái không cho phép đổi gói miễn phí hôm nay.
+        """
+        return await self.db.scalar(
+            select(SubscriptionPaymentModel)
+            .where(
+                SubscriptionPaymentModel.user_id == user_id,
+                SubscriptionPaymentModel.plan_id == plan_id,
+                SubscriptionPaymentModel.status == "succeeded",
+                SubscriptionPaymentModel.paid_at.is_not(None),
+                SubscriptionPaymentModel.paid_at >= since,
+            )
+            .order_by(SubscriptionPaymentModel.paid_at.desc())
+            .limit(1)
+        )
+
     async def create_billing_event(self, **values):
         event = BillingEventModel(**values)
         self.db.add(event)

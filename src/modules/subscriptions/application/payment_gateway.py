@@ -49,6 +49,31 @@ class CallbackResult(NamedTuple):
     actionable: bool = True
 
 
+class QueryResult(NamedTuple):
+    """Kết quả hỏi THẲNG nhà cung cấp: "đơn này trả tiền chưa?"
+
+    Vì sao cần: cả hệ thống chỉ có MỘT cách biết khách đã trả tiền — ngồi chờ webhook.
+    Mất cú gọi đó là mất vĩnh viễn: đơn nằm `pending`, khách bị trừ tiền mà không được
+    gói, và không một job nào đi kiểm lại. Chuyện này đã xảy ra thật trên staging
+    (20/08/2026): app MoMo UAT trừ tiền thành công nhưng IPN không bao giờ tới.
+
+    CỐ Ý KHÔNG đưa vào `PaymentGateway` Protocol: thêm vào đó là bắt MỌI cổng phải cài
+    đặt, kể cả những cổng đang làm dở ở nhánh khác. Chỗ gọi dùng `hasattr` để cổng nào
+    có thì hỏi, không có thì bỏ qua — không cổng nào bị buộc phải đổi.  #Huynh
+    """
+
+    # True = nhà cung cấp XÁC NHẬN đã thu tiền. Mọi giá trị khác (chưa trả, đơn không
+    # tồn tại, đã huỷ) đều là False — KHÔNG phải lỗi, chỉ là "chưa".
+    paid: bool
+    # Mã nhà cung cấp trả về, giữ nguyên để ghi log và soi khi cần.
+    result_code: Any
+    # Số tiền nhà cung cấp BÁO ĐÃ THU, để đối chiếu y như nhánh webhook.
+    amount: Decimal | None
+    provider_reference: str | None
+    message: str
+    raw: dict[str, Any]
+
+
 class PaymentGateway(Protocol):
     async def create_payment(
         self,

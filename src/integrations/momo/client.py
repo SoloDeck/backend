@@ -25,6 +25,7 @@ from src.modules.subscriptions.application.payment_gateway import (
     CallbackResult,
     CreatePaymentResult,
     PaymentGatewayError,
+    QueryResult,
 )
 
 log = structlog.get_logger(__name__)
@@ -414,6 +415,88 @@ class MomoClient(_MomoSignedClient):
             raw=data,
         )
 
+    @property
+    def query_endpoint(self) -> str:
+        """Địa chỉ hỏi trạng thái — SUY RA từ `endpoint`, không khai biến môi trường riêng.
+
+        Khai riêng `MOMO_QUERY_ENDPOINT` là mời đúng loại lỗi mà repo này đã dính nhiều
+        lần: production đặt `MOMO_ENDPOINT` trỏ `payment.momo.vn` nhưng quên đặt biến
+        query, thế là hệ thống đi hỏi SANDBOX về một đơn của production và luôn nhận
+        "không tìm thấy" — im lặng, không lỗi, và kết luận sai là khách chưa trả tiền.
+
+        Nặng hơn nữa: job `deploy-staging` CỐ Ý không khai biến `MOMO_*` nào (xem
+        .github/workflows/ci.yml), nên một biến mới thêm vào sẽ không bao giờ tới được
+        staging. Suy ra từ `endpoint` thì hai địa chỉ không có cách nào lệch nhau.
+        """
+        base, sep, _ = self.endpoint.rpartition("/")
+        if not sep:
+            raise PaymentGatewayError(f"MoMo endpoint không hợp lệ: {self.endpoint!r}")
+        return f"{base}/query"
+
+    async def query_payment_status(self, order_id: str) -> QueryResult:
+        """Hỏi thẳng MoMo: đơn này đã trả tiền chưa?
+
+        Dùng khi IPN không tới. `paid=False` là câu trả lời BÌNH THƯỜNG (chưa trả, đơn
+        không tồn tại, đã huỷ) — chỉ ném lỗi khi KHÔNG GỌI TỚI ĐƯỢC MoMo. Giữ đúng ranh
+        giới mà `create_payment` đã dựng: trong `try` là "không tới được", ngoài `try` là
+        "tới được và MoMo có trả lời".
+        """
+        request_id = str(uuid.uuid4())
+        # Chuỗi ký của query CHỈ gồm 4 trường, xếp theo alphabet — khác hẳn chuỗi ký lúc
+        # tạo đơn và lúc nhận IPN. Thừa hay thiếu một trường là MoMo trả "sai chữ ký".
+        raw_signature = (
+            f"accessKey={self.access_key}&orderId={order_id}"
+            f"&partnerCode={self.partner_code}&requestId={request_id}"
+        )
+        request_body = {
+            "partnerCode": self.partner_code,
+            "requestId": request_id,
+            "orderId": order_id,
+            "lang": self.lang,
+            "signature": self._sign(raw_signature),
+        }
+
+        try:
+            async with httpx.AsyncClient(
+                timeout=self.timeout_seconds, transport=self._transport
+            ) as http_client:
+                response = await http_client.post(self.query_endpoint, json=request_body)
+        except httpx.HTTPError as exc:
+            log.warning(
+                "momo.query_unreachable",
+                order_id=order_id,
+                error_type=type(exc).__name__,
+                error=str(exc),
+            )
+            raise PaymentGatewayError(
+                "Không kết nối được tới MoMo để kiểm tra giao dịch."
+            ) from exc
+
+        data = _read_momo_payload(response)
+        paid = not response.is_error and _is_success_code(data.get("resultCode"))
+
+        log.info(
+            "momo.query_result",
+            order_id=order_id,
+            paid=paid,
+            status_code=response.status_code,
+            result_code=data.get("resultCode"),
+            momo_message=data.get("message"),
+        )
+
+        raw_amount = data.get("amount")
+        trans_id = data.get("transId")
+        return QueryResult(
+            paid=paid,
+            result_code=data.get("resultCode"),
+            # Chỉ đọc số tiền khi ĐÃ TRẢ. Đơn chưa trả thì `amount` của MoMo là số ta
+            # yêu cầu chứ không phải số đã thu — lấy nó ra mà đối chiếu là tự lừa mình.
+            amount=Decimal(str(raw_amount)) if paid and raw_amount is not None else None,
+            provider_reference=str(trans_id) if trans_id is not None else None,
+            message=str(data.get("message", "")),
+            raw=data,
+        )
+
 
 # Dev-only mock credentials — never real, this integration never calls momo.vn.
 _MOCK_PARTNER_CODE = "MOMO_MOCK"
@@ -475,4 +558,23 @@ class MockMomoClient(_MomoSignedClient):
         }
         return CreatePaymentResult(
             pay_url=pay_url, deeplink=deeplink, qr_code_url=qr_code_url, raw=raw
+        )
+
+    async def query_payment_status(self, order_id: str) -> QueryResult:
+        """Bản mô phỏng LUÔN trả "chưa trả tiền".
+
+        Cố ý không bịa ra "đã trả": bản mock không có nơi nào lưu việc ai đã bấm trả tiền,
+        nên trả `paid=True` sẽ khiến mọi đơn ở môi trường dev tự kích hoạt — che mất đúng
+        cái lỗi mà đường đối soát này sinh ra để bắt.
+
+        Muốn thử nhánh "đã trả" ở local thì bắn IPN giả bằng
+        `scripts/simulate_payment_callback.py`, đó mới là đường mô phỏng đúng.
+        """
+        return QueryResult(
+            paid=False,
+            result_code=1000,
+            amount=None,
+            provider_reference=None,
+            message="Mock MoMo: giao dịch chưa được thanh toán.",
+            raw={"orderId": order_id, "resultCode": 1000},
         )

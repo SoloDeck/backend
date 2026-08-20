@@ -14,6 +14,7 @@ from src.infrastructure.database.session import get_db_session
 from src.modules.subscriptions.application.service import SubscriptionsService
 from src.modules.subscriptions.schemas.response import PaymentIntentResponse
 from src.shared.dependencies.auth import CurrentUserId
+from src.shared.dependencies.payments import MomoClientDep
 from src.shared.responses.response import ApiResponse
 
 router = APIRouter()
@@ -25,8 +26,17 @@ async def get_payment_intent(
     payment_intent_id: uuid.UUID,
     user_id: CurrentUserId,
     db: DBSession,
+    momo_client: MomoClientDep,
 ) -> ApiResponse[PaymentIntentResponse]:
-    payment = await SubscriptionsService(db=db).get_checkout_status(user_id, payment_intent_id)
+    """Tiêm cổng MoMo vào vì `get_checkout_status` giờ TỰ HỎI nhà cung cấp khi đơn còn
+    `pending`, thay vì chỉ đọc DB rồi báo "đang chờ" mãi mãi.
+
+    Chỉ tiêm MoMo: đó là cổng duy nhất hiện có hàm hỏi trạng thái. Cổng khác thiếu thì
+    `_reconcile_pending_payment` lặng lẽ bỏ qua, hành vi y như trước.
+    """
+    payment = await SubscriptionsService(db=db, momo_client=momo_client).get_checkout_status(
+        user_id, payment_intent_id
+    )
     return ApiResponse.ok(PaymentIntentResponse.from_model(payment))
 
 
