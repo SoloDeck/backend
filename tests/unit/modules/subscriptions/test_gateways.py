@@ -1,3 +1,5 @@
+import hashlib
+import hmac
 import json
 import uuid
 from decimal import Decimal
@@ -653,3 +655,131 @@ def test_real_client_shares_signing_logic_with_mock() -> None:
 
     assert client.verify_callback_signature(payload) is True
     assert client.parse_callback(payload).success is True
+
+
+# ── Hỏi thẳng MoMo trạng thái đơn (`/v2/gateway/api/query`) ────────────────────
+#
+# Vì sao đường này tồn tại: cả hệ thống trước đây chỉ có MỘT cách biết khách đã trả tiền —
+# ngồi chờ IPN. Trên staging ngày 20/08/2026, app MoMo UAT trừ tiền thành công nhưng IPN
+# không bao giờ tới, và đơn nằm `pending` cho tới lúc hết hạn.
+
+
+def _client_tra_ve(handler) -> MomoClient:
+    return _momo_client(httpx.MockTransport(handler))
+
+
+async def test_query_endpoint_suy_ra_tu_endpoint_tao_don() -> None:
+    """Không có biến môi trường riêng cho địa chỉ query — nó phải bám theo endpoint tạo đơn.
+
+    Khai riêng là mời ca hỏng câm: production trỏ `endpoint` sang payment.momo.vn nhưng
+    quên đổi biến query, thế là đi hỏi sandbox về đơn của production và luôn nhận
+    "không tìm thấy".
+    """
+    client = _client_tra_ve(lambda request: httpx.Response(200, json={}))
+
+    assert client.query_endpoint == "https://test-payment.momo.vn/v2/gateway/api/query"
+
+
+async def test_query_bao_da_tra_tien_thi_doc_du_so_tien_va_ma_giao_dich() -> None:
+    ghi_nhan: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        ghi_nhan["url"] = str(request.url)
+        ghi_nhan["body"] = json.loads(request.content)
+        return httpx.Response(
+            200,
+            json={
+                "partnerCode": "MOMO",
+                "orderId": "don-abc",
+                "amount": 199000,
+                "transId": 987654321,
+                "resultCode": 0,
+                "message": "Successful.",
+            },
+        )
+
+    result = await _client_tra_ve(handler).query_payment_status("don-abc")
+
+    assert result.paid is True
+    assert result.amount == Decimal("199000")
+    assert result.provider_reference == "987654321"
+    # Phải bắn vào endpoint QUERY, không phải endpoint tạo đơn.
+    assert ghi_nhan["url"].endswith("/v2/gateway/api/query")
+    assert set(ghi_nhan["body"]) == {
+        "partnerCode",
+        "requestId",
+        "orderId",
+        "lang",
+        "signature",
+    }
+
+
+async def test_query_ky_dung_bon_truong_theo_alphabet() -> None:
+    """Chuỗi ký của query CHỈ gồm 4 trường — khác hẳn lúc tạo đơn và lúc nhận IPN.
+
+    Thừa hay thiếu một trường là MoMo trả "sai chữ ký", và vì `paid=False` là câu trả lời
+    hợp lệ nên lỗi đó sẽ trôi qua thành "khách chưa trả tiền" — im lặng và sai.
+    """
+    ghi_nhan: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        ghi_nhan["body"] = json.loads(request.content)
+        return httpx.Response(200, json={"resultCode": 1000, "message": "Pending"})
+
+    await _client_tra_ve(handler).query_payment_status("don-123")
+
+    body = ghi_nhan["body"]
+    raw = (
+        f"accessKey=access-key&orderId=don-123"
+        f"&partnerCode=MOMO&requestId={body['requestId']}"
+    )
+    mong_doi = hmac.new(b"secret-key", raw.encode(), hashlib.sha256).hexdigest()
+    assert body["signature"] == mong_doi
+
+
+async def test_query_chua_tra_tien_thi_khong_doc_so_tien() -> None:
+    """Đơn chưa trả, MoMo vẫn trả về `amount` — nhưng đó là số ta YÊU CẦU, không phải số
+    đã thu. Đọc nó ra rồi mang đi đối chiếu là tự lừa mình: hai số luôn khớp, nên chốt
+    chặn lệch tiền mất tác dụng đúng lúc cần nhất.
+    """
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200, json={"resultCode": 1000, "amount": 199000, "message": "Pending"}
+        )
+
+    result = await _client_tra_ve(handler).query_payment_status("don-abc")
+
+    assert result.paid is False
+    assert result.amount is None
+
+
+async def test_query_bi_tu_choi_bang_ma_http_thi_coi_nhu_chua_tra() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(400, json={"resultCode": 11, "message": "Access denied"})
+
+    result = await _client_tra_ve(handler).query_payment_status("don-abc")
+
+    assert result.paid is False
+    assert result.result_code == 11
+
+
+async def test_query_khong_goi_toi_duoc_thi_nem_loi_cong_thanh_toan() -> None:
+    """Chỉ ném khi KHÔNG TỚI ĐƯỢC MoMo. Đúng ranh giới mà `create_payment` đã dựng:
+    "MoMo từ chối" và "không gọi được tới MoMo" là hai chuyện khác nhau.
+    """
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("mang dut")
+
+    with pytest.raises(PaymentGatewayError):
+        await _client_tra_ve(handler).query_payment_status("don-abc")
+
+
+async def test_mock_client_luon_bao_chua_tra_tien() -> None:
+    """Bản mock CỐ Ý không bịa ra "đã trả": nó không có chỗ nào lưu ai đã bấm trả tiền,
+    nên trả `paid=True` sẽ khiến mọi đơn ở môi trường dev tự kích hoạt — che mất đúng cái
+    lỗi mà đường đối soát này sinh ra để bắt.
+    """
+    result = await MockMomoClient().query_payment_status("don-abc")
+
+    assert result.paid is False
+    assert result.amount is None

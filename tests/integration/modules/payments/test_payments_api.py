@@ -14,7 +14,10 @@ from src.infrastructure.database.models import (
 )
 from src.infrastructure.database.seeders.plans import PlansSeeder
 from src.integrations.momo.client import MockMomoClient
+from src.main import app
+from src.modules.subscriptions.application.payment_gateway import QueryResult
 from src.modules.subscriptions.application.service import SubscriptionsService
+from src.shared.dependencies.payments import get_momo_client
 from tests.integration.modules.clients.test_clients_api import _auth_headers
 
 
@@ -476,3 +479,127 @@ async def test_expire_lapsed_subscriptions_leaves_current_subscriptions_alone(
 
     me_resp = await client.get("/api/v1/subscriptions/me", headers=headers)
     assert me_resp.json()["data"]["plan_slug"] == "pro"
+
+
+# ── Tự hỏi nhà cung cấp khi IPN không tới ─────────────────────────────────────
+#
+# Ngày 20/08/2026 trên staging: app MoMo UAT trừ tiền thành công, IPN không bao giờ tới,
+# đơn nằm `pending` cho tới lúc hết hạn. Cả hệ thống lúc đó chỉ có MỘT cách biết khách đã
+# trả tiền là ngồi chờ webhook — mất cú gọi đó là mất vĩnh viễn.
+
+
+class _MomoNoiDaThuTien(MockMomoClient):
+    """Cổng MoMo giả, báo ĐÃ THU TIỀN — dựng lại đúng ca staging.
+
+    Đếm số lần bị hỏi để test kiểm được cơ chế hãm.
+    """
+
+    def __init__(self, amount: Decimal = Decimal("199000"), *, da_tra: bool = True) -> None:
+        self.amount = amount
+        self.da_tra = da_tra
+        self.so_lan_hoi = 0
+
+    async def query_payment_status(self, order_id: str) -> QueryResult:
+        self.so_lan_hoi += 1
+        return QueryResult(
+            paid=self.da_tra,
+            result_code=0 if self.da_tra else 1000,
+            amount=self.amount,
+            provider_reference="momo-txn-test",
+            message="Successful.",
+            raw={"orderId": order_id, "resultCode": 0},
+        )
+
+
+async def test_doc_trang_thai_don_thi_tu_hoi_momo_va_kich_hoat_goi(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Không có webhook nào cả — chỉ đọc trạng thái đơn là gói phải lên."""
+    await PlansSeeder(db_session).run()
+    headers = await _auth_headers(client)
+    plan = await _pro_plan(client, headers)
+    payment = await _create_checkout(client, headers, plan["id"])
+
+    app.dependency_overrides[get_momo_client] = lambda: _MomoNoiDaThuTien()
+    try:
+        resp = await client.get(f"/api/v1/payments/intents/{payment['id']}", headers=headers)
+    finally:
+        app.dependency_overrides[get_momo_client] = lambda: MockMomoClient()
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["data"]["status"] == "succeeded"
+
+    sub_resp = await client.get("/api/v1/subscriptions/me", headers=headers)
+    assert sub_resp.json()["data"]["plan_slug"] == "pro"
+
+
+async def test_momo_bao_so_tien_lech_thi_khong_kich_hoat_goi(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Lệch tiền thì thà để đơn treo cho người xử tay, còn hơn biếu không cả gói.
+
+    Đối xứng với chốt chặn `payments.amount_mismatch` của nhánh webhook — hai đường phải
+    cư xử giống nhau, bằng không sẽ có người tìm ra đường nào lỏng hơn.
+    """
+    await PlansSeeder(db_session).run()
+    headers = await _auth_headers(client)
+    plan = await _pro_plan(client, headers)
+    payment = await _create_checkout(client, headers, plan["id"])
+
+    app.dependency_overrides[get_momo_client] = lambda: _MomoNoiDaThuTien(Decimal("1000"))
+    try:
+        resp = await client.get(f"/api/v1/payments/intents/{payment['id']}", headers=headers)
+    finally:
+        app.dependency_overrides[get_momo_client] = lambda: MockMomoClient()
+
+    assert resp.json()["data"]["status"] == "pending"
+
+    sub_resp = await client.get("/api/v1/subscriptions/me", headers=headers)
+    assert sub_resp.json()["data"]["plan_slug"] == "free"
+
+
+async def test_hai_lan_doc_lien_tiep_chi_hoi_momo_mot_lan(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Frontend dò lại mỗi 3 giây suốt 2 phút. Không hãm thì một lần thanh toán sinh ra
+    tới 40 lượt gọi ra ngoài, mỗi lượt chờ tối đa `momo_timeout_seconds`.
+    """
+    await PlansSeeder(db_session).run()
+    headers = await _auth_headers(client)
+    plan = await _pro_plan(client, headers)
+    payment = await _create_checkout(client, headers, plan["id"])
+
+    # CHƯA trả tiền: đơn phải còn `pending` sau lượt đọc đầu, bằng không lượt thứ hai sẽ
+    # thoát sớm ở chốt "status != PENDING" và test qua vì lý do SAI — nó sẽ không chứng
+    # minh được cơ chế hãm có hoạt động hay không.
+    cong = _MomoNoiDaThuTien(da_tra=False)
+    app.dependency_overrides[get_momo_client] = lambda: cong
+    try:
+        await client.get(f"/api/v1/payments/intents/{payment['id']}", headers=headers)
+        await client.get(f"/api/v1/payments/intents/{payment['id']}", headers=headers)
+    finally:
+        app.dependency_overrides[get_momo_client] = lambda: MockMomoClient()
+
+    assert cong.so_lan_hoi == 1
+    # Chốt lại tiền đề: đơn vẫn `pending`, nên lượt đọc thứ hai ĐÃ đi tới nhánh hỏi cổng
+    # và bị chặn ở đó — chứ không phải thoát sớm vì đơn đã đổi trạng thái.
+    resp = await client.get(f"/api/v1/payments/intents/{payment['id']}", headers=headers)
+    assert resp.json()["data"]["status"] == "pending"
+
+
+async def test_mock_momo_mac_dinh_khong_kich_hoat_gi(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Chốt chặn cho chính bộ test: `MockMomoClient` phải luôn báo "chưa trả tiền".
+
+    Nếu một ngày nào đó nó bịa ra `paid=True`, MỌI đơn trong test sẽ tự kích hoạt và che
+    mất đúng cái lỗi mà đường đối soát này sinh ra để bắt.
+    """
+    await PlansSeeder(db_session).run()
+    headers = await _auth_headers(client)
+    plan = await _pro_plan(client, headers)
+    payment = await _create_checkout(client, headers, plan["id"])
+
+    resp = await client.get(f"/api/v1/payments/intents/{payment['id']}", headers=headers)
+
+    assert resp.json()["data"]["status"] == "pending"

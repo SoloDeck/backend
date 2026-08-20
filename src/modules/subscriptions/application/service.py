@@ -1,5 +1,6 @@
 """Subscriptions application service."""
 
+import time
 import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -10,6 +11,8 @@ import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config.settings import settings
+from src.infrastructure.redis.client import get_redis
+from src.modules.subscriptions.application.ai_usage import AiUsageService
 from src.modules.subscriptions.application.payment_gateway import PaymentGateway
 from src.modules.subscriptions.domain.entities.subscription_payment import (
     PaymentProvider,
@@ -22,7 +25,6 @@ from src.modules.subscriptions.domain.exceptions.exceptions import (
     PlanNotPurchasableError,
     SubscriptionNotCancellableError,
 )
-from src.modules.subscriptions.application.ai_usage import AiUsageService
 from src.modules.subscriptions.infrastructure.repository import SubscriptionsRepository
 from src.modules.subscriptions.schemas.response import SubscriptionResponse, UsageRecordResponse
 from src.shared.exceptions.domain import DomainError, NotFoundError
@@ -33,9 +35,45 @@ log = structlog.get_logger(__name__)
 # MoMo giao IPN. Hết hạn giữa chừng không làm mất tiền (xem `handle_payment_callback`), nhưng
 # làm người dùng thấy "đã hết hạn" trong lúc họ vẫn đang trả — nên nới ra.  #Huynh
 _CHECKOUT_TTL_MINUTES = 30
+# Khoảng cách tối thiểu giữa hai lần hỏi nhà cung cấp về CÙNG một đơn.
+#
+# Frontend dò lại mỗi 3 giây suốt 2 phút, nên không hãm là một lần thanh toán sinh ra tới
+# 40 lượt gọi ra ngoài. Con số này biến nó thành 4.
+#
+# PHẢI LỚN HƠN `settings.momo_timeout_seconds` (đang là 15.0). Nếu đặt bằng nhau thì một
+# lượt hỏi chạm trần thời gian chờ sẽ vừa đúng lúc khoá hết hạn, và lượt kế tiếp bắt đầu
+# trong khi lượt cũ còn đang bay — hai lời gọi chồng nhau, đúng thứ mà hãm sinh ra để
+# tránh.  #Huynh
+_QUERY_THROTTLE_SECONDS = 30
 _BILLING_PERIOD_DAYS = 30
 # Matches the "perpetual" free-plan period used at registration (AuthService).
 _FREE_PLAN_PERIOD_DAYS = 36500
+
+
+# Bộ hãm dự phòng, chỉ dùng khi Redis không gọi được. Cấp TIẾN TRÌNH: N worker thì tối đa
+# N lượt hỏi mỗi cửa sổ thay vì 1 — kém chính xác hơn Redis nhưng vẫn có chặn trên, và N
+# nhỏ. Điểm mấu chốt là nó không bao giờ TẮT đường đối soát.
+_query_last_seen: dict[uuid.UUID, float] = {}
+
+
+def _may_query_in_process(payment_id: uuid.UUID) -> bool:
+    """Phiên bản `_may_query_provider` không cần Redis.
+
+    Dọn rác ngay trong lời gọi thay vì để một job riêng: số đơn đang chờ trả tiền cùng lúc
+    rất nhỏ, nên quét hết dict mỗi lần vẫn rẻ hơn nhiều so với việc thêm một cơ chế dọn.
+    Không dọn thì dict này phình theo tổng số giao dịch của cả đời tiến trình.
+    """
+    now = time.monotonic()
+    for key, seen_at in list(_query_last_seen.items()):
+        if now - seen_at > _QUERY_THROTTLE_SECONDS:
+            del _query_last_seen[key]
+
+    last = _query_last_seen.get(payment_id)
+    if last is not None and now - last < _QUERY_THROTTLE_SECONDS:
+        return False
+
+    _query_last_seen[payment_id] = now
+    return True
 
 
 def _payment_to_entity(row) -> SubscriptionPayment:
@@ -162,7 +200,158 @@ class SubscriptionsService:
         payment = await self.repo.get_payment_by_id(payment_id)
         if payment is None or payment.user_id != user_id:
             raise NotFoundError("Payment intent not found")
+
+        # Trước khi báo "vẫn đang chờ", HỎI THẲNG nhà cung cấp một lần.
+        #
+        # Bản trước chỉ đọc DB rồi trả về. Nghĩa là cả hệ thống có đúng MỘT cách biết khách
+        # đã trả tiền: ngồi chờ webhook. Mất cú gọi đó là mất vĩnh viễn — và trên staging
+        # (20/08/2026) nó đã mất thật: app MoMo UAT trừ tiền xong, IPN không bao giờ tới,
+        # đơn nằm `pending` cho tới lúc hết hạn. Trong khi màn hình vẫn hứa với người dùng
+        # "gói sẽ tự kích hoạt khi MoMo báo về" — một lời hứa không có code nào thực hiện.
+        payment = await self._reconcile_pending_payment(payment)
+
         return await self._expire_if_overdue(payment)
+
+    async def _reconcile_pending_payment(self, payment):
+        """Hỏi nhà cung cấp xem đơn `pending` này đã thu được tiền chưa; có thì kích hoạt.
+
+        Trả về bản ghi payment (đã cập nhật nếu kích hoạt được, nguyên trạng nếu không).
+        KHÔNG BAO GIỜ ném lỗi ra ngoài: đây là đường phụ trợ gắn vào một endpoint chỉ để
+        đọc trạng thái. Nhà cung cấp sập mà làm màn hình của người dùng vỡ theo thì tệ hơn
+        hẳn việc cứ báo "đang chờ" thêm một nhịp nữa.
+        """
+        if payment.status != SubscriptionPaymentStatus.PENDING:
+            return payment
+
+        # CHẶN THEO PROVIDER, KHÔNG dò theo tên hàm.
+        #
+        # Bản đầu tui viết `getattr(gateway, "query_payment_status", None)` cho "linh hoạt".
+        # Đó là một cái bẫy: `ZaloPayClient.query_payment_status(order_id, app_trans_id)`
+        # CÓ TỒN TẠI nhưng nhận HAI tham số và trả `dict` chứ không phải `QueryResult`.
+        # Dò theo tên sẽ gọi nó thiếu tham số → `TypeError` → rơi vào khối `except` bên
+        # dưới → nuốt gọn thành một dòng log, và đơn ZaloPay không bao giờ được đối soát
+        # mà cũng chẳng ai biết vì sao.
+        #
+        # Nêu đích danh MoMo thì thêm cổng mới là một thay đổi CÓ Ý THỨC, không phải một
+        # thứ tự nhiên khớp rồi vỡ ngầm.  #Huynh
+        if PaymentProvider(payment.provider) is not PaymentProvider.MOMO:
+            return payment
+
+        try:
+            gateway = self._gateway(PaymentProvider.MOMO)
+        except (RuntimeError, ValueError):
+            # Cổng không được tiêm vào service này (vd router chỉ dựng
+            # `SubscriptionsService(db=db)`). Không phải lỗi — chỉ là không đối soát
+            # được lúc này.
+            return payment
+
+        if not await self._may_query_provider(payment.id):
+            return payment
+
+        try:
+            result = await gateway.query_payment_status(str(payment.id))
+        except Exception as exc:  # noqa: BLE001 — xem docstring: tuyệt đối không vỡ màn hình
+            log.warning(
+                "payments.reconcile_query_failed",
+                payment_id=str(payment.id),
+                provider=str(payment.provider),
+                error_type=type(exc).__name__,
+                error=str(exc),
+            )
+            return payment
+
+        if not result.paid:
+            return payment
+
+        # Nhà cung cấp nói ĐÃ THU TIỀN. Từ đây trở đi đi đúng con đường của webhook:
+        # khoá dòng, kiểm lại trạng thái dưới khoá, đối chiếu số tiền, rồi kích hoạt.
+        # `refresh(..., with_for_update=True)` chứ KHÔNG phải `repo.get_payment_by_id_for_update`.
+        #
+        # Khác biệt sống còn: `get_checkout_status` đã nạp CHÍNH hàng này bằng
+        # `get_payment_by_id` (không khoá) vài dòng trước, nên nó đã nằm trong identity map
+        # của session. Gọi lại một câu `SELECT ... FOR UPDATE` trong cùng session thì
+        # SQLAlchemy 2 mặc định `populate_existing=False`: khoá VẪN lấy được, nhưng ORM trả
+        # về đúng object cũ và KHÔNG ghi đè thuộc tính. Session lại dựng
+        # `expire_on_commit=False` (src/infrastructure/database/session.py:23) nên object
+        # cũng không tự hết hạn.
+        #
+        # Hậu quả nếu dùng nhầm: webhook vừa commit `succeeded` xong, ta đọc ra `pending`
+        # của mili-giây trước, rồi KÍCH HOẠT LẦN HAI — hai billing event `payment_succeeded`
+        # cho một lần thu tiền, và `raw_callback_payload` của IPN thật bị đè.
+        #
+        # `refresh` vừa lấy khoá vừa nạp lại giá trị mới, trong một lời gọi. Cố ý KHÔNG sửa
+        # `get_payment_by_id_for_update`: đường webhook nạp hàng đó lần đầu trong session
+        # của nó nên không dính lỗi này, đổi hàm dùng chung là mở rủi ro sang chỗ đang chạy
+        # đúng.  #Huynh
+        await self.db.refresh(payment, with_for_update=True)
+        locked = payment
+        if locked.status != SubscriptionPaymentStatus.PENDING:
+            # Webhook đã về giữa chừng và kích hoạt trước ta. Đúng như mong đợi.
+            return locked
+
+        if result.amount is not None and result.amount != locked.amount:
+            log.error(
+                "payments.reconcile_amount_mismatch",
+                payment_id=str(locked.id),
+                expected=str(locked.amount),
+                received=str(result.amount),
+                hint="KHÔNG kích hoạt gói. Cần người kiểm tra và xử lý tay.",
+            )
+            return locked
+
+        log.info(
+            "payments.reconciled_from_provider",
+            payment_id=str(locked.id),
+            provider=str(locked.provider),
+            hint="Kích hoạt nhờ tự hỏi nhà cung cấp — webhook đã không tới.",
+        )
+        await self._activate_paid_subscription(
+            locked,
+            provider=PaymentProvider(locked.provider),
+            provider_reference=result.provider_reference,
+            # Đánh dấu nguồn ngay trong dữ liệu thô: sau này soi một đơn mà thấy khoá này
+            # là biết ngay nó được cứu bằng đối soát chứ không phải webhook tới bình thường.
+            raw_provider_payload={"_reconciled_via": "provider_query", **result.raw},
+            order_ref=str(locked.id),
+        )
+        return locked
+
+    async def _may_query_provider(self, payment_id: uuid.UUID) -> bool:
+        """Cho phép hỏi nhà cung cấp tối đa một lần mỗi `_QUERY_THROTTLE_SECONDS` giây.
+
+        Cần hãm vì frontend dò lại endpoint này MỖI 3 GIÂY suốt 2 phút (xem
+        `web/src/features/subscriptions/hooks/useSubscriptions.ts`). Không hãm thì một lần
+        thanh toán sinh ra tới 40 lượt gọi ra ngoài, mỗi lượt chờ tối đa
+        `momo_timeout_seconds` — vừa tự bắn vào hạn mức của mình, vừa làm màn hình ì.
+
+        Ưu tiên Redis vì nó hãm được trên TẤT CẢ worker; nhưng Redis hỏng thì lùi về bộ đếm
+        trong tiến trình chứ KHÔNG tắt tính năng.
+
+        Bản đầu tui viết "Redis hỏng thì trả False" và tưởng đó là hướng an toàn. Nó không
+        an toàn, nó là một cái công tắc ngầm: Redis chớp một nhịp là đường cứu giao dịch
+        biến mất, chỉ để lại một dòng log mà không ai đọc. Chính môi trường test đã lộ ra
+        điều đó — ở đó `REDIS_URL` trỏ `localhost`, không có Redis, nên tính năng này sẽ
+        KHÔNG BAO GIỜ được chạy trong CI.
+
+        Bộ đếm trong tiến trình hãm kém hơn (mỗi worker một bộ, N worker thì tối đa N lượt
+        hỏi mỗi cửa sổ) nhưng vẫn có chặn trên, và N nhỏ. Thà hỏi hơi nhiều còn hơn tắt.
+        """
+        try:
+            redis = await get_redis()
+            acquired = await redis.set(
+                f"payments:query-throttle:{payment_id}",
+                "1",
+                nx=True,
+                ex=_QUERY_THROTTLE_SECONDS,
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.warning(
+                "payments.query_throttle_fallback_in_process",
+                payment_id=str(payment_id),
+                error_type=type(exc).__name__,
+            )
+            return _may_query_in_process(payment_id)
+        return bool(acquired)
 
     async def _expire_if_overdue(self, payment):
         """Lazily flip a stale pending checkout to `expired` on read, rather
@@ -306,69 +495,13 @@ class SubscriptionsService:
             )
 
         entity = _payment_to_entity(payment)
-        now = datetime.now(UTC)
         if parsed.success:
-            plan = await self.repo.get_plan(payment.plan_id)
-            subscription = await self.repo.get_subscription(payment.user_id)
-
-            # Gói hoặc thuê bao biến mất giữa lúc người dùng đang trả tiền (admin xoá gói,
-            # dữ liệu lệch). Không chặn ở đây thì `plan.id` ném `AttributeError` — một 500
-            # trần không nói được gì. `initiate_checkout` vốn đã kiểm None; nhánh callback
-            # thì bỏ sót.
-            #
-            # Ở đây NÉM lỗi (→ 404, MoMo sẽ retry) chứ không đánh dấu thất bại như ca lệch
-            # tiền bên trên. Khác nhau ở chỗ CÓ SỬA ĐƯỢC KHÔNG: lệch tiền thì retry bao
-            # nhiêu lần cũng vẫn lệch, nên đóng lại luôn; còn gói bị xoá thì admin khôi
-            # phục xong, lần retry kế tiếp tự kích hoạt được — giữ đường cho nó tự lành.
-            # #Huynh
-            if plan is None or subscription is None:
-                log.error(
-                    "payments.activation_target_missing",
-                    order_id=parsed.order_id,
-                    plan_found=plan is not None,
-                    subscription_found=subscription is not None,
-                    hint="Đã thu tiền nhưng không kích hoạt được. Cần xử lý tay.",
-                )
-                raise NotFoundError(
-                    "Không tìm thấy gói hoặc thuê bao để kích hoạt cho khoản thanh toán này."
-                )
-
-            subscription.plan_id = plan.id
-            subscription.status = "active"
-            subscription.current_period_start = now
-            subscription.current_period_end = now + timedelta(days=_BILLING_PERIOD_DAYS)
-            await self.repo.save(subscription)
-
-            # Through the domain entity so the PENDING invariant it enforces
-            # isn't bypassed — matches cancel_checkout's pattern above.
-            entity.mark_succeeded(parsed.provider_reference)
-            payment.status = entity.status.value
-            payment.provider_reference = entity.provider_reference
-            payment.paid_at = entity.paid_at
-            payment.updated_at = entity.updated_at
-            payment.raw_callback_payload = raw_payload
-            await self.repo.save(payment)
-
-            await self.repo.create_billing_event(
-                user_id=payment.user_id,
-                subscription_id=subscription.id,
-                event_type="payment_succeeded",
-                amount=payment.amount,
-                currency=payment.currency,
-                event_metadata={
-                    "provider": provider.value,
-                    "payment_id": str(payment.id),
-                    "provider_reference": parsed.provider_reference,
-                    "raw_callback": raw_payload,
-                },
-            )
-            log.info(
-                "payments.subscription_activated",
-                order_id=parsed.order_id,
-                user_id=str(payment.user_id),
-                plan_id=str(plan.id),
-                amount=str(payment.amount),
-                currency=payment.currency,
+            await self._activate_paid_subscription(
+                payment,
+                provider=provider,
+                provider_reference=parsed.provider_reference,
+                raw_provider_payload=raw_payload,
+                order_ref=parsed.order_id,
             )
         else:
             entity.mark_failed(parsed.message)
@@ -398,6 +531,96 @@ class SubscriptionsService:
             )
 
         return gateway.build_ack_response(parsed)
+
+    async def _activate_paid_subscription(
+        self,
+        payment,
+        *,
+        provider: PaymentProvider,
+        provider_reference: str | None,
+        raw_provider_payload: dict,
+        order_ref: str,
+    ) -> None:
+        """Kích hoạt gói cho một khoản đã XÁC NHẬN thu được tiền.
+
+        Tách ra vì giờ có HAI đường dẫn tới đây, và chúng phải cư xử giống hệt nhau:
+
+          1. Nhà cung cấp gọi webhook về (`handle_payment_callback`)
+          2. Ta tự hỏi nhà cung cấp (`reconcile_pending_payment`) — dùng khi (1) không
+             bao giờ xảy ra
+
+        Chép logic sang đường thứ hai thay vì dùng chung là mời hai nhánh trôi dần khỏi
+        nhau: một bên kiểm gói còn tồn tại, bên kia quên; một bên ghi billing event, bên
+        kia không. Rồi doanh thu lệch mà không ai biết vì sao.
+
+        NGƯỜI GỌI PHẢI tự lo hai việc, hàm này KHÔNG làm thay:
+          - khoá dòng `payment` (`...for_update`) trước khi gọi
+          - kiểm `payment.status == PENDING` và đối chiếu số tiền
+        """
+        now = datetime.now(UTC)
+        plan = await self.repo.get_plan(payment.plan_id)
+        subscription = await self.repo.get_subscription(payment.user_id)
+
+        # Gói hoặc thuê bao biến mất giữa lúc người dùng đang trả tiền (admin xoá gói,
+        # dữ liệu lệch). Không chặn ở đây thì `plan.id` ném `AttributeError` — một 500
+        # trần không nói được gì. `initiate_checkout` vốn đã kiểm None; nhánh callback
+        # thì bỏ sót.
+        #
+        # Ở đây NÉM lỗi (→ 404, MoMo sẽ retry) chứ không đánh dấu thất bại như ca lệch
+        # tiền bên trên. Khác nhau ở chỗ CÓ SỬA ĐƯỢC KHÔNG: lệch tiền thì retry bao
+        # nhiêu lần cũng vẫn lệch, nên đóng lại luôn; còn gói bị xoá thì admin khôi
+        # phục xong, lần retry kế tiếp tự kích hoạt được — giữ đường cho nó tự lành.
+        # #Huynh
+        if plan is None or subscription is None:
+            log.error(
+                "payments.activation_target_missing",
+                order_id=order_ref,
+                plan_found=plan is not None,
+                subscription_found=subscription is not None,
+                hint="Đã thu tiền nhưng không kích hoạt được. Cần xử lý tay.",
+            )
+            raise NotFoundError(
+                "Không tìm thấy gói hoặc thuê bao để kích hoạt cho khoản thanh toán này."
+            )
+
+        subscription.plan_id = plan.id
+        subscription.status = "active"
+        subscription.current_period_start = now
+        subscription.current_period_end = now + timedelta(days=_BILLING_PERIOD_DAYS)
+        await self.repo.save(subscription)
+
+        # Through the domain entity so the PENDING invariant it enforces
+        # isn't bypassed — matches cancel_checkout's pattern above.
+        entity = _payment_to_entity(payment)
+        entity.mark_succeeded(provider_reference)
+        payment.status = entity.status.value
+        payment.provider_reference = entity.provider_reference
+        payment.paid_at = entity.paid_at
+        payment.updated_at = entity.updated_at
+        payment.raw_callback_payload = raw_provider_payload
+        await self.repo.save(payment)
+
+        await self.repo.create_billing_event(
+            user_id=payment.user_id,
+            subscription_id=subscription.id,
+            event_type="payment_succeeded",
+            amount=payment.amount,
+            currency=payment.currency,
+            event_metadata={
+                "provider": provider.value,
+                "payment_id": str(payment.id),
+                "provider_reference": provider_reference,
+                "raw_callback": raw_provider_payload,
+            },
+        )
+        log.info(
+            "payments.subscription_activated",
+            order_id=order_ref,
+            user_id=str(payment.user_id),
+            plan_id=str(plan.id),
+            amount=str(payment.amount),
+            currency=payment.currency,
+        )
 
     async def get_my_subscription(self, user_id: uuid.UUID) -> SubscriptionResponse:
         sub = await self.repo.get_subscription(user_id)
@@ -437,7 +660,18 @@ class SubscriptionsService:
     ) -> SubscriptionResponse:
         """Immediate plan switch — starts a fresh billing period now (same convention
         as a confirmed checkout payment, see handle_payment_callback), so AI quota
-        naturally reads as 0 used for the new period without a separate reset step."""
+        naturally reads as 0 used for the new period without a separate reset step.
+
+        ĐÒI BẰNG CHỨNG ĐÃ TRẢ TIỀN. Bản trước không kiểm gì cả: chỉ cần gói mới đắt hơn
+        gói cũ là đổi luôn, ghi `amount=0` vào billing event rồi trả 200. Nghĩa là BẤT KỲ
+        ai đăng nhập được cũng tự nâng mình lên gói cao nhất miễn phí bằng một lời gọi
+        API — không cần MoMo, không cần gì hết. Frontend không hề gọi endpoint này
+        (đã tra: web chỉ dùng `/plans`, `/me`, `/checkout`), nên nó thuần là mặt tấn công.
+
+        Đường đi đúng vẫn là `/checkout` → cổng thanh toán → webhook (hoặc đường tự đối
+        soát trong `_reconcile_pending_payment`) tự kích hoạt gói. Endpoint này chỉ còn
+        là lối vào cho client nào đã trả tiền thật mà cần đổi gói tường minh.
+        """
         sub = await self.repo.get_subscription(user_id)
         if sub is None:
             raise NotFoundError("No subscription found")
@@ -452,6 +686,25 @@ class SubscriptionsService:
             )
 
         now = datetime.now(UTC)
+
+        # Gói trả phí thì phải có một khoản thu THÀNH CÔNG cho ĐÚNG gói đó, trong vòng một
+        # chu kỳ đổ lại. Có mốc thời gian vì một khoản trả từ nửa năm trước không cho phép
+        # đổi gói miễn phí hôm nay.
+        if new_plan.price_monthly > 0:
+            paid = await self.repo.find_recent_succeeded_payment(
+                user_id, new_plan.id, since=now - timedelta(days=_BILLING_PERIOD_DAYS)
+            )
+            if paid is None:
+                log.warning(
+                    "subscriptions.upgrade_without_payment_blocked",
+                    user_id=str(user_id),
+                    plan_id=str(new_plan.id),
+                    hint="Gọi thẳng endpoint đổi gói mà không có giao dịch nào đã thanh toán.",
+                )
+                raise DomainError(
+                    "Chưa có giao dịch thanh toán thành công nào cho gói này. "
+                    "Hãy thanh toán qua /subscriptions/checkout trước."
+                )
         sub.plan_id = new_plan.id
         sub.status = "active"
         sub.cancel_at_period_end = False
