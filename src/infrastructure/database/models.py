@@ -24,7 +24,8 @@ from sqlalchemy import (
     UniqueConstraint,
     func,
     select,
-    text, JSON,
+    text,
+    JSON,
 )
 from sqlalchemy.dialects.postgresql import ARRAY, INET, JSONB, UUID
 from sqlalchemy.dialects.postgresql import ENUM as PgEnum  # noqa: N811
@@ -67,6 +68,7 @@ _billing_event_type = PgEnum(
 _payment_provider = PgEnum(
     "momo",
     "zalopay",
+    "sepay",
     "bank_transfer",
     "vnpay",
     "manual",
@@ -515,6 +517,16 @@ class SubscriptionPaymentModel(UUIDMixin, TimestampMixin, Base):
         UUID(as_uuid=True), ForeignKey("subscription_plans.id"), nullable=False
     )
     provider: Mapped[str] = mapped_column(_payment_provider, nullable=False)
+    # Mã đơn NGẮN, đọc được bằng miệng, DUY NHẤT — để đặt vào nội dung chuyển khoản.
+    #
+    # `id` (UUID) vẫn là mã đơn cho MoMo/ZaloPay. Nhưng cổng kiểu đối soát ngân hàng thì
+    # thứ duy nhất nối ta với giao dịch là dòng nội dung chuyển khoản, mà dòng đó bị ngân
+    # hàng cắt ngắn, bị người dùng gõ tay và gõ sai. 32 ký tự hex không sống sót ở đó.
+    #
+    # Nullable vì mọi bản ghi TẠO TRƯỚC bản vá này không có mã. Postgres cho phép nhiều
+    # NULL trong một unique index, nên không cần backfill — và không backfill nghĩa là
+    # không có cơ hội backfill SAI (lỗi mà CI không bao giờ bắt được vì bảng test luôn rỗng).
+    order_code: Mapped[str | None] = mapped_column(String(16), nullable=True, unique=True)
     status: Mapped[str] = mapped_column(
         _subscription_payment_status, nullable=False, server_default="pending"
     )
@@ -1176,9 +1188,7 @@ class ReminderModel(UUIDMixin, TimestampMixin, Base):
     # Lời nhắc do quy tắc tự sinh, đang chờ người duyệt. Nó vẫn ở `pending` — nếu không có
     # cột này thì beat quét thấy và gửi thẳng cho khách, đúng cái người dùng chưa cho phép.
     # `RemindersRepository.list_due()` lọc theo cột này.  #Huynh
-    requires_approval: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, server_default="false"
-    )
+    requires_approval: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
     # Để giao diện gắn nhãn "Tự động" — người dùng cần phân biệt cái họ tự đặt với cái hệ
     # thống tự sinh, nhất là khi định bấm gửi.
     created_by_rule: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
@@ -1476,6 +1486,7 @@ class AiJobModel(UUIDMixin, TimestampMixin, Base):
             postgresql_where=text("idempotency_key IS NOT NULL"),
         ),
     )
+
 
 class AIProviderConfigurationModel(Base):
     # Chỉ có MỘT bản ghi trong bảng này, lưu nhà cung cấp LLM đang được toàn hệ

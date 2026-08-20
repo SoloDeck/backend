@@ -46,6 +46,9 @@ class PaymentStub:
     subscription_id: uuid.UUID
     plan_id: uuid.UUID
     provider: str = "momo"
+    # Mirrors SubscriptionPaymentModel.order_code — the stub has to carry it because
+    # initiate_checkout reads it straight back off the created row to hand to the gateway.
+    order_code: str | None = "SD0TESTAA"
     status: str = "pending"
     amount: Decimal = Decimal("199000")
     currency: str = "VND"

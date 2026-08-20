@@ -4,6 +4,7 @@ from fastapi import Depends
 
 from src.config.settings import settings
 from src.integrations.momo.client import MomoClient
+from src.integrations.sepay.client import SePayClient
 from src.integrations.zalopay.client import ZaloPayClient
 from src.modules.subscriptions.application.payment_gateway import PaymentGateway
 
@@ -40,5 +41,17 @@ def get_zalopay_client() -> PaymentGateway:
     )
 
 
+def get_sepay_client() -> PaymentGateway:
+    return SePayClient(
+        webhook_api_key=settings.sepay_webhook_api_key,
+        bank_code=settings.sepay_bank_code,
+        account_number=settings.sepay_account_number,
+        qr_base_url=settings.sepay_qr_base_url,
+        min_amount=settings.sepay_min_amount,
+        max_amount=settings.sepay_max_amount,
+    )
+
+
 MomoClientDep = Annotated[PaymentGateway, Depends(get_momo_client)]
 ZaloPayClientDep = Annotated[PaymentGateway, Depends(get_zalopay_client)]
+SePayClientDep = Annotated[PaymentGateway, Depends(get_sepay_client)]
