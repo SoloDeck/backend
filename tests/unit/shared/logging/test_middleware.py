@@ -4,7 +4,7 @@ import re
 
 import pytest
 import structlog
-from fastapi import FastAPI
+from fastapi import FastAPI, Response
 from httpx import ASGITransport, AsyncClient
 
 from src.shared.logging.context import get_request_id
@@ -23,6 +23,10 @@ def _build_app() -> FastAPI:
     @app.get("/ping")
     async def ping() -> dict:
         return {"request_id": get_request_id()}
+
+    @app.get("/health/ready")
+    async def health_ready(status_code: int = 200) -> Response:
+        return Response(status_code=status_code)
 
     return app
 
@@ -72,3 +76,15 @@ class TestAccessLogMiddleware:
         assert entry["status_code"] == 200
         assert isinstance(entry["duration_ms"], (int, float))
         assert entry["log_level"] == "info"
+
+    async def test_silences_successful_health_probe(self, client: AsyncClient) -> None:
+        with structlog.testing.capture_logs() as logs:
+            await client.get("/health/ready")
+        assert [e for e in logs if e["event"] == "http.access"] == []
+
+    async def test_still_logs_failing_health_probe(self, client: AsyncClient) -> None:
+        with structlog.testing.capture_logs() as logs:
+            await client.get("/health/ready", params={"status_code": 503})
+        access = [e for e in logs if e["event"] == "http.access"]
+        assert len(access) == 1
+        assert access[0]["status_code"] == 503

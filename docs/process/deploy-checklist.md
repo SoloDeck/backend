@@ -146,9 +146,23 @@ Until images are tagged by commit SHA, recovery means reverting the commit on
 
 - Images are not tagged by commit SHA — no rollback, and no way to tell which
   commit is serving traffic.
-- `MOMO_*` variables are absent from the deploy `.env`, so the app falls back
-  to MoMo's **publicly documented sandbox credentials** in `settings.py`.
-  Anyone can forge a valid IPN signature and activate a paid subscription.
+- `MOMO_*` real merchant credentials (`MOMOIM8G20260729`) were set on both the
+  `staging` and `production` GitHub Environments on 2026-08-19. `Deploy /
+  Staging` picked them up automatically (succeeded 2026-08-19T18:37Z, after
+  the secrets were written). `Deploy / Production` did NOT, because it
+  requires a manual approval (`environment: production`, required reviewer)
+  that had gone unaddressed: every `main`-branch run back to at least
+  2026-08-03 was stuck at `status: waiting` on that gate — meaning production
+  had been running stale code/`.env` for weeks, not just missing the MoMo
+  credentials. Approved the pending run manually on 2026-08-20
+  (`gh api .../pending_deployments`, `state: approved`); `Deploy / Production`
+  then completed successfully (2026-08-19T19:47-19:48Z run timestamps —
+  the run itself was created 2026-08-19, approval just happened a day later).
+  Production is now current. **Open question, not yet answered:** why the
+  required-reviewer approval was going unaddressed for weeks — worth deciding
+  whether to add a reminder/alert for pending production approvals, or
+  reconsider whether a manual gate that nobody was watching is the right
+  control here.
 - CI does not run `make check` (ruff + mypy).
 - The `db` / `redis-host` network aliases in `compose.deploy.yml` exist only to
   tolerate stale `.env` values; remove them once every environment uses
