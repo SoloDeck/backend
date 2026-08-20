@@ -87,6 +87,17 @@ class SubscriptionsRepository:
             .with_for_update()
         )
 
+    async def get_payment_by_order_code_for_update(self, order_code: str):
+        """Như `get_payment_by_id_for_update`, nhưng tra theo mã đơn ngắn.
+
+        Cùng khoá hàng, cùng lý do: một cổng có thể giao lại callback nhiều lần.
+        """
+        return await self.db.scalar(
+            select(SubscriptionPaymentModel)
+            .where(SubscriptionPaymentModel.order_code == order_code)
+            .with_for_update()
+        )
+
     async def create_billing_event(self, **values):
         event = BillingEventModel(**values)
         self.db.add(event)

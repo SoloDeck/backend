@@ -28,6 +28,7 @@ import json
 import re
 import time
 import uuid
+from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from typing import Any
@@ -299,8 +300,14 @@ class _ZaloPaySigned:
         body["mac"] = self._sign_create(body)
         return body
 
-    def verify_callback_signature(self, payload: dict[str, Any]) -> bool:
+    def verify_callback_signature(
+        self, payload: dict[str, Any], headers: Mapping[str, str] | None = None
+    ) -> bool:
         """MAC của callback, ký bằng **key2** trên chuỗi `data` NGUYÊN VĂN.
+
+        `headers` không dùng tới: ZaloPay ký trong thân request. Tham số có mặt để khớp
+        protocol `PaymentGateway` — xem docstring bên đó.
+
 
         Phải lấy đúng chuỗi ZaloPay gửi, không được parse rồi serialise lại: khoảng
         trắng và thứ tự khoá sẽ khác đi và MAC lệch — trong khi dữ liệu vẫn "đúng", nên
@@ -471,6 +478,7 @@ class ZaloPayClient(_ZaloPaySigned):
         order_info: str,
         notify_url: str,
         redirect_url: str | None = None,
+        order_code: str | None = None,
     ) -> CreatePaymentResult:
         body = self._build_create_body(
             order_id=order_id,
@@ -568,6 +576,7 @@ class MockZaloPayClient(_ZaloPaySigned):
         order_info: str,
         notify_url: str,
         redirect_url: str | None = None,
+        order_code: str | None = None,
     ) -> CreatePaymentResult:
         body = self._build_create_body(
             order_id=order_id,

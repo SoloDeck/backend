@@ -52,10 +52,12 @@ from sqlalchemy.pool import NullPool  # noqa: E402
 import src.infrastructure.database.models  # noqa: F401,E402 — registers all ORM models with Base
 from src.infrastructure.database.session import get_db_session  # noqa: E402
 from src.integrations.momo.client import MockMomoClient  # noqa: E402
+from src.integrations.sepay.client import MockSePayClient  # noqa: E402
 from src.integrations.zalopay.client import MockZaloPayClient  # noqa: E402
 from src.main import app  # noqa: E402
 from src.shared.dependencies.payments import (  # noqa: E402
     get_momo_client,
+    get_sepay_client,
     get_zalopay_client,
 )
 
@@ -153,6 +155,10 @@ async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient]:
     # ZaloPay sẽ gọi ra sb-openapi.zalopay.vn thật — treo trên CI (không có mạng
     # ra ngoài) và phụ thuộc vào một sandbox của bên thứ ba khi chạy local.
     app.dependency_overrides[get_zalopay_client] = lambda: MockZaloPayClient()
+    # SePay khong co sandbox dung chung: so tai khoan trong Settings la tai khoan
+    # NGAN HANG THAT cua mot nguoi that. Thieu dong nay, test se dung so tai khoan
+    # that de dung ma QR — va tren CI (khong cau hinh gi) thi checkout bao loi.
+    app.dependency_overrides[get_sepay_client] = lambda: MockSePayClient()
     async with AsyncClient(
         transport=ASGITransport(app=app),
         base_url="http://test",
