@@ -9,6 +9,7 @@ from datetime import date, datetime
 from decimal import Decimal
 
 from sqlalchemy import (
+    JSON,
     BigInteger,
     Boolean,
     CheckConstraint,
@@ -25,7 +26,6 @@ from sqlalchemy import (
     func,
     select,
     text,
-    JSON,
 )
 from sqlalchemy.dialects.postgresql import ARRAY, INET, JSONB, UUID
 from sqlalchemy.dialects.postgresql import ENUM as PgEnum  # noqa: N811
@@ -1489,9 +1489,9 @@ class AiJobModel(UUIDMixin, TimestampMixin, Base):
 
 
 class AIProviderConfigurationModel(Base):
-    # Chỉ có MỘT bản ghi trong bảng này, lưu nhà cung cấp LLM đang được toàn hệ
-    # thống sử dụng. Admin không thêm/xoá cấu hình mà chỉ cập nhật bản ghi này
-    # (Groq ↔ Gemini ↔ OpenAI ↔ ...).  #Trung
+    # Chỉ có MỘT bản ghi trong bảng này, lưu provider và model LLM
+    # đang được toàn hệ thống sử dụng. Admin không thêm/xoá cấu hình
+    # mà chỉ cập nhật bản ghi này.
     __tablename__ = "ai_provider_configuration"
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -1500,15 +1500,21 @@ class AIProviderConfigurationModel(Base):
         default=uuid.uuid4,
     )
 
-    # Nhà cung cấp AI hiện tại của toàn bộ ứng dụng. Model cụ thể của từng nhà
-    # cung cấp được hard-code trong codebase để giảm độ phức tạp khi kiểm thử và
-    # triển khai.
+    # Nhà cung cấp AI hiện tại của toàn bộ ứng dụng.
+    # Ví dụ: groq, gemini, ollama.
     llm_provider: Mapped[str] = mapped_column(
         String(20),
         nullable=False,
     )
 
-    # Tự động cập nhật mỗi lần admin đổi nhà cung cấp AI.
+    # Model cụ thể đang được sử dụng bởi provider.
+    # Ví dụ: openai/gpt-oss-120b, gemini-2.5-flash, qwen3:4b.
+    llm_model: Mapped[str] = mapped_column(
+        String(100),
+        nullable=False,
+    )
+
+    # Tự động cập nhật mỗi lần admin đổi provider hoặc model.
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
@@ -1516,12 +1522,31 @@ class AIProviderConfigurationModel(Base):
         onupdate=func.now(),
     )
 
-    # Admin thực hiện lần thay đổi gần nhất. Dùng SET NULL để vẫn giữ lịch sử cấu
-    # hình nếu tài khoản admin bị xoá sau này.
+    # Admin thực hiện lần thay đổi gần nhất.
+    # Dùng SET NULL để vẫn giữ cấu hình nếu tài khoản admin bị xoá sau này.
     updated_by: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
+    )
+
+    # Ràng buộc "chỉ MỘT bản ghi" ở tầng CSDL, không chỉ bằng quy ước. Cột này
+    # luôn TRUE (CHECK) và là UNIQUE, nên bản ghi thứ hai sẽ bị Postgres từ chối
+    # ngay. Trước đây quy tắc này chỉ nằm trong comment: repository dùng
+    # `select(...)` không LIMIT/ORDER BY, nên nếu lỡ có 2 dòng (chạy lại seed,
+    # merge lại migration, UPDATE tay) thì nhà cung cấp LLM của TOÀN hệ thống
+    # trở nên không xác định — mỗi truy vấn có thể trả về một dòng khác nhau,
+    # trong khi ProviderFactory đọc lại bảng này ở MỌI request AI.
+    is_singleton: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=True,
+        server_default=text("true"),
+    )
+
+    __table_args__ = (
+        CheckConstraint("is_singleton IS TRUE", name="ck_ai_provider_singleton"),
+        UniqueConstraint("is_singleton", name="uq_ai_provider_singleton"),
     )
 
 

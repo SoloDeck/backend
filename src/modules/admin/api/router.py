@@ -342,13 +342,19 @@ async def get_ai_provider(
     _: AdminUser,
     db: DBSession,
 ) -> ApiResponse[AdminLLMProviderResponse]:
-    configuration = await AdminService(db=db).get_ai_provider_configuration()
+
+    configuration = await (
+        AdminService(db=db)
+        .get_ai_provider_configuration()
+    )
 
     return ApiResponse.ok(
         AdminLLMProviderResponse(
             llm_provider=configuration.llm_provider,
+            llm_model=configuration.llm_model,
         )
     )
+
 
 @router.patch(
     "/ai-provider",
@@ -359,14 +365,20 @@ async def update_ai_provider(
     admin: AdminUser,
     db: DBSession,
 ) -> ApiResponse[AdminLLMProviderResponse]:
-    configuration = await AdminService(db=db).update_ai_provider_configuration(
-        llm_provider=payload.llm_provider,
-        admin_id=uuid.UUID(admin.sub),
+
+    configuration = await (
+        AdminService(db=db)
+        .update_ai_provider_configuration(
+            llm_provider=payload.llm_provider,
+            llm_model=payload.llm_model,
+            admin_id=uuid.UUID(admin.sub),
+        )
     )
 
     return ApiResponse.ok(
         AdminLLMProviderResponse(
             llm_provider=configuration.llm_provider,
+            llm_model=configuration.llm_model,
         )
     )
 

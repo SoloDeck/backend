@@ -7,13 +7,20 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from decimal import Decimal
 
+import httpx
 from google import genai
 from google.genai.types import GenerateContentConfig
 from groq import Groq
 
+from src.ai.shared.constants import SUPPORTED_LLM_MODELS
 from src.ai.shared.token_usage import extract_usage
 from src.config.settings import settings
 from src.shared.exceptions.domain import AIGenerationError, DomainError
+
+
+# ==========================================================
+# Response models
+# ==========================================================
 
 @dataclass
 class LLMUsage:
@@ -29,12 +36,22 @@ class LLMResponse:
     usage: LLMUsage | None = None
 
 
+# ==========================================================
+# Base Provider
+# ==========================================================
+
 class BaseLLMProvider(ABC):
     """Interface every LLM provider must implement.
 
     Cài đặt cụ thể viết vào `_generate`, KHÔNG override `generate`. `generate` là lớp
     vỏ dịch mọi lỗi của SDK nhà cung cấp thành `AIGenerationError`.
+
+    Model do admin chọn và được truyền vào lúc dựng (xem `SUPPORTED_LLM_MODELS`), nên
+    không còn hằng MODEL cố định trong từng lớp nữa.
     """
+
+    def __init__(self, model: str):
+        self.model = model
 
     async def generate(
         self,
@@ -87,20 +104,17 @@ class BaseLLMProvider(ABC):
         raise NotImplementedError
 
 
-class GroqProvider(BaseLLMProvider):
-    # Groq đã GỠ toàn bộ dòng Llama khỏi API (gọi `llama-3.3-70b-versatile` trả
-    # 404 `model_not_found`), nên mọi tính năng AI chết đồng loạt: bấm "Tạo Báo Giá AI" là
-    # vòng xoay quay mãi rồi rơi về nhánh lỗi.
-    #
-    # Đổi sang model còn phục vụ, cùng cửa sổ ngữ cảnh 131k và có `response_format=json_object`
-    # — điều kiện bắt buộc vì cả ba bộ sinh (báo giá, hợp đồng, chấm điểm lead) đều đọc JSON
-    # có cấu trúc chứ không đọc văn xuôi.
-    #
-    # Danh sách model đổi theo thời gian; kiểm bằng `GET https://api.groq.com/openai/v1/models`
-    # với chính khoá đang dùng, đừng đoán theo tên.  #Huynh
-    MODEL = "openai/gpt-oss-120b"
+# ==========================================================
+# Groq
+# ==========================================================
 
-    def __init__(self):
+class GroqProvider(BaseLLMProvider):
+    # Model không còn cố định ở đây — admin chọn trong `SUPPORTED_LLM_MODELS`
+    # (xem ghi chú về việc Groq gỡ dòng Llama trong `src/ai/shared/constants.py`).
+
+    def __init__(self, model: str):
+        super().__init__(model)
+
         api_key = settings.groq_api_key
         if not api_key:
             raise RuntimeError("GROQ_API_KEY is not set")
@@ -118,7 +132,7 @@ class GroqProvider(BaseLLMProvider):
 
         response = await asyncio.to_thread(
             self.client.chat.completions.create,
-            model=self.MODEL,
+            model=self.model,
             messages=[
                 {
                     "role": "user",
@@ -132,7 +146,7 @@ class GroqProvider(BaseLLMProvider):
 
         usage = extract_usage(
             response,
-            model=getattr(response, "model", None) or self.MODEL,
+            model=getattr(response, "model", None) or self.model,
         )
 
         return LLMResponse(
@@ -140,13 +154,16 @@ class GroqProvider(BaseLLMProvider):
             usage=usage,
         )
 
-    # contains all the current Groq logic
 
+# ==========================================================
+# Gemini
+# ==========================================================
 
 class GeminiProvider(BaseLLMProvider):
-    MODEL = "gemini-2.5-flash"
 
-    def __init__(self):
+    def __init__(self, model: str):
+        super().__init__(model)
+
         api_key = settings.gemini_api_key
         if not api_key:
             raise RuntimeError("GEMINI_API_KEY is not set")
@@ -170,7 +187,7 @@ class GeminiProvider(BaseLLMProvider):
 
         response = await asyncio.to_thread(
             self.client.models.generate_content,
-            model=self.MODEL,
+            model=self.model,
             contents=prompt,
             config=config,
         )
@@ -180,7 +197,64 @@ class GeminiProvider(BaseLLMProvider):
             usage=None,
         )
 
-    # contains all current Gemini logic
+
+# ==========================================================
+# Ollama
+# ==========================================================
+
+class OllamaProvider(BaseLLMProvider):
+
+    def __init__(self, model: str):
+        super().__init__(model)
+
+        self.base_url = settings.ollama_base_url.rstrip("/")
+
+    async def _generate(
+        self,
+        *,
+        prompt: str,
+        temperature: float = 0,
+        seed: int | None = None,
+        json_mode: bool = False,
+    ) -> LLMResponse:
+
+        payload = {
+            "model": self.model,
+            "prompt": prompt,
+            "stream": False,
+            "options": {
+                "temperature": temperature,
+            },
+        }
+
+        if seed is not None:
+            payload["options"]["seed"] = seed
+
+        if json_mode:
+            payload["format"] = "json"
+
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            response = await client.post(
+                f"{self.base_url}/api/generate",
+                json=payload,
+            )
+            response.raise_for_status()
+            data = response.json()
+
+        input_tokens = int(data.get("prompt_eval_count", 0))
+        output_tokens = int(data.get("eval_count", 0))
+
+        usage = LLMUsage(
+            model_used=data.get("model", self.model),
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            estimated_cost_usd=Decimal("0"),
+        )
+
+        return LLMResponse(
+            text=data.get("response", ""),
+            usage=usage,
+        )
 
 
 class OpenAIProvider(BaseLLMProvider):
@@ -188,33 +262,66 @@ class OpenAIProvider(BaseLLMProvider):
     # implement later
 
 
-def get_llm_provider(provider: str) -> BaseLLMProvider:
-    """Return the configured provider.
+# ==========================================================
+# Factory
+# ==========================================================
 
-    Hỏng ở khâu DỰNG provider cũng phải ra `AIGenerationError` y như hỏng lúc GỌI. Cả
-    hai đều là "phần AI không dùng được lúc này", và cùng cần 502 kèm lý do. Trước đây
-    khâu này ném `ValueError`/`RuntimeError`/`TypeError` trần: thiếu key thì RuntimeError,
-    còn chọn 'openai' thì `OpenAIProvider()` ném TypeError vì lớp đó chưa cài `_generate`
-    nên vẫn là abstract. Cả ba đều rơi xuống handler cuối và thành 500 trống trơn.  #Huynh
+# Khoá của dict phải phủ đúng LLMProviderName — test
+# test_every_supported_provider_is_constructible canh việc này, nên thêm nhà
+# cung cấp vào Literal mà quên map ở đây sẽ fail test thay vì fail 500 lúc chạy.
+_PROVIDERS: dict[str, type[BaseLLMProvider]] = {
+    "groq": GroqProvider,
+    "gemini": GeminiProvider,
+    "ollama": OllamaProvider,
+    # "openai": OpenAIProvider — bỏ ra cho tới khi OpenAIProvider cài đặt
+    # `_generate`; hiện là lớp rỗng nên không khởi tạo được (xem constants.py).
+}
+
+
+def get_llm_provider(
+    provider: str,
+    model: str,
+) -> BaseLLMProvider:
+    """Return the configured provider using the requested model.
+
+    MỌI lối thoát ở đây đều là `AIGenerationError`, không phải ValueError trần.
+    Hỏng ở khâu DỰNG provider cũng là "phần AI không dùng được lúc này" y như hỏng
+    lúc GỌI, và cùng cần 502 kèm lý do. Trước đây khâu này ném
+    `ValueError`/`RuntimeError`/`TypeError` trần: thiếu key thì RuntimeError, còn
+    chọn 'openai' thì `OpenAIProvider()` ném TypeError vì lớp đó chưa cài
+    `_generate` nên vẫn là abstract. Cả ba đều rơi xuống handler cuối và thành 500
+    trống trơn.  #Huynh
+
+    `AdminService.update_ai_provider_configuration` gọi hàm này để DỰNG THỬ trước
+    khi ghi cấu hình, và bắt rộng rồi đổi thành 422 — nên admin chọn nhầm vẫn nhận
+    lỗi đúng nghĩa chứ không phải 502.
     """
     key = provider.lower()
 
+    supported = SUPPORTED_LLM_MODELS.get(key)
+
+    if supported is None:
+        raise AIGenerationError(f"Nhà cung cấp AI không hỗ trợ: '{provider}'")
+
+    if model not in supported:
+        raise AIGenerationError(
+            f"Model '{model}' không thuộc nhà cung cấp '{provider}'."
+        )
+
+    cls = _PROVIDERS.get(key)
+    if cls is None:
+        # provider có trong SUPPORTED_LLM_MODELS nhưng thiếu ở _PROVIDERS — lỗi
+        # cấu hình phía server. 'openai' rơi vào đây cho tới khi được cài đặt thật.
+        raise AIGenerationError(
+            f"Nhà cung cấp AI '{key}' chưa được cài đặt. Đổi sang một nhà cung cấp "
+            f"khác qua PATCH /admin/ai-provider."
+        )
+
     try:
-        if key == "groq":
-            return GroqProvider()
-        if key == "gemini":
-            return GeminiProvider()
+        return cls(model)
     except DomainError:
         raise
     except Exception as exc:
         raise AIGenerationError(
             f"Không khởi tạo được nhà cung cấp AI '{key}': {type(exc).__name__}: {exc}"
         ) from exc
-
-    if key == "openai":
-        raise AIGenerationError(
-            "Nhà cung cấp AI 'openai' chưa được cài đặt. Đổi sang 'groq' hoặc 'gemini' "
-            "qua PATCH /admin/ai-provider."
-        )
-
-    raise AIGenerationError(f"Nhà cung cấp AI không hỗ trợ: '{provider}'")

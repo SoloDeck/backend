@@ -1,6 +1,6 @@
 """add 'sepay' to the payment_provider enum
 
-Revision ID: c3d4e5f6a7b8
+Revision ID: e5f6a7b8c9d0
 Revises: b2c3d4e5f6a7
 Create Date: 2026-08-20 00:00:00.000000
 
@@ -11,13 +11,23 @@ rồi chết ở đúng câu INSERT đầu tiên với `invalid input value for 
 
 PostgreSQL 16 cho phép `ALTER TYPE ... ADD VALUE` bên trong transaction miễn là không DÙNG
 giá trị mới trong cùng transaction đó — ở đây không dùng. `IF NOT EXISTS` để chạy lại không vỡ.
+
+Bản này TỪNG mang id `c3d4e5f6a7b8` và phải đổi: nhánh #102 đã có sẵn một revision đúng y
+id đó (`c3d4e5f6a7b8_merge_ai_provider_hardening_with_llm_model`), và nó đã merge vào main
+nên KHÔNG được đụng tới. Hai file cùng một id khiến alembic không dựng nổi cây revision —
+triệu chứng là "Multiple head revisions are present", một câu không hề chỉ tới nguyên nhân
+thật. Đổi id ở ĐÂY là an toàn vì bản này chưa merge và chưa deploy: không DB nào từng
+stamp nó ngoài mấy DB test cục bộ.
+
+Bài học cho lần sau: đừng đặt id theo dãy đoán được (a1b2..., b2c3..., c3d4...). Hai nhánh
+song song sẽ đoán ra cùng một chuỗi. Để `alembic revision` tự sinh id ngẫu nhiên.
 """
 
 from collections.abc import Sequence
 
 from alembic import op
 
-revision: str = "c3d4e5f6a7b8"
+revision: str = "e5f6a7b8c9d0"
 down_revision: str | Sequence[str] | None = "b2c3d4e5f6a7"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
