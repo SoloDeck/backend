@@ -57,11 +57,9 @@ async def test_checkout_then_callback_upgrades_subscription(
         "/api/v1/payments/webhooks/zalopay",
         json=_callback(payment["id"], float(plan["price_monthly"])),
     )
-    assert resp.status_code == 202, resp.text
-    assert resp.json()["data"]["accepted"] is True
-    # `event_id` cho ZaloPay nằm trong chuỗi JSON `data`, không phải ở cấp cao nhất —
-    # đọc kiểu MoMo thì cột này rỗng trên mọi log webhook ZaloPay.
-    assert resp.json()["data"]["event_id"].startswith(datetime.now(UTC).strftime("%y%m")[:2])
+    # 200 kèm ĐÚNG thân ZaloPay đòi — không phải 202 kèm bao bì `ApiResponse`.
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == {"return_code": 1, "return_message": "success"}
 
     me_resp = await client.get("/api/v1/subscriptions/me", headers=headers)
     assert me_resp.json()["data"]["plan_slug"] == "pro"
@@ -94,8 +92,9 @@ async def test_callback_replay_is_idempotent(client: AsyncClient, db_session: As
     first = await client.post("/api/v1/payments/webhooks/zalopay", json=payload)
     replay = await client.post("/api/v1/payments/webhooks/zalopay", json=payload)
 
-    assert first.status_code == 202
-    assert replay.status_code == 202
+    assert first.status_code == 200
+    assert replay.status_code == 200
+    assert first.json() == replay.json() == {"return_code": 1, "return_message": "success"}
 
 
 async def test_callback_with_tampered_mac_is_rejected(
@@ -132,7 +131,7 @@ async def test_callback_amount_mismatch_does_not_activate_the_plan(
         "/api/v1/payments/webhooks/zalopay", json=_callback(payment["id"], 1000)
     )
 
-    assert resp.status_code == 202
+    assert resp.status_code == 200
     me_resp = await client.get("/api/v1/subscriptions/me", headers=headers)
     assert me_resp.json()["data"]["plan_slug"] == "free"
     status_resp = await client.get(f"/api/v1/payments/intents/{payment['id']}", headers=headers)
@@ -164,7 +163,7 @@ async def test_successful_callback_after_expiry_still_upgrades(
         json=_callback(payment["id"], float(plan["price_monthly"])),
     )
 
-    assert resp.status_code == 202
+    assert resp.status_code == 200
     me_resp = await client.get("/api/v1/subscriptions/me", headers=headers)
     assert me_resp.json()["data"]["plan_slug"] == "pro"
 
@@ -234,3 +233,65 @@ async def test_checkout_against_free_plan_is_rejected(
     )
 
     assert resp.status_code == 400
+
+
+async def test_zalopay_callback_ack_is_exactly_what_zalopay_expects(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """ZaloPay chỉ coi là ĐÃ NHẬN khi thấy `return_code` = 1 trong thân phản hồi.
+
+    https://docs.zalopay.vn/docs/developer-tools/knowledge-base/callback/ ghi thẳng:
+    `result['return_code'] = 0  # callback again (up to 3 times)`.
+
+    Bản trước trả 202 kèm bao bì `ApiResponse`, trong đó KHÔNG có trường `return_code`
+    nào — nên mọi giao dịch đều bị ZaloPay giao lại đủ ba lần rồi đánh dấu chưa xác nhận,
+    dù gói đã kích hoạt ngay từ lần đầu. Test cũ khẳng định `status_code == 202` nên nó
+    khoá đúng cái hành vi hỏng lại thay vì bắt được.
+
+    Chốt cả ca THẤT BẠI (số tiền lệch): vẫn phải ack, vì gửi lại bao nhiêu lần thì tiền
+    vẫn lệch y như vậy — retry chỉ tạo tiếng ồn.
+    """
+    await PlansSeeder(db_session).run()
+    headers = await _auth_headers(client)
+    plan = await _pro_plan(client, headers)
+    payment = await _create_checkout(client, headers, plan["id"])
+
+    mismatched = await client.post(
+        "/api/v1/payments/webhooks/zalopay", json=_callback(payment["id"], 1000)
+    )
+
+    assert mismatched.status_code == 200
+    assert mismatched.json() == {"return_code": 1, "return_message": "success"}
+
+
+async def test_momo_callback_response_shape_is_unchanged(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Bản vá ack của ZaloPay KHÔNG được đụng tới MoMo.
+
+    Tài liệu AIOv2 không nói rõ MoMo chờ thân phản hồi nào, nên đổi hình dạng phản hồi của
+    một cổng đang chạy thật dựa trên phỏng đoán là rủi ro không cần thiết. Test này đứng
+    canh đúng chỗ đó.
+    """
+    from src.integrations.momo.client import MockMomoClient
+
+    await PlansSeeder(db_session).run()
+    headers = await _auth_headers(client)
+    plan = await _pro_plan(client, headers)
+    resp = await client.post(
+        "/api/v1/subscriptions/checkout",
+        json={"plan_id": plan["id"], "provider": "momo"},
+        headers=headers,
+    )
+    momo_payment = resp.json()["data"]
+
+    webhook = await client.post(
+        "/api/v1/payments/webhooks/momo",
+        json=MockMomoClient().sign_ipn(
+            order_id=momo_payment["id"], amount=int(float(plan["price_monthly"]))
+        ),
+    )
+
+    assert webhook.status_code == 202
+    assert webhook.json()["data"]["accepted"] is True
+    assert webhook.json()["data"]["event_id"] == momo_payment["id"]
