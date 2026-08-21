@@ -803,6 +803,17 @@ class SubscriptionsService:
 
         return len(lapsed)
 
+    async def expire_stale_payments(self) -> int:
+        """Flip every `pending` checkout past `expires_at` to `expired`. Meant to be run
+        periodically by Celery Beat.
+
+        `_expire_if_overdue` (dùng trong `get_checkout_status`) chỉ dọn đúng MỘT đơn, và
+        chỉ khi có ai đó chủ động hỏi lại nó. Đơn SePay bị khách bỏ dở — không ai còn mở
+        lại trang, không cổng nào để redirect về — thì không có lượt GET nào chạm tới, và
+        nằm `pending` mãi. Job này quét TẤT CẢ các đơn như vậy, không riêng cổng nào.
+        """
+        return await self.repo.expire_stale_pending_payments(now=datetime.now(UTC))
+
     @staticmethod
     def _to_subscription_response(sub, plan) -> SubscriptionResponse:
         return SubscriptionResponse(

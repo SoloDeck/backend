@@ -51,6 +51,13 @@ celery_app.conf.update(
             "task": "src.workers.subscription_jobs.tasks.expire_lapsed_subscriptions",
             "schedule": 3600.0,  # every hour
         },
+        # Cửa sổ thanh toán chỉ 30 phút (xem SubscriptionsService.initiate_checkout), nên
+        # quét dày hơn job hạ gói ở trên — 10 phút vẫn đủ thưa để không tốn gì, nhưng
+        # không để một đơn SePay bị bỏ dở đứng "pending" hàng giờ trước mắt admin.  #Huynh
+        "expire-stale-payment-intents": {
+            "task": "src.workers.subscription_jobs.tasks.expire_stale_payment_intents",
+            "schedule": 600.0,  # every 10 minutes
+        },
         # Cảnh báo EMAIL: sắp hết quota AI (giữa kỳ) + sắp hết kỳ. Mỗi ngày một lần lúc 2h
         # sáng (giờ VN). KHÔNG hạ gói ở đây — việc hạ Free khi hết kỳ do
         # `expire-lapsed-subscriptions` (module subscriptions) lo, tránh hạ 2 lần.
