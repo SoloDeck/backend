@@ -2,7 +2,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.infrastructure.database.models import (
@@ -124,6 +124,32 @@ class SubscriptionsRepository:
         self.db.add(event)
         await self.db.flush()
         return event
+
+    async def expire_stale_pending_payments(self, *, now: datetime) -> int:
+        """Flip every `pending` payment intent past `expires_at` to `expired` — bulk,
+        without loading rows.
+
+        Đây là mảnh còn thiếu của `_expire_if_overdue` bên service: hàm đó CHỈ chạy khi
+        có ai đó GET lại đúng đơn (khách F5, hoặc trang đang dò 3 giây một lần). Một đơn
+        SePay bị bỏ dở — khách đóng tab, không quay lại, ZaloPay/MoMo cũng vậy nếu app
+        chặn redirect — thì không ai còn gọi GET nữa, và bản ghi nằm `pending` VĨNH VIỄN.
+        Admin nhìn vào tưởng đơn còn sống, trong khi nó đã chết từ lâu.
+
+        UPDATE hàng loạt trực tiếp, KHÔNG nạp từng dòng rồi khoá `with_for_update`: đây
+        là dọn dẹp định kỳ, không phải giao dịch nghiệp vụ cần đọc lại trạng thái trước
+        khi quyết định. Điều kiện `status == 'pending'` nằm ngay trong mệnh đề `WHERE` nên
+        Postgres tự loại các dòng một webhook vừa kích hoạt xong TRƯỚC khi thấy chúng —
+        không có khung thời gian nào để ghi đè nhầm một đơn vừa thành công.
+        """
+        result = await self.db.execute(
+            update(SubscriptionPaymentModel)
+            .where(
+                SubscriptionPaymentModel.status == "pending",
+                SubscriptionPaymentModel.expires_at <= now,
+            )
+            .values(status="expired", updated_at=now)
+        )
+        return result.rowcount or 0
 
     async def save(self, obj):
         await self.db.flush()

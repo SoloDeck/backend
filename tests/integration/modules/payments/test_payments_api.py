@@ -481,6 +481,61 @@ async def test_expire_lapsed_subscriptions_leaves_current_subscriptions_alone(
     assert me_resp.json()["data"]["plan_slug"] == "pro"
 
 
+# ── Dọn đơn `pending` bị bỏ dở (mọi cổng) ──────────────────────────────────────
+#
+# `_expire_if_overdue` chỉ dọn đúng một đơn, và chỉ khi có ai đó chủ động GET lại nó.
+# Một đơn SePay bị khách bỏ dở — đóng tab, không quay lại — thì không có lượt GET nào
+# chạm tới, và nằm `pending` trước mắt admin vô thời hạn.
+
+
+async def test_expire_stale_payments_flips_overdue_pending_to_expired(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    await PlansSeeder(db_session).run()
+    headers = await _auth_headers(client)
+    plan = await _pro_plan(client, headers)
+    payment = await _create_checkout(client, headers, plan["id"])
+
+    await db_session.execute(
+        update(SubscriptionPaymentModel)
+        .where(SubscriptionPaymentModel.id == payment["id"])
+        .values(expires_at=datetime.now(UTC) - timedelta(minutes=1))
+    )
+    await db_session.flush()
+
+    count = await SubscriptionsService(db=db_session).expire_stale_payments()
+    assert count == 1
+
+    row = await db_session.get(SubscriptionPaymentModel, payment["id"])
+    assert row.status == "expired"
+
+
+async def test_expire_stale_payments_leaves_live_and_settled_payments_alone(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Không được đụng vào: đơn còn hạn (`live`), và đơn đã chốt (`cancelled`) dù đã
+    quá `expires_at` — chốt rồi thì trạng thái không đổi nữa, kể cả bằng job dọn dẹp."""
+    await PlansSeeder(db_session).run()
+    headers = await _auth_headers(client)
+    plan = await _pro_plan(client, headers)
+    live = await _create_checkout(client, headers, plan["id"])
+    settled = await _create_checkout(client, headers, plan["id"])
+
+    await client.post(f"/api/v1/payments/intents/{settled['id']}/cancel", headers=headers)
+    await db_session.execute(
+        update(SubscriptionPaymentModel)
+        .where(SubscriptionPaymentModel.id == settled["id"])
+        .values(expires_at=datetime.now(UTC) - timedelta(minutes=1))
+    )
+    await db_session.flush()
+
+    count = await SubscriptionsService(db=db_session).expire_stale_payments()
+    assert count == 0
+
+    assert (await db_session.get(SubscriptionPaymentModel, live["id"])).status == "pending"
+    assert (await db_session.get(SubscriptionPaymentModel, settled["id"])).status == "cancelled"
+
+
 # ── Tự hỏi nhà cung cấp khi IPN không tới ─────────────────────────────────────
 #
 # Ngày 20/08/2026 trên staging: app MoMo UAT trừ tiền thành công, IPN không bao giờ tới,

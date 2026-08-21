@@ -559,3 +559,24 @@ async def test_expire_lapsed_subscriptions_noop_when_no_free_plan_configured() -
 
     assert count == 0
     repo.list_lapsed_subscriptions.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
+# expire_stale_payments
+# ---------------------------------------------------------------------------
+
+
+async def test_expire_stale_payments_delegates_to_repo_bulk_update() -> None:
+    """Đây là job dọn đơn `pending` bị bỏ dở — quét TẤT CẢ cổng (MoMo/ZaloPay/SePay),
+    không riêng đơn nào. Chỉ kiểm tra service gọi đúng repo với mốc thời gian hiện tại;
+    logic UPDATE hàng loạt (điều kiện WHERE, không khoá từng dòng) thuộc về
+    `repository.expire_stale_pending_payments` — kiểm ở lớp tích hợp có DB thật.
+    """
+    repo = _repo(expire_stale_pending_payments=3)
+    service = SubscriptionsService(db=AsyncMock(), repo=repo, momo_client=MockMomoClient())
+
+    count = await service.expire_stale_payments()
+
+    assert count == 3
+    repo.expire_stale_pending_payments.assert_awaited_once()
+    assert "now" in repo.expire_stale_pending_payments.await_args.kwargs
