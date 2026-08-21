@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config.settings import settings
+from src.modules.intake_form.application import seo_renderer
 from src.modules.intake_form.infrastructure.repository import IntakeFormRepository
 from src.modules.intake_form.schemas.request import IntakeFormUpdateRequest
 from src.modules.intake_form.schemas.response import (
@@ -228,6 +229,54 @@ class IntakeFormService:
             portfolio_url=user.portfolio_url,
         )
 
+    async def render_profile_seo_page(self, slug: str) -> str:
+        """HTML render sẵn cho bot của công cụ tìm kiếm, tra bằng đúng vị từ của trang chia sẻ.
+
+        Dùng lại `get_user_by_token` nên slug và share token vào chung một cửa, và mọi thay
+        đổi về điều kiện "hồ sơ còn sống" chỉ phải sửa một chỗ.
+        """
+        user = await self.repo.get_user_by_token(slug)
+        if user is None:
+            raise NotFoundError("Profile not found or link is invalid")
+
+        full_name = user.full_name or "Freelancer"
+        base = settings.frontend_url.rstrip("/")
+        return seo_renderer.render_profile_page(
+            full_name=full_name,
+            professional_title=user.professional_title,
+            description=seo_renderer.truncate_description(
+                user.bio,
+                fallback=user.professional_title or f"Hồ sơ freelancer {full_name} trên SoloDesk.",
+            ),
+            # Ảnh đại diện được lưu dạng data URL base64 (xem UserModel.cover_url) — thứ đó
+            # `og:image` không dùng được, bot chỉ nhận URL tải về được. Không phải http(s)
+            # thì rơi về ảnh mặc định thay vì phát ra thẻ hỏng.
+            image_url=(
+                user.avatar_url
+                if (user.avatar_url or "").startswith(("http://", "https://"))
+                else f"{base}/og-default.png"
+            ),
+            canonical_url=f"{base}/{user.profile_slug or slug}",
+            skills=list(user.skills or []),
+        )
+
+    def render_profile_seo_not_found_page(self) -> str:
+        return seo_renderer.render_not_found_page()
+
+    async def render_sitemap(self) -> str:
+        base = settings.frontend_url.rstrip("/")
+        rows = await self.repo.list_public_profile_slugs()
+        return seo_renderer.render_sitemap(
+            home_url=f"{base}/home",
+            entries=[
+                seo_renderer.SitemapEntry(
+                    loc=f"{base}/{slug}",
+                    lastmod=seo_renderer.format_lastmod(updated_at),
+                )
+                for slug, updated_at in rows
+            ],
+        )
+
     async def validate_submission(self, share_token: str, payload) -> None:
         """Validate that all required fields (per form config) are present in the payload."""
         user = await self.repo.get_user_by_token(share_token)
@@ -244,9 +293,7 @@ class IntakeFormService:
             # ngay dưới công tắc. Chặn ở đây chứ không chỉ ẩn form trên giao diện: ai gọi
             # thẳng API vẫn phải bị từ chối.  #Huynh
             if not config.is_active:
-                raise ValidationError(
-                    "Freelancer hiện không nhận yêu cầu mới qua biểu mẫu này."
-                )
+                raise ValidationError("Freelancer hiện không nhận yêu cầu mới qua biểu mẫu này.")
             fields = await self.repo.get_visible_fields(config.id)
             required_keys = {f.field_key for f in fields if f.is_required}
 

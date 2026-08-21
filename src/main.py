@@ -32,6 +32,7 @@ from src.modules.deals.api.public_router import router as public_intake_router
 from src.modules.deals.api.router import router as deals_router
 from src.modules.intake_form.api.public_router import router as public_intake_form_router
 from src.modules.intake_form.api.router import router as intake_form_router
+from src.modules.intake_form.api.seo_router import router as seo_router
 from src.modules.invoices.api.public_router import router as public_invoices_router
 from src.modules.invoices.api.router import router as invoices_router
 from src.modules.notifications.api.router import router as notifications_router
@@ -286,6 +287,10 @@ app.include_router(zalo_router, prefix=f"{API_V1}/zalo", tags=["Zalo"])
 app.include_router(lead_qualifier_router, prefix=f"{API_V1}/ai")
 app.include_router(followup_router, prefix=f"{API_V1}/ai")
 app.include_router(ai_jobs_router, prefix=f"{API_V1}/ai/jobs", tags=["AI Jobs"])
+
+# SEO — mount ở gốc, KHÔNG dưới API_V1: `/sitemap.xml` phải nằm đúng gốc miền mới được
+# công cụ tìm kiếm chấp nhận. Router tự đặt `include_in_schema=False` (xem seo_router.py).
+app.include_router(seo_router)
 
 
 # ---------------------------------------------------------------------------

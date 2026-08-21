@@ -1,5 +1,6 @@
 import uuid
 from dataclasses import dataclass
+from datetime import datetime
 
 from sqlalchemy import delete, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -40,6 +41,24 @@ class IntakeFormRepository:
                 UserModel.deleted_at.is_(None),
             )
         )
+
+    async def list_public_profile_slugs(self) -> list[tuple[str, datetime]]:
+        """Mọi hồ sơ có tên đường dẫn riêng, kèm mốc sửa gần nhất — nguồn cho sitemap.xml.
+
+        Chỉ liệt kê hồ sơ ĐÃ đặt slug: link token 43 ký tự cố ý không dò được, đưa nó vào
+        sitemap là tự phá luôn tính chất đó. Đặt slug là hành động chủ động của freelancer,
+        tức là đã muốn có địa chỉ công khai.
+        """
+        result = await self.db.execute(
+            select(UserModel.profile_slug, UserModel.updated_at)
+            .where(
+                UserModel.profile_slug.is_not(None),
+                UserModel.status == "active",
+                UserModel.deleted_at.is_(None),
+            )
+            .order_by(UserModel.updated_at.desc())
+        )
+        return [(slug, updated_at) for slug, updated_at in result.all()]
 
     async def get_user(self, user_id: uuid.UUID):
         return await self.db.scalar(

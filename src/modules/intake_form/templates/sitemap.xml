@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url>
+    <loc>{{ home_url }}</loc>
+    <changefreq>weekly</changefreq>
+  </url>
+{%- for entry in entries %}
+  <url>
+    <loc>{{ entry.loc }}</loc>
+    <lastmod>{{ entry.lastmod }}</lastmod>
+  </url>
+{%- endfor %}
+</urlset>
