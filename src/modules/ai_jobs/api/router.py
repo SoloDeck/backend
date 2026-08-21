@@ -1,12 +1,14 @@
 import uuid
+from typing import Annotated
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query
 
 from src.modules.ai_jobs.application.service import AiJobsService
 from src.modules.ai_jobs.schemas.request import AiJobEntityType, CreateAiJobRequest
 from src.modules.ai_jobs.schemas.response import AiJobResponse
 from src.shared.dependencies.auth import CurrentUserId
 from src.shared.dependencies.db import DBSession
+from src.shared.pagination.models import PaginationParams
 from src.shared.responses import ApiResponse, PaginatedResponse
 
 router = APIRouter(tags=["AI Jobs"])
@@ -27,19 +29,22 @@ async def create_job(
 async def list_jobs(
     user_id: CurrentUserId,
     db: DBSession,
+    pagination: Annotated[PaginationParams, Depends()],
     entity_type: AiJobEntityType | None = Query(default=None, description="Filter by entity_type"),
     entity_id: uuid.UUID | None = Query(default=None, description="Filter by entity_id"),
-    page: int = Query(default=1, ge=1),
-    page_size: int = Query(default=20, ge=1, le=100),
 ) -> PaginatedResponse[AiJobResponse]:
     jobs, total = await AiJobsService(db=db).list_jobs(
-        user_id, entity_type=entity_type, entity_id=entity_id, page=page, page_size=page_size
+        user_id,
+        entity_type=entity_type,
+        entity_id=entity_id,
+        page=pagination.page,
+        page_size=pagination.page_size,
     )
     return PaginatedResponse.ok(
         [AiJobResponse.model_validate(j) for j in jobs],
         total=total,
-        page=page,
-        page_size=page_size,
+        page=pagination.page,
+        page_size=pagination.page_size,
     )
 
 

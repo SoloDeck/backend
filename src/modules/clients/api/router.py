@@ -20,6 +20,7 @@ from src.modules.clients.schemas.response import (
     MessageResponse,
 )
 from src.shared.dependencies.auth import CurrentUserId
+from src.shared.pagination.models import PaginationParams
 from src.shared.responses.response import ApiResponse, PaginatedResponse
 
 router = APIRouter()
@@ -41,6 +42,7 @@ async def create_client(
 async def list_clients(
     user_id: CurrentUserId,
     db: DBSession,
+    pagination: Annotated[PaginationParams, Depends()],
     status: ClientStatus | None = Query(
         default=None, description="Filter by status: prospect, active, inactive, archived"
     ),
@@ -50,17 +52,20 @@ async def list_clients(
     email: str | None = Query(
         default=None, description="Search by email (case-insensitive, partial match)"
     ),
-    page: int = Query(default=1, ge=1, description="Page number"),
-    page_size: int = Query(default=20, ge=1, le=100, description="Items per page"),
 ) -> PaginatedResponse[ClientResponse]:
     clients, total = await ClientsService(db=db).list_all(
-        user_id, status=status, name=name, email=email, page=page, page_size=page_size
+        user_id,
+        status=status,
+        name=name,
+        email=email,
+        page=pagination.page,
+        page_size=pagination.page_size,
     )
     return PaginatedResponse.ok(
         [ClientResponse.model_validate(c) for c in clients],
         total=total,
-        page=page,
-        page_size=page_size,
+        page=pagination.page,
+        page_size=pagination.page_size,
     )
 
 

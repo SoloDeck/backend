@@ -27,6 +27,7 @@ from src.shared.domain.template_blocks import (
     template_block_labels,
     template_preview,
 )
+from src.shared.pagination.models import PaginationParams
 from src.shared.responses.response import ApiResponse, PaginatedResponse
 
 router = APIRouter()

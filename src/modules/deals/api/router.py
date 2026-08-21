@@ -30,6 +30,7 @@ from src.modules.deals.schemas.response import (
 from src.shared.dependencies.ai import AIFacadeDep
 from src.shared.dependencies.auth import CurrentUserId
 from src.shared.dependencies.storage import StorageDep
+from src.shared.pagination.models import PaginationParams
 from src.shared.responses.response import ApiResponse, PaginatedResponse
 
 router = APIRouter()
@@ -55,6 +56,7 @@ async def create_deal(
 async def list_deals(
     user_id: CurrentUserId,
     db: DBSession,
+    pagination: Annotated[PaginationParams, Depends()],
     title: str | None = Query(
         default=None, description="Search by title (case-insensitive, partial match)"
     ),
@@ -73,8 +75,6 @@ async def list_deals(
         ),
     ),
     sort_by: Literal["updated_at", "closed_at"] = Query(default="updated_at"),
-    page: int = Query(default=1, ge=1),
-    page_size: int = Query(default=20, ge=1, le=100),
 ) -> PaginatedResponse[DealResponse]:
     """Danh sách deal của freelancer.
 
@@ -90,11 +90,14 @@ async def list_deals(
         client_id=client_id,
         archived=archived,
         sort_by=sort_by,
-        page=page,
-        page_size=page_size,
+        page=pagination.page,
+        page_size=pagination.page_size,
     )
     return PaginatedResponse.ok(
-        [DealResponse.model_validate(d) for d in deals], total=total, page=page, page_size=page_size
+        [DealResponse.model_validate(d) for d in deals],
+        total=total,
+        page=pagination.page,
+        page_size=pagination.page_size,
     )
 
 
@@ -102,15 +105,16 @@ async def list_deals(
 async def list_intakes(
     user_id: CurrentUserId,
     db: DBSession,
-    page: int = Query(default=1, ge=1),
-    page_size: int = Query(default=20, ge=1, le=100),
+    pagination: Annotated[PaginationParams, Depends()],
 ) -> PaginatedResponse[IntakeResponse]:
-    intakes, total = await DealsService(db=db).list_intakes(user_id, page=page, page_size=page_size)
+    intakes, total = await DealsService(db=db).list_intakes(
+        user_id, page=pagination.page, page_size=pagination.page_size
+    )
     return PaginatedResponse.ok(
         [IntakeResponse.model_validate(i) for i in intakes],
         total=total,
-        page=page,
-        page_size=page_size,
+        page=pagination.page,
+        page_size=pagination.page_size,
     )
 
 
