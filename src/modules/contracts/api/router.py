@@ -33,6 +33,7 @@ from src.shared.domain.template_blocks import (
     template_block_labels,
     template_preview,
 )
+from src.shared.pagination.models import PaginationParams
 from src.shared.responses.response import ApiResponse, PaginatedResponse
 
 router = APIRouter()
@@ -52,22 +53,25 @@ class ContractPreviewResponse(BaseModel):
 async def list_contracts(
     user_id: CurrentUserId,
     db: DBSession,
+    pagination: Annotated[PaginationParams, Depends()],
     status: ContractStatus | None = Query(
         default=None,
         description="Filter by status: draft, pending_signatures, active, completed, terminated, expired, archived",
     ),
     deal_id: uuid.UUID | None = Query(default=None, description="Filter by deal"),
-    page: int = Query(default=1, ge=1),
-    page_size: int = Query(default=20, ge=1, le=100),
 ) -> PaginatedResponse[ContractResponse]:
     contracts, total = await ContractsService(db=db).list_all(
-        user_id, status=status, deal_id=deal_id, page=page, page_size=page_size
+        user_id,
+        status=status,
+        deal_id=deal_id,
+        page=pagination.page,
+        page_size=pagination.page_size,
     )
     return PaginatedResponse.ok(
         [ContractResponse.model_validate(c) for c in contracts],
         total=total,
-        page=page,
-        page_size=page_size,
+        page=pagination.page,
+        page_size=pagination.page_size,
     )
 
 

@@ -19,6 +19,7 @@ from src.modules.invoices.schemas.request import (
 )
 from src.modules.invoices.schemas.response import InvoiceResponse, PaymentRecordResponse
 from src.shared.dependencies.auth import CurrentUserId
+from src.shared.pagination.models import PaginationParams
 from src.shared.responses.response import ApiResponse, PaginatedResponse
 
 router = APIRouter()
@@ -44,6 +45,7 @@ async def create_invoice(
 async def list_invoices(
     user_id: CurrentUserId,
     db: DBSession,
+    pagination: Annotated[PaginationParams, Depends()],
     status: InvoiceStatus | None = Query(
         default=None,
         description="Filter by status: draft, sent, partially_paid, paid, overdue, void",
@@ -63,8 +65,6 @@ async def list_invoices(
         default="issue_date"
     ),
     sort_order: Literal["asc", "desc"] = Query(default="desc"),
-    page: int = Query(default=1, ge=1),
-    page_size: int = Query(default=20, ge=1, le=100),
 ) -> PaginatedResponse[InvoiceResponse]:
     invoices, total = await InvoicesService(db=db).list_all(
         user_id,
@@ -77,14 +77,14 @@ async def list_invoices(
         overdue_only=overdue_only,
         sort_by=sort_by,
         sort_order=sort_order,
-        page=page,
-        page_size=page_size,
+        page=pagination.page,
+        page_size=pagination.page_size,
     )
     return PaginatedResponse.ok(
         [InvoiceResponse.model_validate(i) for i in invoices],
         total=total,
-        page=page,
-        page_size=page_size,
+        page=pagination.page,
+        page_size=pagination.page_size,
     )
 
 
