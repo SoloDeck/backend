@@ -122,177 +122,16 @@ jobs:
   # -------------------------------------------------------------------------
   # Phase 4: Deploy
   # -------------------------------------------------------------------------
-  deploy-staging:
-    name: Deploy / Staging
-    runs-on: [self-hosted, staging]
+  deploy-production:
+    name: Deploy / Production
+    runs-on: [self-hosted, production]
     needs: build-image
-    environment: staging
+    environment: production
     permissions:
       contents: read
       # Without packages:read the job's GITHUB_TOKEN can log in to GHCR but
       # cannot pull the private images, and `docker compose pull` fails with a
-      # bare "denied".
-      packages: read
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-      - name: Login to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Set registry name
-        shell: powershell
-        run: |
-          $repoLower = "${{ github.repository }}".ToLower()
-          "REGISTRY=ghcr.io/$repoLower" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-
-      - name: Write staging .env
-        shell: powershell
-        run: |
-          @"
-          APP_ENV=staging
-          DATABASE_URL=${{ secrets.DATABASE_URL }}
-          POSTGRES_USER=${{ vars.POSTGRES_USER }}
-          POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}
-          POSTGRES_DB=${{ vars.POSTGRES_DB }}
-          REDIS_URL=${{ secrets.REDIS_URL }}
-          CELERY_BROKER_URL=${{ secrets.REDIS_URL }}
-          CELERY_RESULT_BACKEND=${{ secrets.REDIS_URL }}
-          SECRET_KEY=${{ secrets.SECRET_KEY }}
-          JWT_SECRET_KEY=${{ secrets.JWT_SECRET_KEY }}
-          OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}
-          GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}
-          GROQ_API_KEY=${{ secrets.GROQ_API_KEY }}
-          OLLAMA_BASE_URL=http://ollama:11434
-          OLLAMA_MODEL=qwen3:4b
-          OLLAMA_TIMEOUT=120
-          GOOGLE_WEB_CLIENT_ID=${{ vars.GOOGLE_WEB_CLIENT_ID }}
-          GOOGLE_ANDROID_CLIENT_ID=${{ vars.GOOGLE_ANDROID_CLIENT_ID }}
-          GOOGLE_IOS_CLIENT_ID=${{ vars.GOOGLE_IOS_CLIENT_ID }}
-          STRIPE_SECRET_KEY=${{ secrets.STRIPE_SECRET_KEY }}
-          STRIPE_WEBHOOK_SECRET=${{ secrets.STRIPE_WEBHOOK_SECRET }}
-          CORS_ORIGINS=${{ vars.CORS_ORIGINS }}
-          API_PORT=${{ vars.API_PORT }}
-          FRONTEND_URL=${{ vars.FRONTEND_URL }}
-          SMTP_HOST=${{ vars.SMTP_HOST }}
-          SMTP_PORT=${{ vars.SMTP_PORT }}
-          SMTP_USER=${{ vars.SMTP_USER }}
-          SMTP_PASSWORD=${{ secrets.SMTP_PASSWORD }}
-          SMTP_FROM_EMAIL=${{ vars.SMTP_FROM_EMAIL }}
-          SMTP_FROM_NAME=${{ vars.SMTP_FROM_NAME }}
-          SMTP_TLS=${{ vars.SMTP_TLS }}
-          SMTP_STARTTLS=${{ vars.SMTP_STARTTLS }}
-          # STORAGE_ENDPOINT phải luôn là http://minio:9000 — tên service trong
-          # compose.deploy.yml. Bỏ var này là app mất kho file mà deploy vẫn báo xanh.
-          STORAGE_ENDPOINT=${{ vars.STORAGE_ENDPOINT }}
-          STORAGE_BUCKET=${{ vars.STORAGE_BUCKET }}
-          STORAGE_ACCESS_KEY=${{ secrets.STORAGE_ACCESS_KEY }}
-          STORAGE_SECRET_KEY=${{ secrets.STORAGE_SECRET_KEY }}
-          STORAGE_REGION=${{ vars.STORAGE_REGION }}
-          ZALO_MODE=${{ vars.ZALO_MODE }}
-          ZALO_APP_ID=${{ vars.ZALO_APP_ID }}
-          ZALO_APP_SECRET=${{ secrets.ZALO_APP_SECRET }}
-          ZALO_OAUTH_REDIRECT_URI=${{ vars.ZALO_OAUTH_REDIRECT_URI }}
-          ZALO_WEBHOOK_SECRET=${{ secrets.ZALO_WEBHOOK_SECRET }}
-          # MoMo trên staging CỐ Ý không khai — để rơi về bộ mã sandbox công khai đã
-          # ghi sẵn trong src/config/settings.py.
-          #
-          # 20/08/2026: staging từng khai mã merchant thật trỏ vào cổng payment.momo.vn,
-          # và MoMo từ chối MỌI giao dịch với mã 13 "cấu hình doanh nghiệp không chính
-          # xác hoặc tài khoản không hoạt động" — tài khoản merchant đó chưa dùng được.
-          # MoMo không báo sai chữ ký, tức khoá và chữ ký phía mình vẫn đúng; lỗi nằm
-          # hoàn toàn ở phía tài khoản merchant.
-          #
-          # Bỏ khai ở ĐÂY thay vì sửa Environment variables, vì chỉ admin repo mới đụng
-          # được Environments. Giá trị cũ vẫn nằm nguyên trên GitHub, không mất gì.
-          #
-          # MUỐN QUAY LẠI MÃ THẬT: khôi phục 6 dòng MOMO_* mà commit này đã xoá. Sửa
-          # settings.py là VÔ ÍCH — biến môi trường luôn đè lên mặc định trong code.
-          #
-          # Hai dòng dưới PHẢI giữ: đó là địa chỉ server mình để MoMo gọi ngược về,
-          # không liên quan gì tới chuyện cổng thật hay cổng thử.
-          MOMO_IPN_URL=${{ vars.MOMO_IPN_URL }}
-          MOMO_REDIRECT_URL=${{ vars.MOMO_REDIRECT_URL }}
-          SEPAY_WEBHOOK_API_KEY=${{ secrets.SEPAY_WEBHOOK_API_KEY }}
-          SEPAY_ACCOUNT_NUMBER=${{ vars.SEPAY_ACCOUNT_NUMBER }}
-          SEPAY_BANK_CODE=${{ vars.SEPAY_BANK_CODE }}
-          SEPAY_CALLBACK_URL=${{ vars.SEPAY_CALLBACK_URL }}
-          "@ | Out-File -FilePath .env -Encoding utf8
-
-      - name: Pull & deploy
-        shell: powershell
-        run: |
-          $env:API_PORT = "${{ vars.API_PORT }}"
-          # compose.deploy.yml interpolates these into the minio service. They
-          # are also in .env (which compose auto-loads), but exporting them here
-          # matches how API_PORT is handled and keeps `up` from dying on a
-          # required-variable error if .env is ever not picked up.
-          $env:STORAGE_ACCESS_KEY = "${{ secrets.STORAGE_ACCESS_KEY }}"
-          $env:STORAGE_SECRET_KEY = "${{ secrets.STORAGE_SECRET_KEY }}"
-          $project = "solodesk-backend-staging"
-
-          # PowerShell does not abort on a failed native command, and only the
-          # LAST exit code reaches Actions. Without these explicit checks a
-          # denied `pull` is followed by `up -d` silently starting whatever
-          # image is already on the host — the deploy then reports success
-          # while serving the previous build.
-          docker compose -p $project -f compose.deploy.yml pull api worker beat
-          if ($LASTEXITCODE -ne 0) {
-            throw "docker compose pull failed (exit $LASTEXITCODE) - aborting rather than deploying a stale image"
-          }
-
-          # --remove-orphans clears containers left by earlier compose files, so a
-          # stale `db` container can't keep holding the postgres data volume.
-          # postgres/redis/migrate start automatically as declared dependencies.
-          docker compose -p $project -f compose.deploy.yml up -d --remove-orphans api worker beat
-          if ($LASTEXITCODE -ne 0) { throw "docker compose up failed (exit $LASTEXITCODE)" }
-
-          # Record what is actually running, so a future image/config skew is
-          # visible in the deploy log instead of only in production behaviour.
-          docker compose -p $project -f compose.deploy.yml images
-
-      - name: Verify API is healthy
-        shell: powershell
-        run: |
-          $cid = (docker compose -p solodesk-backend-staging -f compose.deploy.yml ps -q api | Select-Object -First 1)
-          if (-not $cid) {
-            Write-Host "::error::api container not found after deploy"
-            exit 1
-          }
-          $cid = $cid.Trim()
-          $healthy = $false
-          $status = "unknown"
-          foreach ($i in 1..36) {         # 36 x 5s = up to 3 minutes
-            $status = (docker inspect -f '{{.State.Health.Status}}' $cid).Trim()
-            Write-Host "[$i] api health: $status"
-            if ($status -eq 'healthy')   { $healthy = $true; break }
-            if ($status -eq 'unhealthy') { break }
-            Start-Sleep -Seconds 5
-          }
-          if (-not $healthy) {
-            Write-Host "::error::API did not become healthy within 3 minutes (last status: $status)"
-            docker logs --tail 120 $cid
-            exit 1
-          }
-          Write-Host "API is healthy."
-
-      - name: Remove .env
-        if: always()
-        shell: powershell
-        run: Remove-Item -Force .env -ErrorAction SilentlyContinue
-
-  deploy-production:
-    name: Deploy / Production
-    runs-on: [self-hosted, production]
-    needs: deploy-staging
-    environment: production
-    permissions:
-      contents: read
-      # See deploy-staging — without this the image pull is denied and the
-      # previous image keeps running.
+      # bare "denied" — the previous image then keeps running.
       packages: read
     steps:
       - name: Checkout repository
@@ -376,13 +215,19 @@ jobs:
         shell: powershell
         run: |
           $env:API_PORT = "${{ vars.API_PORT }}"
-          # See the staging job — same reason.
+          # compose.deploy.yml interpolates these into the minio service. They
+          # are also in .env (which compose auto-loads), but exporting them here
+          # matches how API_PORT is handled and keeps `up` from dying on a
+          # required-variable error if .env is ever not picked up.
           $env:STORAGE_ACCESS_KEY = "${{ secrets.STORAGE_ACCESS_KEY }}"
           $env:STORAGE_SECRET_KEY = "${{ secrets.STORAGE_SECRET_KEY }}"
           $project = "solodesk-backend-production"
 
-          # See deploy-staging: a failed pull must abort the deploy, otherwise
-          # `up -d` quietly restarts the previous image and reports success.
+          # PowerShell does not abort on a failed native command, and only the
+          # LAST exit code reaches Actions. Without this explicit check a denied
+          # `pull` is followed by `up -d` silently restarting whatever image is
+          # already on the host — the deploy then reports success while serving
+          # the previous build.
           docker compose -p $project -f compose.deploy.yml pull api worker beat
           if ($LASTEXITCODE -ne 0) {
             throw "docker compose pull failed (exit $LASTEXITCODE) - aborting rather than deploying a stale image"

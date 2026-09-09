@@ -93,7 +93,7 @@ class TestRedirectUriDungDuocKhong:
 
     def test_domain_that_https_thi_dung_duoc(self) -> None:
         assert (
-            unusable_redirect_reason("https://api-staging.solodesk.space/api/v1/zalo/callback")
+            unusable_redirect_reason("https://api.solodesk.space/api/v1/zalo/callback")
             is None
         )
 

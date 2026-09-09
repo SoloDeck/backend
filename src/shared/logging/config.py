@@ -1,7 +1,6 @@
-"""Structured logging setup — one codebase, three environments.
+"""Structured logging setup — one codebase, two environments.
 
 * development → human-friendly colored console, DEBUG default.
-* staging     → JSON to stdout, INFO default (production-like).
 * production  → JSON to stdout, INFO default, sampling enabled, never DEBUG.
 
 Output goes to stdout only (12-factor). Log collection is the deploy
@@ -23,7 +22,7 @@ from src.shared.logging.redaction import redact_processor
 from src.shared.logging.sampling import RateLimiterProcessor
 
 _VALID_LEVELS = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
-_DEFAULT_LEVEL = {"development": "DEBUG", "staging": "INFO", "production": "INFO"}
+_DEFAULT_LEVEL = {"development": "DEBUG", "production": "INFO"}
 
 _listener: logging.handlers.QueueListener | None = None
 

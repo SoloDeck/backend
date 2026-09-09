@@ -2,7 +2,7 @@
 """Drop all tables, re-run migrations, and re-seed.
 
 DESTRUCTIVE — development / CI only.
-Refuses to run in production or staging.
+Refuses to run in production.
 
 Usage:
     python scripts/reset_db.py [--no-seed]
@@ -32,7 +32,7 @@ structlog.configure(
 )
 logger = structlog.get_logger(__name__)
 
-_BLOCKED_ENVS = ("production", "staging")
+_BLOCKED_ENVS = ("production",)
 
 
 async def _drop_all(db_url: str) -> None:
@@ -71,7 +71,7 @@ def main(no_seed: bool = False) -> None:
         logger.error(
             "reset_db.blocked",
             env=settings.app_env,
-            reason="reset_db refuses to run in production/staging",
+            reason="reset_db refuses to run in production",
         )
         sys.exit(1)
 

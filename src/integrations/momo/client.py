@@ -424,9 +424,10 @@ class MomoClient(_MomoSignedClient):
         query, thế là hệ thống đi hỏi SANDBOX về một đơn của production và luôn nhận
         "không tìm thấy" — im lặng, không lỗi, và kết luận sai là khách chưa trả tiền.
 
-        Nặng hơn nữa: job `deploy-staging` CỐ Ý không khai biến `MOMO_*` nào (xem
-        .github/workflows/ci.yml), nên một biến mới thêm vào sẽ không bao giờ tới được
-        staging. Suy ra từ `endpoint` thì hai địa chỉ không có cách nào lệch nhau.
+        Nặng hơn nữa: mỗi biến `MOMO_*` mới đều phải được khai thêm trong job deploy
+        (xem .github/workflows/ci.yml), nên một biến bị quên sẽ không bao giờ tới được
+        môi trường chạy thật. Suy ra từ `endpoint` thì hai địa chỉ không có cách nào
+        lệch nhau.
         """
         base, sep, _ = self.endpoint.rpartition("/")
         if not sep:

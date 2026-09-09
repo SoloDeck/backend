@@ -6,7 +6,7 @@
 #
 # Networking: no `networks:` block anywhere. Every service lands on the
 # project's implicit `default` network (`<project>_default`), so this stack is
-# isolated from the staging/production stacks on the same host. Do NOT add a
+# isolated from the production stack on the same host. Do NOT add a
 # network with a hardcoded `name:` — that removes the project prefix, puts
 # unrelated stacks on one bridge, and is what previously left `api` unable to
 # resolve `postgres`.

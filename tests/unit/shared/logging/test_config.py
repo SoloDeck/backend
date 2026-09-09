@@ -13,8 +13,8 @@ class TestResolveLogLevel:
     def test_development_defaults_to_debug(self) -> None:
         assert resolve_log_level("development", override=None) == logging.DEBUG
 
-    def test_staging_defaults_to_info(self) -> None:
-        assert resolve_log_level("staging", override=None) == logging.INFO
+    def test_unknown_env_defaults_to_info(self) -> None:
+        assert resolve_log_level("whatever", override=None) == logging.INFO
 
     def test_production_defaults_to_info(self) -> None:
         assert resolve_log_level("production", override=None) == logging.INFO
@@ -26,7 +26,7 @@ class TestResolveLogLevel:
         assert resolve_log_level("development", override="error") == logging.ERROR
 
     def test_invalid_override_falls_back_to_env_default(self) -> None:
-        assert resolve_log_level("staging", override="LOUD") == logging.INFO
+        assert resolve_log_level("production", override="LOUD") == logging.INFO
 
     def test_production_never_allows_debug_even_with_override(self) -> None:
         assert resolve_log_level("production", override="DEBUG") == logging.INFO
@@ -36,8 +36,8 @@ class TestResolveLogFormat:
     def test_development_defaults_to_console(self) -> None:
         assert resolve_log_format("development", override=None) == "console"
 
-    def test_staging_defaults_to_json(self) -> None:
-        assert resolve_log_format("staging", override=None) == "json"
+    def test_unknown_env_defaults_to_json(self) -> None:
+        assert resolve_log_format("whatever", override=None) == "json"
 
     def test_production_defaults_to_json(self) -> None:
         assert resolve_log_format("production", override=None) == "json"
@@ -46,7 +46,7 @@ class TestResolveLogFormat:
         assert resolve_log_format("development", override="json") == "json"
 
     def test_invalid_override_falls_back(self) -> None:
-        assert resolve_log_format("staging", override="xml") == "json"
+        assert resolve_log_format("production", override="xml") == "json"
 
 
 class TestResolveLogRequestBody:

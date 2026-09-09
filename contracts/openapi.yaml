@@ -50,8 +50,6 @@ info:
 servers:
   - url: https://api.solodesk.space/api/v1
     description: Production
-  - url: https://api-staging.solodesk.space/api/v1
-    description: Staging
   - url: http://localhost:8000/api/v1
     description: Local development
 
@@ -4876,7 +4874,7 @@ components:
       properties:
         app_env:
           type: string
-          enum: [development, staging, production]
+          enum: [development, production]
         google_web_client_id:
           type: string
 

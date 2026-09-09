@@ -1,16 +1,12 @@
-# Hướng dẫn cấu hình Deploy Backend (Staging & Production)
+# Hướng dẫn cấu hình Deploy Backend (Production)
 
 Tài liệu này hướng dẫn bạn cách thiết lập các biến môi trường trên GitHub Web UI cho Backend FastAPI.
 
 ## 1. Cấu hình Biến (Variables)
-Trong **Settings > Environments**, chọn từng môi trường để thêm các biến sau:
-
-### Môi trường `staging`
-- `API_PORT`: `8001` (Cổng chạy API cho staging)
-- `CORS_ORIGINS`: `https://app-staging.solodesk.space,http://localhost:5173` (Thêm localhost để dev FE tại máy cá nhân có thể gọi vào API Staging)
+Trong **Settings > Environments**, chọn môi trường `production` để thêm các biến sau:
 
 ### Các biến bổ trợ (Third-party)
-Cần thiết lập cho cả 2 môi trường để các tính năng AI, Login Google và Thanh toán hoạt động:
+Cần thiết lập để các tính năng AI, Login Google và Thanh toán hoạt động:
 
 | Loại | Tên Biến | Ghi chú |
 | :--- | :--- | :--- |
@@ -19,7 +15,7 @@ Cần thiết lập cho cả 2 môi trường để các tính năng AI, Login G
 | **Variables** | `GOOGLE_REDIRECT_URI` | Ví dụ: `https://api.solodesk.space/api/v1/auth/google/callback` |
 | **Secrets** | `GROQ_API_KEY` | **Bắt buộc** — mọi tính năng AI (chấm điểm deal, soạn báo giá, soạn hợp đồng, viết lời nhắc) đều chạy qua Groq. Thiếu là AI chết hẳn. |
 | **Secrets** | `OPENAI_API_KEY` | Tuỳ chọn, hiện chưa module AI nào dùng tới |
-| **Secrets** | `STRIPE_SECRET_KEY` | Mã từ Stripe (sk_test_... cho staging) |
+| **Secrets** | `STRIPE_SECRET_KEY` | Mã từ Stripe |
 | **Secrets** | `STRIPE_WEBHOOK_SECRET` | Mã xác thực Webhook của Stripe |
 
 ### Kho lưu file đính kèm (Object storage) — BẮT BUỘC
@@ -57,12 +53,12 @@ Tương tự như Web, bạn nên bật tính năng này cho Backend để kiể
 4. Nhấn **Save**.
 
 ## 3. Các bước kiểm tra
-1. Sau khi deploy xong Staging, hãy thử mở Frontend Staging và thực hiện đăng nhập/thao tác.
-2. Nếu Frontend báo lỗi "CORS error", hãy kiểm tra lại biến `CORS_ORIGINS` trên GitHub xem đã đúng domain staging chưa.
+1. Sau khi deploy xong, hãy thử mở Frontend và thực hiện đăng nhập/thao tác.
+2. Nếu Frontend báo lỗi "CORS error", hãy kiểm tra lại biến `CORS_ORIGINS` trên GitHub xem đã đúng domain chưa.
 3. Kiểm tra logs container trên server: `docker compose logs -f api` để xem API đang chạy ở cổng nào.
 4. **Kiểm tra kho file** — tuyệt đối đừng chỉ tin deploy báo xanh, vì `/health/ready` không hề chạm tới storage:
    ```bash
-   docker compose -p solodesk-backend-staging -f compose.deploy.yml logs api | grep -i storage
+   docker compose -p solodesk-backend-production -f compose.deploy.yml logs api | grep -i storage
    ```
    Thấy `storage.disabled_in_deployed_env` là cấu hình còn thiếu. Sau đó thử tạo một deal
    có đính kèm PDF trên giao diện, mở lại Detail phải thấy file.

@@ -22,7 +22,7 @@ class Settings(BaseSettings):
     # -----------------------------------------------------------------------
     # Application
     # -----------------------------------------------------------------------
-    app_env: Literal["development", "staging", "production"] = "development"
+    app_env: Literal["development", "production"] = "development"
     debug: bool = False
     secret_key: str = "change-me"
 
