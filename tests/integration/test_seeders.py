@@ -166,7 +166,7 @@ class TestRunAll:
 
     async def test_skips_admin_outside_development(self, db_session: AsyncSession) -> None:
         with patch("src.infrastructure.database.seeders.run.settings") as mock_settings:
-            mock_settings.app_env = "staging"
+            mock_settings.app_env = "production"
             await run_all(db_session)
         admin = await _user_by_email(db_session, ADMIN_EMAIL)
         assert admin is None

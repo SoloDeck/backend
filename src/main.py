@@ -168,7 +168,6 @@ API_V1 = "/api/v1"
 # NOT already end in `/api/v1` — otherwise Swagger would post to `/api/v1/api/v1/...`.
 _OPENAPI_SERVERS: list[dict[str, str]] = [
     {"url": "http://localhost:8000", "description": "Local development"},
-    {"url": "https://api-staging.solodesk.space", "description": "Staging"},
     {"url": "https://api.solodesk.space", "description": "Production"},
 ]
 

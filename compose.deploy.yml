@@ -1,5 +1,5 @@
 # ===========================================================================
-# SoloDesk — Deploy stack (staging & production)
+# SoloDesk — Deploy stack (production)
 # ===========================================================================
 # Production-shaped: image-only, NO bind mounts, NO --reload, NO dev tooling
 # (pgadmin/mailpit/test). The running code comes from the pushed image, not the
@@ -9,12 +9,11 @@
 # tooling, it is where every file a client attaches to a deal LIVES. Without it
 # STORAGE_ENDPOINT stayed empty, ObjectStorage.enabled was false, and every
 # upload returned 409 while the deploy still reported healthy — attachments were
-# silently broken on staging while working locally.
+# silently broken on the deployed stack while working locally.
 #
-# Staging and production differ only by the generated .env (secrets, APP_ENV,
-# ports) and the compose project name, so a single file serves both:
+# Everything environment-specific (secrets, APP_ENV, ports) comes from the
+# generated .env, so this file is deployed as-is:
 #
-#   docker compose -p solodesk-backend-staging    -f compose.deploy.yml up -d
 #   docker compose -p solodesk-backend-production -f compose.deploy.yml up -d
 #
 # Datastores are declared HERE, not in compose.yml. Every service in this file
@@ -91,9 +90,9 @@ services:
   # signed contracts, transfer receipts). A real datastore, same tier as
   # postgres/redis, NOT dev tooling.
   #
-  # Unlike compose.yml, ports are NOT published. This host runs staging and
-  # production side by side: publishing 9000/9001 would make the second project
-  # fail to bind, and would expose every client's uploaded file to the internet.
+  # Unlike compose.yml, ports are NOT published. Publishing 9000/9001 would
+  # clash with any other project on this host and would expose every client's
+  # uploaded file to the internet.
   # api reaches it as `minio:9000` on the project network, same as postgres.
   #
   # Credentials come from the same .env keys the app reads, so there is one

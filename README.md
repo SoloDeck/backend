@@ -361,7 +361,7 @@ Servers > SoloDesk Local > Databases > solodesk > Schemas > public > Tables
 make reset-db
 ```
 
-This refuses to run when `APP_ENV=production` or `APP_ENV=staging`.
+This refuses to run when `APP_ENV=production`.
 
 ---
 

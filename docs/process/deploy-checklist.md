@@ -1,7 +1,7 @@
-# Deploy Checklist — Staging & Production
+# Deploy Checklist — Production
 
-Runbook for the self-hosted deploy on the shared Windows host. Written after an
-incident where **both** staging and production ran for hours with no database
+Runbook for the self-hosted deploy on the Windows host. Written after an
+incident where production ran for hours with no database
 connection at all: `DATABASE_URL` pointed at a hostname that did not exist, and
 `/health` returned 200 because it touched nothing, so CI reported every deploy
 as successful while every business endpoint returned 500.
@@ -19,7 +19,6 @@ compose ls` lists two config files for a project, or a container named
 `<project>-db-1` exists.
 
 ```powershell
-docker compose -p solodesk-backend-staging    down --remove-orphans
 docker compose -p solodesk-backend-production down --remove-orphans
 ```
 
@@ -29,13 +28,13 @@ data in it) survives. The next deploy recreates everything from
 same volume.
 
 - [ ] Legacy `-db-1` containers gone (`docker ps -a`)
-- [ ] `docker volume ls` still lists `solodesk-backend-{staging,production}_postgres_data`
+- [ ] `docker volume ls` still lists `solodesk-backend-production_postgres_data`
 
 ---
 
 ## 1. Environment configuration (GitHub → Settings → Environments)
 
-Per environment (`staging`, `production`):
+For the `production` environment:
 
 | Kind | Name | Value |
 |---|---|---|
@@ -44,11 +43,11 @@ Per environment (`staging`, `production`):
 | Secret | `POSTGRES_PASSWORD` | same `<pass>` as in `DATABASE_URL` |
 | Variable | `POSTGRES_USER` | same `<user>` as in `DATABASE_URL` |
 | Variable | `POSTGRES_DB` | same `<db>` as in `DATABASE_URL` |
-| Variable | `API_PORT` | `8001` staging · `8000` production |
+| Variable | `API_PORT` | `8000` |
 | Variable | `CORS_ORIGINS` | frontend origin(s), comma-separated |
 
 - [ ] Host in `DATABASE_URL` is **`postgres`** — the compose service name, not
-      `localhost`, not `db`, not a placeholder like `staging-db-host`
+      `localhost`, not `db`, not a placeholder hostname
 - [ ] Host in `REDIS_URL` is **`redis`**
 - [ ] `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` match the
       credentials embedded in `DATABASE_URL` exactly — Postgres applies them
@@ -63,7 +62,7 @@ Per environment (`staging`, `production`):
 ## 2. Deploy
 
 Triggered by push to `main`. The pipeline runs unit tests → integration tests →
-build images → deploy staging → deploy production.
+build images → deploy production.
 
 - [ ] `migrate` exited 0 (`docker compose -p <project> -f compose.deploy.yml ps -a migrate`)
 - [ ] "Verify API is healthy" step passed — it now probes `/health/ready`,
@@ -73,8 +72,7 @@ build images → deploy staging → deploy production.
 
 ## 3. Post-deploy verification — run every time
 
-Substitute `<project>` = `solodesk-backend-staging` or
-`solodesk-backend-production`, and `<port>` = `8001` or `8000`.
+Substitute `<project>` = `solodesk-backend-production` and `<port>` = `8000`.
 
 ### 3.1 Dependencies are actually reachable
 
@@ -107,14 +105,14 @@ curl.exe -s -o NUL -w "%{http_code}`n" http://127.0.0.1:<port>/api/v1/public/fre
 - [ ] **200**, not 500 — this is the check that would have caught the incident.
       `/health` alone proves only that the process is running.
 
-### 3.4 Isolation between environments
+### 3.4 Network isolation
 
 ```powershell
 docker inspect -f '{{range $k,$v := .NetworkSettings.Networks}}{{$k}} {{end}}' <project>-api-1
 ```
 
 - [ ] api, worker, beat, postgres and redis are all on `<project>_default`
-- [ ] Staging and production containers never share a network
+- [ ] Production containers never share a network with another project
 - [ ] `docker ps` shows no published port for any `postgres` or `redis`
       container — datastores must not be reachable from outside the host
 
@@ -146,10 +144,9 @@ Until images are tagged by commit SHA, recovery means reverting the commit on
 
 - Images are not tagged by commit SHA — no rollback, and no way to tell which
   commit is serving traffic.
-- `MOMO_*` real merchant credentials (`MOMOIM8G20260729`) were set on both the
-  `staging` and `production` GitHub Environments on 2026-08-19. `Deploy /
-  Staging` picked them up automatically (succeeded 2026-08-19T18:37Z, after
-  the secrets were written). `Deploy / Production` did NOT, because it
+- `MOMO_*` real merchant credentials (`MOMOIM8G20260729`) were set on the
+  `production` GitHub Environment on 2026-08-19. `Deploy / Production` did not
+  pick them up, because it
   requires a manual approval (`environment: production`, required reviewer)
   that had gone unaddressed: every `main`-branch run back to at least
   2026-08-03 was stuck at `status: waiting` on that gate — meaning production

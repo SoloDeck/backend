@@ -152,7 +152,7 @@ class TestRealThieuCauHinh:
         monkeypatch.setattr(
             settings,
             "zalo_oauth_redirect_uri",
-            "https://api-staging.solodesk.space/api/v1/zalo/callback",
+            "https://api.solodesk.space/api/v1/zalo/callback",
         )
 
         resp = await client.get("/api/v1/zalo/connect-url", headers=headers)
@@ -162,7 +162,7 @@ class TestRealThieuCauHinh:
         assert url.startswith("https://oauth.zaloapp.com/v4/oa/permission?")
         query = parse_qs(urlparse(url).query)
         # redirect_uri phải có mặt — thiếu nó chính là nguyên nhân sinh ra -14003.
-        assert query["redirect_uri"] == ["https://api-staging.solodesk.space/api/v1/zalo/callback"]
+        assert query["redirect_uri"] == ["https://api.solodesk.space/api/v1/zalo/callback"]
         assert query["app_id"] == ["123"]
 
 
