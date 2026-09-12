@@ -16,7 +16,7 @@ SMTP hay mạng.  #Huynh
 """
 
 from dataclasses import dataclass
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from html import escape
 
 import structlog
@@ -280,17 +280,25 @@ async def resolve_amount_and_memo(
         return (remaining if remaining > 0 else None), memo
 
     if target_type == "deal":
-        from src.modules.analytics.application.milestone_money import totals
+        from src.modules.analytics.application.milestone_money import MilestoneMoney, totals
         from src.modules.analytics.infrastructure.repository import AnalyticsRepository
 
         rows = await AnalyticsRepository(db).milestone_rows(owner_id)  # type: ignore[arg-type]
-        for deal in rows:
-            if deal["deal_id"] == target_id:
-                from src.modules.analytics.application.service import AnalyticsService
-
-                money = totals(AnalyticsService._milestones_of(deal))
-                return (money.outstanding if money.outstanding > 0 else None), label
-        return None, label
+        # `milestone_rows` trả MỖI TASK THU TIỀN MỘT DÒNG, nên phải gom HẾT các mốc của deal
+        # rồi mới cộng. Dừng lại ở mốc đầu tiên khớp deal là QR đòi thiếu tiền.  #Huynh
+        of_deal = [
+            MilestoneMoney(
+                label=row["label"],
+                amount=Decimal(row["amount"] or 0),
+                collected=row["collected"],
+            )
+            for row in rows
+            if row["deal_id"] == target_id
+        ]
+        if not of_deal:
+            return None, label
+        money = totals(of_deal)
+        return (money.outstanding if money.outstanding > 0 else None), label
 
     return None, label
 
@@ -307,9 +315,16 @@ async def build_payment_section(
     # Tra số tiền là BEST-EFFORT. Hỏng ở đây (deal chưa có project, dữ liệu cũ, DB trục
     # trặc) thì vẫn phải gửi được thư kèm số tài khoản — khách tự điền số tiền còn hơn
     # freelancer không đòi được đồng nào vì thư không đi.  #Huynh
+    #
+    # Nhưng chỉ tha thứ cho lỗi DB/DỮ LIỆU, KHÔNG bắt `Exception`: một `except Exception`
+    # ở đúng chỗ này từng nuốt gọn một lời gọi nhầm tên hàm (`AttributeError`), khiến mọi
+    # QR nhắc theo dự án đi ra với ô số tiền trống mà không ai biết. Lỗi lập trình phải nổ
+    # thì mới có người sửa.  #Huynh
+    from sqlalchemy.exc import SQLAlchemyError
+
     try:
         amount, memo = await resolve_amount_and_memo(db, reminder, label)
-    except Exception as exc:  # noqa: BLE001
+    except (SQLAlchemyError, KeyError, ValueError, InvalidOperation) as exc:
         log.warning("reminder.payment_amount_failed", error=str(exc))
         amount, memo = None, label
 

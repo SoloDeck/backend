@@ -6,9 +6,13 @@ quét, hoặc tệ hơn là điền sai số tài khoản. Mà lỗi đó không
 chuỗi nào đó".  #Huynh
 """
 
+import uuid
 from decimal import Decimal
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
 import pytest
+from sqlalchemy.exc import SQLAlchemyError
 
 from src.modules.reminders.application.attachments import (
     ALLOWED_IMAGE_TYPES,
@@ -19,7 +23,9 @@ from src.modules.reminders.application.attachments import (
 from src.modules.reminders.application.payment_block import (
     PaymentInfo,
     build_payment_block,
+    build_payment_section,
     crc16_ccitt,
+    resolve_amount_and_memo,
     vietqr_payload,
 )
 from src.shared.exceptions.domain import ValidationError
@@ -158,3 +164,138 @@ class TestAnhChenVaoThu:
     def test_anh_tai_khong_ve_thi_khong_chen_the_rong(self) -> None:
         images = parse_attachments([{"key": "a.png"}])
         assert images_html(images, {}) == ""
+
+
+# ---------------------------------------------------------------------------
+# Số tiền in vào mã QR khi lời nhắc trỏ vào một DỰ ÁN
+# ---------------------------------------------------------------------------
+
+_DEAL = uuid.uuid4()
+_DEAL_KHAC = uuid.uuid4()
+
+
+def _moc(deal_id: uuid.UUID, label: str, amount: int, collected: bool) -> dict:
+    """Một dòng y như `AnalyticsRepository.milestone_rows` trả về: MỖI TASK MỘT DÒNG."""
+    return {
+        "deal_id": deal_id,
+        "client_id": uuid.uuid4(),
+        "client_name": "Công ty ABC",
+        "label": label,
+        "amount": Decimal(amount),
+        "collected": collected,
+    }
+
+
+def _nhac_du_an() -> SimpleNamespace:
+    return SimpleNamespace(
+        target_type="deal",
+        target_id=_DEAL,
+        owner_user_id=uuid.uuid4(),
+        reminder_type="payment_due",
+    )
+
+
+def _gia_lap_moc(rows: list[dict]):
+    """Thay kho dữ liệu mốc bằng danh sách dựng sẵn — bài này không cần DB."""
+    return patch(
+        "src.modules.analytics.infrastructure.repository.AnalyticsRepository",
+        return_value=SimpleNamespace(milestone_rows=AsyncMock(return_value=rows)),
+    )
+
+
+class TestSoTienNhacTheoDuAn:
+    """Nhắc thanh toán cho một DỰ ÁN: QR phải mang TỔNG các mốc chưa thu."""
+
+    async def test_cong_het_cac_moc_chua_thu_chu_khong_dung_o_moc_dau(self) -> None:
+        # Bản cũ gọi một hàm không tồn tại rồi `return` ngay ở dòng đầu khớp deal: vừa nổ
+        # AttributeError (QR trống số tiền), vừa bỏ sót các mốc sau.  #Huynh
+        rows = [
+            _moc(_DEAL, "Đợt 1", 2_000_000, collected=True),
+            _moc(_DEAL, "Đợt 2", 5_000_000, collected=False),
+            _moc(_DEAL, "Đợt 3", 3_000_000, collected=False),
+        ]
+        with _gia_lap_moc(rows):
+            amount, memo = await resolve_amount_and_memo(object(), _nhac_du_an(), "Dự án X")
+
+        assert amount == Decimal(8_000_000)
+        assert memo == "Dự án X"
+
+    async def test_khong_tinh_nham_moc_cua_du_an_khac(self) -> None:
+        rows = [
+            _moc(_DEAL_KHAC, "Đợt 1 dự án khác", 99_000_000, collected=False),
+            _moc(_DEAL, "Đợt 1", 4_000_000, collected=False),
+        ]
+        with _gia_lap_moc(rows):
+            amount, _ = await resolve_amount_and_memo(object(), _nhac_du_an(), "Dự án X")
+
+        assert amount == Decimal(4_000_000)
+
+    async def test_thu_du_roi_thi_khong_gan_so_tien_vao_qr(self) -> None:
+        # Gắn số tiền 0 vào QR là khách quét ra ô "0 đ" — thà để khách tự nhập.
+        rows = [_moc(_DEAL, "Đợt 1", 4_000_000, collected=True)]
+        with _gia_lap_moc(rows):
+            amount, _ = await resolve_amount_and_memo(object(), _nhac_du_an(), "Dự án X")
+
+        assert amount is None
+
+    async def test_du_an_chua_co_moc_nao_thi_khong_co_so_tien(self) -> None:
+        with _gia_lap_moc([]):
+            amount, memo = await resolve_amount_and_memo(object(), _nhac_du_an(), "Dự án X")
+
+        assert amount is None
+        assert memo == "Dự án X"
+
+    async def test_so_tien_thuc_su_duoc_in_vao_ma_qr(self) -> None:
+        # Đi hết đường: tra tiền → dựng khối → chuỗi VietQR phải mang đúng số tiền.
+        owner = SimpleNamespace(
+            bank_code="970436",
+            bank_account_number="1027123456",
+            bank_account_holder="NGUYEN VAN A",
+            momo_phone_number=None,
+            bank_account_info=None,
+        )
+        rows = [
+            _moc(_DEAL, "Đợt 1", 5_000_000, collected=False),
+            _moc(_DEAL, "Đợt 2", 3_000_000, collected=False),
+        ]
+        with _gia_lap_moc(rows):
+            html, plain, _ = await build_payment_section(object(), _nhac_du_an(), owner, "Dự án X")
+
+        assert "8.000.000 ₫" in html
+        assert "8.000.000 ₫" in plain
+
+
+class TestLoiTraTienKhongBiNuotAmTham:
+    """`except Exception` ở đây từng giấu lỗi gọi nhầm tên hàm suốt nhiều lần chạy thật."""
+
+    _OWNER = SimpleNamespace(
+        bank_code="970436",
+        bank_account_number="1027123456",
+        bank_account_holder="NGUYEN VAN A",
+        momo_phone_number=None,
+        bank_account_info=None,
+    )
+
+    async def test_loi_lap_trinh_phai_no_ra_chu_khong_gui_qr_trong(self) -> None:
+        with (
+            patch(
+                "src.modules.reminders.application.payment_block.resolve_amount_and_memo",
+                AsyncMock(side_effect=AttributeError("gọi nhầm tên hàm")),
+            ),
+            pytest.raises(AttributeError),
+        ):
+            await build_payment_section(object(), _nhac_du_an(), self._OWNER, "Dự án X")
+
+    async def test_db_truc_trac_thi_thu_van_di_kem_so_tai_khoan(self) -> None:
+        # Mất số tiền chỉ là bất tiện; không gửi được thư mới là mất tiền thật.
+        with patch(
+            "src.modules.reminders.application.payment_block.resolve_amount_and_memo",
+            AsyncMock(side_effect=SQLAlchemyError("DB trục trặc")),
+        ):
+            html, plain, _ = await build_payment_section(
+                object(), _nhac_du_an(), self._OWNER, "Dự án X"
+            )
+
+        assert "1027123456" in html
+        assert "1027123456" in plain
+        assert "₫" not in html
