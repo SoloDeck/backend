@@ -39,6 +39,7 @@ class UserStub:
     phone: str | None = None
     deleted_at: datetime | None = None
     sessions_revoked_at: datetime | None = None
+    profile_slug: str | None = None
 
 
 @dataclass
@@ -212,6 +213,271 @@ class TestUpdateUser:
             await service.update_user(
                 uuid.uuid4(), AdminUpdateUserRequest(full_name="X"), admin_id=uuid.uuid4()
             )
+
+
+# ---------------------------------------------------------------------------
+# update_user — chốt admin cuối cùng (cùng chốt `suspend_user` đã có)
+# ---------------------------------------------------------------------------
+
+
+class TestUpdateUserKeepsAnAdmin:
+    async def test_blocks_demoting_the_last_admin(self) -> None:
+        user = UserStub(id=uuid.uuid4(), role="admin")
+        repo = _repo(get_user=user, count_active_admins=1)
+        service = AdminService(db=AsyncMock(), repo=repo)
+
+        with pytest.raises(BusinessRuleError, match="admin cuối cùng"):
+            await service.update_user(
+                user.id, AdminUpdateUserRequest(role="freelancer"), admin_id=uuid.uuid4()
+            )
+
+        assert user.role == "admin"
+        repo.save.assert_not_awaited()
+        repo.create_audit_log.assert_not_awaited()
+
+    async def test_blocks_suspending_the_last_admin(self) -> None:
+        user = UserStub(id=uuid.uuid4(), role="admin")
+        repo = _repo(get_user=user, count_active_admins=1)
+        service = AdminService(db=AsyncMock(), repo=repo)
+
+        with pytest.raises(BusinessRuleError, match="admin cuối cùng"):
+            await service.update_user(
+                user.id, AdminUpdateUserRequest(status="suspended"), admin_id=uuid.uuid4()
+            )
+
+        assert user.status == "active"
+        repo.save.assert_not_awaited()
+
+    async def test_blocks_deleting_the_last_admin(self) -> None:
+        user = UserStub(id=uuid.uuid4(), role="admin")
+        repo = _repo(get_user=user, count_active_admins=1)
+        service = AdminService(db=AsyncMock(), repo=repo)
+
+        with pytest.raises(BusinessRuleError, match="admin cuối cùng"):
+            await service.update_user(
+                user.id, AdminUpdateUserRequest(status="deleted"), admin_id=uuid.uuid4()
+            )
+
+        assert user.status == "active"
+        assert user.deleted_at is None
+
+    async def test_allows_demoting_an_admin_when_another_remains(self) -> None:
+        user = UserStub(id=uuid.uuid4(), role="admin")
+        repo = _repo(get_user=user, count_active_admins=2)
+        service = AdminService(db=AsyncMock(), repo=repo)
+
+        result = await service.update_user(
+            user.id, AdminUpdateUserRequest(role="freelancer"), admin_id=uuid.uuid4()
+        )
+
+        assert result.role == "freelancer"
+        repo.create_audit_log.assert_awaited_once()
+
+    async def test_promoting_a_freelancer_never_counts_admins(self) -> None:
+        user = UserStub(id=uuid.uuid4(), role="freelancer")
+        repo = _repo(get_user=user)
+        service = AdminService(db=AsyncMock(), repo=repo)
+
+        result = await service.update_user(
+            user.id, AdminUpdateUserRequest(role="admin"), admin_id=uuid.uuid4()
+        )
+
+        assert result.role == "admin"
+        repo.count_active_admins.assert_not_awaited()
+
+    async def test_renaming_an_admin_never_counts_admins(self) -> None:
+        user = UserStub(id=uuid.uuid4(), role="admin")
+        repo = _repo(get_user=user)
+        service = AdminService(db=AsyncMock(), repo=repo)
+
+        await service.update_user(
+            user.id, AdminUpdateUserRequest(full_name="Vẫn là admin"), admin_id=uuid.uuid4()
+        )
+
+        repo.count_active_admins.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
+# update_user — admin không tự sửa quyền/trạng thái của chính mình
+# ---------------------------------------------------------------------------
+
+
+class TestUpdateUserSelfAccess:
+    async def test_blocks_admin_demoting_themselves(self) -> None:
+        admin = UserStub(id=uuid.uuid4(), role="admin")
+        repo = _repo(get_user=admin)
+        service = AdminService(db=AsyncMock(), repo=repo)
+
+        with pytest.raises(BusinessRuleError, match="chính mình"):
+            await service.update_user(
+                admin.id, AdminUpdateUserRequest(role="freelancer"), admin_id=admin.id
+            )
+
+        assert admin.role == "admin"
+        repo.save.assert_not_awaited()
+
+    async def test_blocks_admin_suspending_themselves(self) -> None:
+        admin = UserStub(id=uuid.uuid4(), role="admin")
+        repo = _repo(get_user=admin)
+        service = AdminService(db=AsyncMock(), repo=repo)
+
+        with pytest.raises(BusinessRuleError, match="chính mình"):
+            await service.update_user(
+                admin.id, AdminUpdateUserRequest(status="suspended"), admin_id=admin.id
+            )
+
+        assert admin.status == "active"
+
+    async def test_admin_can_still_edit_own_profile(self) -> None:
+        admin = UserStub(id=uuid.uuid4(), role="admin")
+        repo = _repo(get_user=admin, get_user_by_phone=None)
+        service = AdminService(db=AsyncMock(), repo=repo)
+
+        result = await service.update_user(
+            admin.id,
+            AdminUpdateUserRequest(full_name="Tên mới", phone="0900000001"),
+            admin_id=admin.id,
+        )
+
+        assert result.full_name == "Tên mới"
+        assert result.sessions_revoked_at is None
+
+    async def test_resending_own_unchanged_role_is_allowed(self) -> None:
+        admin = UserStub(id=uuid.uuid4(), role="admin")
+        repo = _repo(get_user=admin)
+        service = AdminService(db=AsyncMock(), repo=repo)
+
+        result = await service.update_user(
+            admin.id,
+            AdminUpdateUserRequest(role="admin", status="active", full_name="Tên mới"),
+            admin_id=admin.id,
+        )
+
+        assert result.full_name == "Tên mới"
+        assert result.sessions_revoked_at is None
+
+
+# ---------------------------------------------------------------------------
+# update_user — thu hồi phiên khi đổi quyền/trạng thái
+# ---------------------------------------------------------------------------
+
+
+class TestUpdateUserRevokesSessions:
+    async def test_demotion_revokes_sessions(self) -> None:
+        user = UserStub(id=uuid.uuid4(), role="admin")
+        repo = _repo(get_user=user, count_active_admins=3)
+        service = AdminService(db=AsyncMock(), repo=repo)
+
+        before = datetime.now(UTC)
+        result = await service.update_user(
+            user.id, AdminUpdateUserRequest(role="freelancer"), admin_id=uuid.uuid4()
+        )
+
+        assert result.sessions_revoked_at is not None
+        assert result.sessions_revoked_at >= before
+
+    async def test_promotion_revokes_sessions(self) -> None:
+        user = UserStub(id=uuid.uuid4(), role="freelancer")
+        repo = _repo(get_user=user)
+        service = AdminService(db=AsyncMock(), repo=repo)
+
+        result = await service.update_user(
+            user.id, AdminUpdateUserRequest(role="admin"), admin_id=uuid.uuid4()
+        )
+
+        assert result.sessions_revoked_at is not None
+
+    async def test_suspending_via_patch_revokes_sessions(self) -> None:
+        user = UserStub(id=uuid.uuid4())
+        repo = _repo(get_user=user)
+        service = AdminService(db=AsyncMock(), repo=repo)
+
+        result = await service.update_user(
+            user.id, AdminUpdateUserRequest(status="suspended"), admin_id=uuid.uuid4()
+        )
+
+        assert result.sessions_revoked_at is not None
+
+    async def test_profile_edit_leaves_sessions_alone(self) -> None:
+        user = UserStub(id=uuid.uuid4())
+        repo = _repo(get_user=user, get_user_by_email=None)
+        service = AdminService(db=AsyncMock(), repo=repo)
+
+        result = await service.update_user(
+            user.id,
+            AdminUpdateUserRequest(full_name="Tên mới", email="moi@example.com"),
+            admin_id=uuid.uuid4(),
+        )
+
+        assert result.sessions_revoked_at is None
+
+    async def test_resending_unchanged_role_leaves_sessions_alone(self) -> None:
+        user = UserStub(id=uuid.uuid4(), role="freelancer", status="active")
+        repo = _repo(get_user=user)
+        service = AdminService(db=AsyncMock(), repo=repo)
+
+        result = await service.update_user(
+            user.id,
+            AdminUpdateUserRequest(role="freelancer", status="active"),
+            admin_id=uuid.uuid4(),
+        )
+
+        assert result.sessions_revoked_at is None
+
+    async def test_xoa_mem_bang_tay_admin_nha_luon_ten_duong_dan(self) -> None:
+        """Xoá mềm bằng tay admin phải dọn y hệt người dùng tự xoá tài khoản.
+
+        `UsersService.delete_me` đặt BA thứ: `deleted_at`, `status`, và `profile_slug = None`.
+        Bản sửa ban đầu chỉ đặt hai thứ đầu. Ràng buộc UNIQUE trên `profile_slug` KHÔNG loại
+        hàng đã xoá mềm, nên bỏ sót dòng thứ ba là tài khoản đã xoá ngồi giữ chỗ vĩnh viễn —
+        không ai lấy được tên đường dẫn đó nữa, kể cả chính chủ khi đăng ký lại.  #Huynh
+        """
+        user = UserStub(id=uuid.uuid4(), profile_slug="nguyen-van-a")
+        repo = _repo(get_user=user, count_active_admins=3)
+        service = AdminService(db=AsyncMock(), repo=repo)
+
+        result = await service.update_user(
+            user.id, AdminUpdateUserRequest(status="deleted"), admin_id=uuid.uuid4()
+        )
+
+        assert result.deleted_at is not None
+        assert result.profile_slug is None, "phải nhả tên đường dẫn ra cho người khác dùng được"
+
+    async def test_doi_trang_thai_khac_khong_dung_toi_ten_duong_dan(self) -> None:
+        # Chỉ XOÁ mới nhả tên. Tạm khoá là biện pháp có thể gỡ, giữ nguyên tên cho người ta.
+        user = UserStub(id=uuid.uuid4(), profile_slug="nguyen-van-a")
+        repo = _repo(get_user=user, count_active_admins=3)
+        service = AdminService(db=AsyncMock(), repo=repo)
+
+        result = await service.update_user(
+            user.id, AdminUpdateUserRequest(status="suspended"), admin_id=uuid.uuid4()
+        )
+
+        assert result.profile_slug == "nguyen-van-a"
+
+    async def test_status_deleted_also_stamps_deleted_at(self) -> None:
+        user = UserStub(id=uuid.uuid4())
+        repo = _repo(get_user=user)
+        service = AdminService(db=AsyncMock(), repo=repo)
+
+        before = datetime.now(UTC)
+        result = await service.update_user(
+            user.id, AdminUpdateUserRequest(status="deleted"), admin_id=uuid.uuid4()
+        )
+
+        assert result.deleted_at is not None
+        assert result.deleted_at >= before
+
+    async def test_status_suspended_leaves_deleted_at_empty(self) -> None:
+        user = UserStub(id=uuid.uuid4())
+        repo = _repo(get_user=user)
+        service = AdminService(db=AsyncMock(), repo=repo)
+
+        result = await service.update_user(
+            user.id, AdminUpdateUserRequest(status="suspended"), admin_id=uuid.uuid4()
+        )
+
+        assert result.deleted_at is None
 
 
 # ---------------------------------------------------------------------------

@@ -599,6 +599,87 @@ class TestAdminUpdateUser:
 
 
 # ---------------------------------------------------------------------------
+# PATCH /admin/users/{user_id} — chốt quyền quản trị
+# ---------------------------------------------------------------------------
+
+
+class TestAdminUpdateUserGuards:
+    async def test_admin_cannot_demote_themselves(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        headers, admin_id = await _admin_headers_with_id(client, db_session)
+
+        resp = await client.patch(
+            f"/api/v1/admin/users/{admin_id}",
+            json={"role": "freelancer"},
+            headers=headers,
+        )
+        assert resp.status_code == 409, resp.text
+
+        # Vẫn còn nguyên quyền quản trị — đây mới là điều quan trọng.
+        still_admin = await client.get("/api/v1/admin/users", headers=headers)
+        assert still_admin.status_code == 200
+
+    async def test_admin_can_still_rename_themselves(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        headers, admin_id = await _admin_headers_with_id(client, db_session)
+
+        resp = await client.patch(
+            f"/api/v1/admin/users/{admin_id}",
+            json={"role": "admin", "status": "active", "full_name": "Tên mới"},
+            headers=headers,
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["data"]["full_name"] == "Tên mới"
+
+    async def test_demoted_admin_token_dies_immediately(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """Hạ quyền qua PATCH phải thu hồi phiên, không đợi access token hết 15 phút.
+
+        `require_admin` đọc `role` TỪ JWT: không thu hồi thì người vừa bị hạ quyền còn
+        nguyên 15 phút để tự gọi lại PATCH mà phong lại chính mình.
+        """
+        actor_h = await _admin_headers(client, db_session)
+        victim_h, victim_id = await _admin_headers_with_id(client, db_session)
+        assert (await client.get("/api/v1/admin/users", headers=victim_h)).status_code == 200
+
+        resp = await client.patch(
+            f"/api/v1/admin/users/{victim_id}",
+            json={"role": "freelancer"},
+            headers=actor_h,
+        )
+        assert resp.status_code == 200, resp.text
+
+        assert (await client.get("/api/v1/admin/users", headers=victim_h)).status_code == 401
+        retaken = await client.patch(
+            f"/api/v1/admin/users/{victim_id}",
+            json={"role": "admin"},
+            headers=victim_h,
+        )
+        assert retaken.status_code == 401
+
+    async def test_status_deleted_really_removes_the_account(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        headers = await _admin_headers(client, db_session)
+        user_h = await _user_headers(client)
+        user_id = (await client.get("/api/v1/users/me", headers=user_h)).json()["data"]["id"]
+
+        resp = await client.patch(
+            f"/api/v1/admin/users/{user_id}",
+            json={"status": "deleted"},
+            headers=headers,
+        )
+        assert resp.status_code == 200, resp.text
+
+        gone = await client.get(f"/api/v1/admin/users/{user_id}", headers=headers)
+        assert gone.status_code == 404
+        assert (await client.get("/api/v1/users/me", headers=user_h)).status_code == 401
+
+
+# ---------------------------------------------------------------------------
 # POST /admin/users/{user_id}/suspend
 # ---------------------------------------------------------------------------
 
