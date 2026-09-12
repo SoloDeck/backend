@@ -14,6 +14,27 @@ from src.modules.clients.schemas.request import (
 )
 from src.shared.exceptions.domain import BusinessRuleError, NotFoundError
 
+# Tên tiếng Việt của từng loại chứng từ, theo đúng chữ đang hiện trên web.
+_TRANSACTION_LABELS = (("deals", "dự án"), ("invoices", "hóa đơn"), ("contracts", "hợp đồng"))
+
+
+def _deletion_blocked_message(counts: dict[str, int]) -> str:
+    """Câu giải thích vì sao chưa xoá được khách — hiện thẳng cho freelancer đọc.
+
+    Câu cũ ("Cannot delete a client that has existing deals, invoices, or contracts") đẩy
+    người dùng vào ngõ cụt: họ vừa xoá dự án xong, màn hình không còn dự án nào, mà vẫn bị
+    chặn — không biết còn vướng cái gì để dọn tiếp. Nên câu mới phải làm ba việc: gọi tên
+    số lượng đang vướng, nói rõ bản ghi đã xoá vẫn tính, và chỉ ra lối đi thay thế.
+    """
+    stuck = ", ".join(
+        f"{counts[key]} {label}" for key, label in _TRANSACTION_LABELS if counts.get(key)
+    )
+    return (
+        f"Khách này còn {stuck} nên chưa xóa được. Dự án, hóa đơn, hợp đồng đã xóa vẫn tính "
+        "vì hệ thống giữ lại làm lịch sử giao dịch. Bạn có thể chuyển khách sang trạng thái "
+        "Lưu trữ để ẩn khỏi danh sách."
+    )
+
 
 @dataclass
 class ClientsService:
@@ -153,10 +174,9 @@ class ClientsService:
 
     async def delete(self, user_id: uuid.UUID, client_id: uuid.UUID) -> None:
         client = await self._get_client(user_id, client_id)
-        if await self.repo.has_transactions(client_id):
-            raise BusinessRuleError(
-                "Cannot delete a client that has existing deals, invoices, or contracts."
-            )
+        counts = await self.repo.count_transactions(client_id)
+        if any(counts.values()):
+            raise BusinessRuleError(_deletion_blocked_message(counts))
         client.deleted_at = datetime.now(UTC)
         await self.repo.save(client)
 

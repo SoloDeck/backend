@@ -1,7 +1,7 @@
 import uuid
 from dataclasses import dataclass
 
-from sqlalchemy import exists, select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.infrastructure.database.models import (
@@ -70,15 +70,33 @@ class ClientsRepository:
         )
         return list(result.scalars().all())
 
-    async def has_transactions(self, client_id: uuid.UUID) -> bool:
-        """Return True if the client has any deals, invoices, or contracts."""
-        for Model in (DealModel, InvoiceModel, ContractModel):
-            found = await self.db.scalar(
-                select(exists().where(Model.client_id == client_id))
+    # Khoá của dict trả về ở count_transactions. Thứ tự này cũng là thứ tự đọc lên
+    # trong câu báo lỗi: dự án -> hoá đơn -> hợp đồng, theo đúng luồng nghiệp vụ.
+    TRANSACTION_MODELS = (
+        ("deals", DealModel),
+        ("invoices", InvoiceModel),
+        ("contracts", ContractModel),
+    )
+
+    async def count_transactions(self, client_id: uuid.UUID) -> dict[str, int]:
+        """Đếm deal/invoice/contract đang trỏ tới khách, KỂ CẢ bản đã xoá mềm.
+
+        Không lọc `deleted_at` là CỐ Ý (xem 163fb7f): hoá đơn và hợp đồng là chứng từ,
+        xoá khách đi thì chúng mất chỗ bám. Đổi lại, service phải nói cho người dùng biết
+        điều đó — xem `_deletion_blocked_message`, vì họ vừa xoá dự án xong nên nhìn màn
+        hình sẽ tưởng chẳng còn gì.
+
+        Trả về SỐ LƯỢNG chứ không phải true/false, để câu báo lỗi gọi được tên cái đang vướng.
+        """
+        return {
+            key: (
+                await self.db.scalar(
+                    select(func.count()).select_from(Model).where(Model.client_id == client_id)
+                )
+                or 0
             )
-            if found:
-                return True
-        return False
+            for key, Model in self.TRANSACTION_MODELS
+        }
 
     async def save(self, obj):
         await self.db.flush()
