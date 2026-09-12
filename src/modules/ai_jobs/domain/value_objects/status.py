@@ -17,8 +17,14 @@ TERMINAL_STATUSES: frozenset[AiJobStatus] = frozenset(
 # (before a worker picks it up) or while running (best-effort — the worker
 # checks this flag before writing its result, it cannot be force-killed
 # mid-LLM-call).
+#
+# `queued` đi thẳng sang `failed` được: khi không xếp nổi lệnh vào hàng đợi (broker chết),
+# job sẽ KHÔNG BAO GIỜ có worker nào nhận, nên nó hỏng thật chứ không phải đang chờ. Thiếu
+# lối này thì dòng job nằm lại `queued` vĩnh viễn và màn hình quay vòng mãi.  #Huynh
 STATUS_TRANSITIONS: dict[AiJobStatus, frozenset[AiJobStatus]] = {
-    AiJobStatus.QUEUED: frozenset({AiJobStatus.RUNNING, AiJobStatus.CANCELLED}),
+    AiJobStatus.QUEUED: frozenset(
+        {AiJobStatus.RUNNING, AiJobStatus.FAILED, AiJobStatus.CANCELLED}
+    ),
     AiJobStatus.RUNNING: frozenset(
         {AiJobStatus.SUCCEEDED, AiJobStatus.FAILED, AiJobStatus.CANCELLED}
     ),
