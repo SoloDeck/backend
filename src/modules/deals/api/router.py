@@ -32,6 +32,7 @@ from src.shared.dependencies.auth import CurrentUserId
 from src.shared.dependencies.storage import StorageDep
 from src.shared.pagination.models import PaginationParams
 from src.shared.responses.response import ApiResponse, PaginatedResponse
+from src.shared.responses.tep_tai_ve import content_disposition_dinh_kem
 
 router = APIRouter()
 
@@ -359,7 +360,7 @@ async def download_deal_attachment(
     return StreamingResponse(
         BytesIO(data),
         media_type=content_type,
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers={"Content-Disposition": content_disposition_dinh_kem(filename)},
     )
 
 
