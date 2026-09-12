@@ -419,6 +419,51 @@ class SubscriptionsService:
 
         payment = await self._payment_for_callback(parsed.order_id)
         if payment is None:
+            # CÓ TIỀN VÀO NHƯNG KHÔNG KHỚP ĐƠN NÀO — đây là ca riêng, không được xử như
+            # "đơn lạ".
+            #
+            # SePay bắt khách GÕ TAY nội dung chuyển khoản (chính màn hình SoloDesk bảo
+            # họ làm vậy). Gõ sai một ký tự, hoặc ngân hàng cắt bớt nội dung, hoặc quy tắc
+            # tách mã trên dashboard SePay cấu hình lệch — là mã đơn đọc ra rỗng. Tiền thì
+            # đã vào tài khoản thật.
+            #
+            # Trước bản sửa, nhánh này ném `NotFoundError` → API trả 404. Hai hậu quả:
+            # SePay coi 404 là chưa nhận nên gửi lại mãi một sự kiện không bao giờ khớp
+            # được; và trong DB không còn một dòng nào — không billing event, không
+            # payment — nên khoản tiền đó biến mất khỏi hệ thống, không ai tra ra.
+            #
+            # Nay: ghi lại đủ dữ liệu thô để admin còn khớp tay, rồi ACK. Vẫn giữ 404 cho
+            # MoMo/ZaloPay: GIỮ NGUYÊN 404. Ở hai cổng đó mã đơn do chính cổng trả lại
+            # nguyên vẹn, nên không khớp là dấu hiệu bất thường thật (cấu hình lệch, gọi
+            # nhầm môi trường) và đáng để cổng gửi lại. Chỉ SePay mới có chuyện khách gõ
+            # tay sai nội dung.  #Huynh
+            # Điều kiện là CÓ SỐ TIỀN, không phải `parsed.success`. Khi SePay không tách
+            # được mã đơn từ nội dung chuyển khoản, `parse_callback` trả `success=False`
+            # NHƯNG vẫn kèm `amount` — và đó chính là tín hiệu "tiền đã vào, chưa biết của
+            # ai". Đòi `success=True` ở đây là bỏ lọt đúng ca cần bắt. Giao dịch tiền RA đã
+            # bị chặn từ trước bằng `actionable=False` nên không lọt xuống đây.  #Huynh
+            if provider == PaymentProvider.SEPAY and parsed.amount is not None:
+                log.error(
+                    "payments.unmatched_transfer",
+                    provider=provider.value,
+                    order_id=parsed.order_id,
+                    amount=str(parsed.amount),
+                    hint="Tiền đã vào nhưng không khớp đơn nào. Cần khớp tay.",
+                )
+                await self.repo.create_billing_event(
+                    user_id=None,
+                    subscription_id=None,
+                    event_type="unmatched_transfer",
+                    amount=parsed.amount,
+                    currency=None,
+                    event_metadata={
+                        "provider": provider.value,
+                        "order_id_doc_duoc": parsed.order_id,
+                        "raw_callback": raw_payload,
+                    },
+                )
+                return gateway.build_ack_response(parsed)
+
             raise NotFoundError(f"Unknown order '{parsed.order_id}'")
 
         # Cửa sổ thanh toán có thể đã trôi qua trước khi callback này tới.
@@ -444,12 +489,54 @@ class SubscriptionsService:
             )
 
         if payment.status != SubscriptionPaymentStatus.PENDING:
-            # Idempotent replay — providers retry callbacks until acked.
-            log.info(
-                "payments.callback_replay_ignored",
-                order_id=parsed.order_id,
-                status=str(payment.status),
+            # Với MoMo/ZaloPay thì đây đúng là cổng gửi lại CÙNG một giao dịch. Nhưng với
+            # SePay, mỗi callback là MỘT KHOẢN TIỀN VÀO KHÁC NHAU — nhìn mỗi `status` rồi
+            # kết luận "phát lại" là làm biến mất một lần chuyển khoản thật.
+            #
+            # Kịch bản rất dễ xảy ra vì màn chuyển khoản giữ nguyên mã QR trên màn hình:
+            # khách chuyển 199.000đ, chờ 30 giây không thấy gì (ngân hàng báo chậm), sốt
+            # ruột quét lại đúng mã đó và chuyển thêm lần nữa. Trước bản sửa, lần thứ hai
+            # bị ack im lặng: khách mất 398.000đ cho một tháng gói, và trong hệ thống
+            # không còn một dòng nào để lần ra.  #Huynh
+            da_luu = payment.provider_reference
+            lan_nay = parsed.provider_reference
+            la_khoan_thu_khac = bool(
+                parsed.success and lan_nay and da_luu and lan_nay != da_luu
             )
+
+            if la_khoan_thu_khac:
+                log.error(
+                    "payments.duplicate_payment_received",
+                    order_id=parsed.order_id,
+                    status=str(payment.status),
+                    tham_chieu_da_luu=da_luu,
+                    tham_chieu_lan_nay=lan_nay,
+                    amount=str(parsed.amount) if parsed.amount is not None else None,
+                    hint="Khách đã trả thêm một lần nữa cho cùng đơn. Cần hoàn tiền.",
+                )
+                await self.repo.create_billing_event(
+                    user_id=payment.user_id,
+                    subscription_id=payment.subscription_id,
+                    event_type="duplicate_payment_received",
+                    amount=parsed.amount if parsed.amount is not None else payment.amount,
+                    currency=payment.currency,
+                    event_metadata={
+                        "provider": provider.value,
+                        "payment_id": str(payment.id),
+                        "tham_chieu_da_luu": da_luu,
+                        "tham_chieu_lan_nay": lan_nay,
+                        "raw_callback": raw_payload,
+                    },
+                )
+            else:
+                # Idempotent replay — providers retry callbacks until acked.
+                log.info(
+                    "payments.callback_replay_ignored",
+                    order_id=parsed.order_id,
+                    status=str(payment.status),
+                )
+            # Cả hai nhánh đều ack: gửi lại thêm lần nữa cũng không khớp thêm được gì,
+            # mà không ack thì cổng cứ dội lại mãi.
             return gateway.build_ack_response(parsed)
 
         # Số tiền provider BÁO ĐÃ THU phải khớp số ta yêu cầu.
@@ -465,21 +552,95 @@ class SubscriptionsService:
         #
         # `amount is None` thì bỏ qua kiểm: provider không gửi thì không có gì để đối chiếu,
         # và chặn ở đây là chặn oan mọi giao dịch.  #Huynh
+        # Hai HƯỚNG lệch là hai chuyện khác hẳn nhau; bản trước gộp chung nên xử sai một nửa.
+        #
+        # SePay là chuyển khoản GÕ TAY — chính màn hình bảo người dùng "quét mã, hoặc nhập
+        # tay bốn thông tin bên dưới" — nên lệch số tiền là chuyện thường ngày, khác hẳn
+        # MoMo/ZaloPay nơi cổng ép đúng số.
+        #
+        #   * THU THỪA (khách gõ 200.000 thay vì 199.000, hoặc làm tròn cho dễ nhớ): vẫn
+        #     KÍCH HOẠT. Khách đã trả đủ tiền cho thứ họ mua; từ chối là vừa lấy tiền vừa
+        #     không giao hàng. Phần dư ghi lại thành billing event để hoàn sau.
+        #   * THU THIẾU: không kích hoạt, nhưng cũng KHÔNG `mark_failed` — `failed` là
+        #     trạng thái CUỐI, mà đơn chết rồi thì lần chuyển bù sau đó không còn chỗ nào
+        #     để khớp vào, tiền lần hai mất nốt. Giữ `pending` tới khi hết hạn.
+        #
+        # Chữ ký HMAC đã phủ `amount` nên không ai giả mạo được — đây không phải chốt bảo
+        # mật mà là chốt cho lệch thật. `amount is None` thì bỏ qua kiểm: provider không
+        # gửi thì không có gì để đối chiếu.  #Huynh
         if parsed.success and parsed.amount is not None and parsed.amount != payment.amount:
-            log.error(
-                "payments.amount_mismatch",
-                order_id=parsed.order_id,
-                expected=str(payment.amount),
-                received=str(parsed.amount),
-                hint="KHÔNG kích hoạt gói. Cần người kiểm tra và xử lý tay.",
-            )
-            parsed = parsed._replace(
-                success=False,
-                message=(
-                    f"Số tiền không khớp: yêu cầu {payment.amount} {payment.currency}, "
+            phan_du = parsed.amount - payment.amount
+            if phan_du > 0:
+                log.error(
+                    "payments.amount_overpaid",
+                    order_id=parsed.order_id,
+                    expected=str(payment.amount),
+                    received=str(parsed.amount),
+                    surplus=str(phan_du),
+                    hint="VẪN kích hoạt vì khách đã trả đủ. Cần hoàn lại phần dư.",
+                )
+                await self.repo.create_billing_event(
+                    user_id=payment.user_id,
+                    subscription_id=payment.subscription_id,
+                    event_type="overpayment_received",
+                    amount=phan_du,
+                    currency=payment.currency,
+                    event_metadata={
+                        "provider": provider.value,
+                        "payment_id": str(payment.id),
+                        "expected": str(payment.amount),
+                        "received": str(parsed.amount),
+                        "raw_callback": raw_payload,
+                    },
+                )
+            elif provider != PaymentProvider.SEPAY:
+                # MoMo/ZaloPay: GIỮ NGUYÊN hành vi cũ — đánh dấu thất bại. Ở hai cổng đó số
+                # tiền do cổng ép, khách không gõ được, nên lệch là bất thường thật và
+                # KHÔNG có khái niệm "chuyển bù cho đúng đơn cũ": muốn trả lại thì khách
+                # bấm mua lại, sinh đơn mới. Để `pending` ở đây chỉ tổ giữ rác.  #Huynh
+                log.error(
+                    "payments.amount_mismatch",
+                    order_id=parsed.order_id,
+                    expected=str(payment.amount),
+                    received=str(parsed.amount),
+                    hint="KHÔNG kích hoạt gói. Cần người kiểm tra và xử lý tay.",
+                )
+                parsed = parsed._replace(
+                    success=False,
+                    message=(
+                        f"Số tiền không khớp: yêu cầu {payment.amount} {payment.currency}, "
+                        f"nhận {parsed.amount}."
+                    ),
+                )
+            else:
+                log.error(
+                    "payments.amount_underpaid",
+                    order_id=parsed.order_id,
+                    expected=str(payment.amount),
+                    received=str(parsed.amount),
+                    hint="KHÔNG kích hoạt. Giữ đơn pending để lần chuyển bù còn khớp được.",
+                )
+                await self.repo.create_billing_event(
+                    user_id=payment.user_id,
+                    subscription_id=payment.subscription_id,
+                    event_type="underpayment_received",
+                    amount=parsed.amount,
+                    currency=payment.currency,
+                    event_metadata={
+                        "provider": provider.value,
+                        "payment_id": str(payment.id),
+                        "expected": str(payment.amount),
+                        "received": str(parsed.amount),
+                        "raw_callback": raw_payload,
+                    },
+                )
+                payment.failure_reason = (
+                    f"Thu thiếu: yêu cầu {payment.amount} {payment.currency}, "
                     f"nhận {parsed.amount}."
-                ),
-            )
+                )
+                payment.raw_callback_payload = raw_payload
+                await self.repo.save(payment)
+                return gateway.build_ack_response(parsed)
 
         entity = _payment_to_entity(payment)
         if parsed.success:

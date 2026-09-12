@@ -15,6 +15,7 @@ What only a real database and a real HTTP round trip can prove:
 from decimal import Decimal
 
 from httpx import AsyncClient
+from sqlalchemy import text as sa_text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.infrastructure.database.models import SubscriptionPaymentModel
@@ -158,7 +159,16 @@ async def test_webhook_replay_is_idempotent(client: AsyncClient, db_session: Asy
 async def test_amount_mismatch_does_not_activate_the_plan(
     client: AsyncClient, db_session: AsyncSession
 ) -> None:
-    """Đúng mã đơn nhưng chuyển thiếu tiền: KHÔNG kích hoạt, đánh dấu thất bại."""
+    """Đúng mã đơn nhưng chuyển THIẾU tiền: không kích hoạt, và đơn vẫn còn sống.
+
+    Điều cốt lõi không đổi: thu hụt thì tuyệt đối không kích hoạt gói.
+
+    Điều đã đổi: trước đây đơn bị `mark_failed`, mà `failed` là trạng thái CUỐI. SePay bắt
+    khách GÕ TAY số tiền, nên chuyện gõ thiếu rồi chuyển bù là có thật — đơn chết thì khoản
+    bù sau không còn chỗ nào để khớp, khách mất luôn cả hai lần. Nay đơn ở lại `pending`
+    tới khi hết hạn tự nhiên. Riêng MoMo/ZaloPay vẫn `failed` như cũ vì ở đó cổng ép đúng
+    số tiền, khách không gõ được.  #Huynh
+    """
     await PlansSeeder(db_session).run()
     headers = await _auth_headers(client)
     plan = await _pro_plan(client, headers)
@@ -176,7 +186,7 @@ async def test_amount_mismatch_does_not_activate_the_plan(
     me_resp = await client.get("/api/v1/subscriptions/me", headers=headers)
     assert me_resp.json()["data"]["plan_slug"] == "free"
     status_resp = await client.get(f"/api/v1/payments/intents/{payment['id']}", headers=headers)
-    assert status_resp.json()["data"]["status"] == "failed"
+    assert status_resp.json()["data"]["status"] == "pending"
 
 
 async def test_outgoing_transfer_never_activates_a_plan(
@@ -206,7 +216,15 @@ async def test_outgoing_transfer_never_activates_a_plan(
 async def test_transfer_with_unknown_order_code_is_not_a_500(
     client: AsyncClient, db_session: AsyncSession
 ) -> None:
-    """Khách chuyển nhầm hoặc gõ sai mã — tiền vào thật nhưng không thuộc đơn nào."""
+    """Khách chuyển nhầm hoặc gõ sai mã — tiền vào thật nhưng không thuộc đơn nào.
+
+    Trước đây chỗ này trả 404, và đó là lỗi chứ không phải hành vi đúng — chính docstring
+    cũ đã viết "tiền vào thật" rồi vẫn 404. Hai hậu quả: SePay coi 404 là chưa nhận nên
+    gửi lại mãi một sự kiện không bao giờ khớp được; và trong DB không có một dòng nào,
+    nên khoản tiền đó biến mất khỏi hệ thống, không ai tra ra để khớp tay.
+
+    Nay: ghi một `billing_event` kiểu `unmatched_transfer` mang đủ dữ liệu thô, rồi ACK.  #Huynh
+    """
     await PlansSeeder(db_session).run()
     sepay = MockSePayClient()
 
@@ -216,7 +234,15 @@ async def test_transfer_with_unknown_order_code_is_not_a_500(
         headers=sepay.auth_headers(),
     )
 
-    assert resp.status_code == 404
+    assert resp.status_code == 200, "ACK để SePay ngừng dội lại một sự kiện không khớp được"
+
+    loai = await db_session.scalar(
+        sa_text(
+            "select event_type::text from billing_events"
+            " where event_type = 'unmatched_transfer'"
+        )
+    )
+    assert loai == "unmatched_transfer", "tiền đã vào thì phải để lại dấu vết để khớp tay"
 
 
 async def test_webhook_falls_back_to_content_when_code_field_is_null(

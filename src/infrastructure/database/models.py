@@ -58,6 +58,11 @@ _billing_event_type = PgEnum(
     "subscription_expired",
     "subscription_upgraded",
     "subscription_downgrade_scheduled",
+    # Bon loai duoi day sinh ra tu chuyen khoan SePay go tay — xem migration d2e3f4a5b6c7.
+    "overpayment_received",
+    "underpayment_received",
+    "duplicate_payment_received",
+    "unmatched_transfer",
     name="billing_event_type",
     create_type=False,
 )
@@ -485,11 +490,13 @@ class UsageRecordModel(UUIDMixin, TimestampMixin, Base):
 class BillingEventModel(UUIDMixin, Base):
     __tablename__ = "billing_events"
 
-    user_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("users.id"), nullable=False
+    # NULLABLE chi vi mot loai su kien: `unmatched_transfer` — tien da vao tai khoan nhung
+    # chua biet cua ai (khach go sai noi dung chuyen khoan). Moi loai con lai luon ghi du.
+    user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=True
     )
-    subscription_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("subscriptions.id"), nullable=False
+    subscription_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("subscriptions.id"), nullable=True
     )
     event_type: Mapped[str] = mapped_column(_billing_event_type, nullable=False)
     amount: Mapped[Decimal | None] = mapped_column(Numeric(10, 2), nullable=True)
