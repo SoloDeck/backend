@@ -65,6 +65,23 @@ _READINESS_TIMEOUT_SECONDS = 3.0
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     log.info("solodesk.startup", environment=settings.app_env)
 
+    # Production đang chạy bằng khoá sandbox CÔNG KHAI của cổng thanh toán.
+    #
+    # Cố ý KHÔNG chặn khởi động (xem `Settings.khoa_cong_dung_sandbox` để biết lý do đầy
+    # đủ): `ci.yml` không truyền ZALOPAY_KEY1/KEY2 cho môi trường nào và nhóm chưa có tài
+    # khoản merchant thật, nên chặn ở đây là tự khoá đường deploy của chính mình. Nhưng
+    # phải kêu thật to — khoá sandbox là công khai, ai đọc tài liệu của cổng cũng có, tức
+    # người ngoài giả được callback để tự nâng gói miễn phí.  #Huynh
+    if settings.khoa_cong_dung_sandbox:
+        log.error(
+            "config.khoa_cong_sandbox",
+            keys=settings.khoa_cong_dung_sandbox,
+            hint=(
+                "Production đang dùng khoá sandbox công khai. Đặt khoá merchant thật rồi "
+                "thêm biến tương ứng vào ci.yml."
+            ),
+        )
+
     # Thiếu kho file thì HỎNG THẬT, nhưng hỏng lặng lẽ — phải kêu to.
     #
     # Staging từng chạy nhiều tuần với STORAGE_ENDPOINT rỗng: `ensure_bucket()` chỉ log
