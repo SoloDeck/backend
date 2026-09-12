@@ -23,6 +23,32 @@ KHOA_CONG_THAT = {
 }
 
 
+# Mọi biến môi trường có thể che mất giá trị mặc định mà bài test này muốn kiểm.
+_BIEN_CAN_DON = (
+    "APP_ENV",
+    "SECRET_KEY",
+    "JWT_SECRET_KEY",
+    "ZALOPAY_KEY1",
+    "ZALOPAY_KEY2",
+    "MOMO_ACCESS_KEY",
+    "MOMO_SECRET_KEY",
+)
+
+
+@pytest.fixture(autouse=True)
+def _moi_truong_sach(monkeypatch):
+    """Gỡ các biến môi trường liên quan trước mỗi bài.
+
+    `_env_file=None` chỉ tắt việc đọc file `.env`, KHÔNG chặn biến môi trường — nên trên CI
+    (nơi `ci.yml` đặt sẵn `SECRET_KEY`/`JWT_SECRET_KEY` dài 32 ký tự hợp lệ) bài "khoá mặc
+    định phải làm chết staging" lại thấy khoá thật và không có lỗi nào để bắt. Chạy ở máy
+    thì xanh, lên CI thì đỏ. Dọn sạch ở đây để bài test kiểm đúng GIÁ TRỊ MẶC ĐỊNH trong
+    code, không phải giá trị của máy đang chạy.  #Huynh
+    """
+    for ten in _BIEN_CAN_DON:
+        monkeypatch.delenv(ten, raising=False)
+
+
 def _dung(**ghi_de):
     """Dựng Settings bỏ qua .env của máy lập trình viên để bài test không phụ thuộc máy."""
     return Settings(_env_file=None, **ghi_de)
