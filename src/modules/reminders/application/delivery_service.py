@@ -47,6 +47,25 @@ log = structlog.get_logger(__name__)
 # Phiếu: thử tối đa 3 lần rồi mới báo lỗi cho người dùng.
 MAX_DELIVERY_ATTEMPTS = 3
 
+# `notifications.title` là VARCHAR(200) còn `clients.name` cho tới 255 ký tự. Ghép thẳng
+# tên khách vào tiêu đề thông báo là INSERT vỡ ở tầng Postgres — mà cú vỡ đó xảy ra SAU
+# khi thư đã gửi đi, kéo đổ cả transaction, lời nhắc không kịp chuyển sang `sent` nên
+# quay về `pending`, và beat gửi lại đúng lá thư đó cho khách mỗi 60 giây.
+#
+# Cắt chuỗi ở đây thay vì nới cột lên Text: tiêu đề chỉ để liếc qua cái chuông, mất phần
+# đuôi không ai chết — còn nới cột thì phải migration.  #Huynh
+NOTIFICATION_NAME_MAX = 120
+
+
+def short_client_name(name: str | None) -> str | None:
+    """Cắt tên khách cho vừa tiêu đề thông báo. Giữ nguyên `None` để câu chữ vẫn đúng."""
+    if name is None:
+        return None
+    name = name.strip()
+    if len(name) <= NOTIFICATION_NAME_MAX:
+        return name
+    return name[: NOTIFICATION_NAME_MAX - 1].rstrip() + "…"
+
 
 class DeliveryError(Exception):
     """Không gửi được. Câu chữ trong exception là để NGƯỜI DÙNG đọc, nên viết tiếng Việt."""
@@ -282,11 +301,8 @@ class ReminderDeliveryService:
         # bấm "Gửi ngay" xong thấy toast báo kết quả rồi mà chuông lại kêu nữa thì phiền.
         # Kênh "both" là người dùng CHỦ ĐỘNG xin được ghi lại trong app nên luôn bắn.
         if unattended or reminder.channel == "both":
-            await NotificationService(db=self.db).notify_reminder_sent(
-                owner_user_id=reminder.owner_user_id,
-                reminder_id=reminder.id,
-                client_name=client.name if client else None,
-                recipient=(client.email or "").strip() if client else "",
+            await self._notify_sent(
+                reminder, client, recipient=(client.email or "").strip() if client else ""
             )
             if reminder.channel == "both":
                 detail = f"{detail} Đồng thời đã ghi lại thông báo cho bạn."
@@ -411,12 +427,7 @@ class ReminderDeliveryService:
 
         # Biên nhận trong app khi hệ thống tự gửi lúc người dùng vắng mặt (như kênh email).
         if unattended:
-            await NotificationService(db=self.db).notify_reminder_sent(
-                owner_user_id=reminder.owner_user_id,
-                reminder_id=reminder.id,
-                client_name=client.name if client else None,
-                recipient="Zalo",
-            )
+            await self._notify_sent(reminder, client, recipient="Zalo")
         return f"Đã gửi tin Zalo cho {client.name}."
 
     # --- Xử lý hỏng ----------------------------------------------------------------
@@ -463,7 +474,7 @@ class ReminderDeliveryService:
         await NotificationService(db=self.db).notify_reminder_failed(
             owner_user_id=reminder.owner_user_id,
             reminder_id=reminder.id,
-            client_name=client.name if client else None,
+            client_name=short_client_name(client.name if client else None),
             reason=reason,
         )
         await self.db.flush()
@@ -480,10 +491,40 @@ class ReminderDeliveryService:
             owner_user_id=reminder.owner_user_id,
         )
 
+    async def _notify_sent(self, reminder: Any, client: Any, *, recipient: str) -> None:
+        """Ghi biên nhận "đã gửi" vào chuông — và KHÔNG cho nó phá hỏng lượt gửi.
+
+        Thư đã rời hệ thống rồi, không rút lại được. Trước đây một lỗi ghi ở đúng chỗ này
+        (tên khách dài hơn cột `notifications.title`) làm vỡ cả transaction: lời nhắc
+        không kịp chuyển sang `sent` nên quay về `pending`, beat quét lại sau 60 giây và
+        khách nhận đúng lá thư đó thêm một lần nữa, lặp mãi.
+
+        SAVEPOINT để cú vỡ chỉ cuộn lại đúng dòng thông báo. Không có nó thì transaction
+        hỏng lây, và câu lệnh đánh dấu "đã gửi" ngay sau đó cũng chết theo.
+
+        Cố ý KHÔNG áp cùng cách cho kênh `in_app`: ở đó thông báo CHÍNH LÀ việc gửi, nuốt
+        lỗi là lời nhắc không làm gì hết mà vẫn khoe "đã gửi".  #Huynh
+        """
+        try:
+            async with self.db.begin_nested():
+                await NotificationService(db=self.db).notify_reminder_sent(
+                    owner_user_id=reminder.owner_user_id,
+                    reminder_id=reminder.id,
+                    client_name=short_client_name(client.name if client else None),
+                    recipient=recipient,
+                )
+        except Exception as exc:
+            log.warning(
+                "reminder.notify_sent_failed",
+                reminder_id=str(reminder.id),
+                channel=reminder.channel,
+                error=str(exc),
+            )
+
     async def _notify_due(self, reminder: Any, client: Any) -> None:
         await NotificationService(db=self.db).notify_reminder_due(
             owner_user_id=reminder.owner_user_id,
             reminder_id=reminder.id,
-            client_name=client.name if client else None,
+            client_name=short_client_name(client.name if client else None),
             message_preview=reminder.message_preview,
         )

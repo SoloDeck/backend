@@ -1,10 +1,59 @@
 """Celery tasks for reminder delivery and scheduled jobs."""
 
+from typing import Any
+
 import structlog
 
 from src.infrastructure.celery.app import celery_app
 
 log = structlog.get_logger()
+
+
+async def _commit_after_delivery(session: Any, reminder_id: str, *, delivered: bool) -> None:
+    """Commit lượt gửi — và nếu commit vỡ SAU khi thư đã đi thì vẫn phải chốt "đã gửi".
+
+    Vì sao cần: `deliver()` gửi thư xong mới ghi tiếp vào DB (biên nhận trong chuông, bản
+    ghi lần gửi). Bất kỳ lỗi ghi nào ở khúc đó cũng làm commit vỡ → transaction cuộn lại
+    → lời nhắc quay về `pending` → beat quét thấy sau 60 giây → KHÁCH NHẬN LẠI ĐÚNG LÁ
+    THƯ ĐÓ. Không có trần, cứ mỗi phút một lần cho tới khi có người sửa tay trong DB.
+
+    Thư thì không rút lại được. Nên khi đã gửi rồi mà commit hỏng: cuộn lại, rồi ghi tối
+    thiểu trạng thái `sent` trong một transaction sạch. Mất cái thông báo trong chuông
+    còn hơn để hệ thống spam khách hàng của người dùng.
+
+    Chưa gửi được (`delivered=False`) thì để lỗi bay lên như cũ — lúc đó `pending` là
+    đúng, lượt sau gửi lại mới là điều ta muốn.  #Huynh
+    """
+    try:
+        await session.commit()
+        return
+    except Exception as exc:
+        if not delivered:
+            raise
+        log.exception(
+            "send_reminder.commit_failed_after_delivery",
+            reminder_id=reminder_id,
+            error=str(exc),
+        )
+
+    import uuid as _uuid
+
+    from sqlalchemy import update
+
+    from src.infrastructure.database.models import ReminderModel
+
+    await session.rollback()
+    await session.execute(
+        update(ReminderModel)
+        .where(
+            ReminderModel.id == _uuid.UUID(reminder_id),
+            # Chỉ chạm vào hàng còn đang chờ: nếu lượt khác đã chốt xong thì đừng ghi đè.
+            ReminderModel.status == "pending",
+        )
+        .values(status="sent")
+    )
+    await session.commit()
+    log.warning("send_reminder.marked_sent_after_commit_failure", reminder_id=reminder_id)
 
 
 @celery_app.task(
@@ -39,7 +88,7 @@ def send_reminder(self, reminder_id: str) -> dict:  # type: ignore[misc]
                 # Commit KỂ CẢ khi gửi hỏng: lượt thử vừa rồi (retry_count, delivery
                 # record, thông báo báo lỗi) là dữ liệu phải giữ, không phải rác cần
                 # rollback. Rollback ở đây là mất dấu vết vì sao hỏng.
-                await session.commit()
+                await _commit_after_delivery(session, reminder_id, delivered=result.delivered)
                 return result.status, result.detail, result.should_retry
         finally:
             await engine.dispose()
