@@ -37,6 +37,47 @@ async def test_create_project_returns_project() -> None:
     assert repo.create.await_args.kwargs["owner_id"] == owner
 
 
+async def test_create_project_without_deal_skips_deal_lookup() -> None:
+    owner = uuid.uuid4()
+    repo = AsyncMock()
+    repo.create.return_value = _project_stub(owner_id=owner)
+    service = ProjectService(db=AsyncMock(), repo=repo)
+
+    await service.create(owner, CreateProjectRequest(name="No deal"))
+
+    repo.get_deal_by_id.assert_not_awaited()
+
+
+async def test_create_project_with_own_deal_passes_deal_id() -> None:
+    owner = uuid.uuid4()
+    deal_id = uuid.uuid4()
+    repo = AsyncMock()
+    repo.get_deal_by_id.return_value = SimpleNamespace(id=deal_id, owner_user_id=owner)
+    repo.create.return_value = _project_stub(owner_id=owner, deal_id=deal_id)
+    service = ProjectService(db=AsyncMock(), repo=repo)
+
+    result = await service.create(owner, CreateProjectRequest(name="Có deal", deal_id=deal_id))
+
+    assert result.deal_id == deal_id
+    repo.get_deal_by_id.assert_awaited_once_with(deal_id, owner)
+    assert repo.create.await_args.kwargs["deal_id"] == deal_id
+
+
+async def test_create_project_rejects_deal_of_another_owner() -> None:
+    """Deal không thuộc người gọi -> 404, và KHÔNG được ghi hàng mồ côi nào."""
+    owner = uuid.uuid4()
+    deal_id = uuid.uuid4()
+    repo = AsyncMock()
+    repo.get_deal_by_id.return_value = None  # owner filter loại deal của tenant khác
+    service = ProjectService(db=AsyncMock(), repo=repo)
+
+    with pytest.raises(NotFoundError) as err:
+        await service.create(owner, CreateProjectRequest(name="Stolen", deal_id=deal_id))
+
+    assert "không tìm thấy deal" in str(err.value).lower()
+    repo.create.assert_not_awaited()
+
+
 async def test_get_project_raises_not_found_for_wrong_owner() -> None:
     repo = AsyncMock()
     repo.get_by_id.return_value = None  # owner filter excludes other tenant's project
