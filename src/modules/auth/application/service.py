@@ -5,6 +5,7 @@ import secrets
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from html import escape
 
 from anyio import to_thread
 from google.auth.exceptions import GoogleAuthError
@@ -40,6 +41,11 @@ from src.shared.security.passwords import hash_password, verify_password
 # these certs rather than via a per-login tokeninfo round-trip.
 _google_transport_request = google_auth_requests.Request()
 
+
+
+# Số lần gõ sai mã OTP tối đa trước khi mã bị huỷ. Đặt ở đây thay vì rải trong hàm để
+# bài test và người đọc thấy ngay con số.  #Huynh
+SO_LAN_GO_SAI_TOI_DA = 5
 
 @dataclass
 class AuthService:
@@ -361,6 +367,13 @@ class AuthService:
         if user is None:
             return
 
+        now = datetime.now(UTC)
+
+        # Huỷ mọi mã còn sống của chính người này TRƯỚC khi phát mã mới, để mỗi lúc chỉ có
+        # đúng một mã hợp lệ. Không có bước này thì gọi xin mã vài trăm lần là có vài trăm
+        # mã cùng sống trong không gian 1.000.000 — đủ để dò trúng bằng cách thử.  #Huynh
+        await self.repo.huy_ma_dat_lai_con_song(user.id, now)
+
         # Generate a 6-digit OTP and store its SHA-256 hash
         otp = f"{secrets.randbelow(1_000_000):06d}"
         token_hash = hashlib.sha256(otp.encode()).hexdigest()
@@ -368,13 +381,17 @@ class AuthService:
         reset_token = PasswordResetTokenModel(
             user_id=user.id,
             token_hash=token_hash,
-            expires_at=datetime.now(UTC) + timedelta(minutes=15),
+            expires_at=now + timedelta(minutes=15),
         )
         await self.repo.add_reset_token(reset_token)
         await self.repo.flush()
 
+        # `full_name` là giá trị duy nhất người dùng tự nhập vào lá thư này — không escape
+        # thì một cái tên chứa thẻ HTML làm vỡ thư (hoặc chèn được liên kết lạ).  #Huynh
+        ten_hien_thi = escape(user.full_name or "")
+
         html = f"""
-        <p>Xin chào <strong>{user.full_name}</strong>,</p>
+        <p>Xin chào <strong>{ten_hien_thi}</strong>,</p>
         <p>Mã OTP đặt lại mật khẩu của bạn là:</p>
         <h2 style="letter-spacing:6px;">{otp}</h2>
         <p>Mã có hiệu lực trong <strong>15 phút</strong>.
@@ -395,16 +412,34 @@ class AuthService:
         )
 
     async def confirm_password_reset(self, payload: PasswordResetConfirmRequest) -> None:
-        token_hash = hashlib.sha256(payload.otp.encode()).hexdigest()
         now = datetime.now(UTC)
 
-        reset_token = await self.repo.get_reset_token(token_hash, now)
-        if reset_token is None:
+        # Tra người trước, rồi mới tra mã TRONG PHẠM VI người đó. Thứ tự này là cả điểm
+        # mấu chốt của bản sửa: trước đây mã được tra trên toàn bảng nên một mã bất kỳ
+        # còn sống mở khoá được bất kỳ tài khoản nào.  #Huynh
+        user = await self.repo.get_user_by_email(payload.email)
+        if user is None:
+            # Cùng một câu lỗi với mọi nhánh hỏng, để không lộ email nào có tài khoản.
             raise AuthenticationError("Invalid or expired reset token")
 
+        # Mã còn sống của người này — lấy trước khi so hash, để còn cộng được số lần gõ sai.
+        ma_dang_song = await self.repo.get_ma_dat_lai_con_song(user.id, now)
+        if ma_dang_song is None:
+            raise AuthenticationError("Invalid or expired reset token")
+
+        token_hash = hashlib.sha256(payload.otp.encode()).hexdigest()
+        if not secrets.compare_digest(ma_dang_song.token_hash, token_hash):
+            ma_dang_song.attempts += 1
+            if ma_dang_song.attempts >= SO_LAN_GO_SAI_TOI_DA:
+                # Huỷ luôn mã thay vì chỉ đếm: đếm mà không huỷ thì kẻ tấn công cứ thử
+                # tiếp, còn người dùng thật chỉ cần bấm "gửi lại mã" là có mã mới.  #Huynh
+                ma_dang_song.used_at = now
+            await self.repo.flush()
+            raise AuthenticationError("Invalid or expired reset token")
+
+        reset_token = ma_dang_song
         reset_token.used_at = now
 
-        user = await self.repo.get_user_by_id(reset_token.user_id)
         if user is not None:
             user.hashed_password = hash_password(payload.new_password)
             # A password reset is the exact moment a still-valid stolen session (from

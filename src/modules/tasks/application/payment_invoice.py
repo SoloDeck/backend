@@ -44,6 +44,7 @@ async def create_invoice_for_payment_task(
     """
     from src.infrastructure.database.models import ProjectModel
     from src.modules.invoices.application.service import InvoicesService
+    from src.modules.invoices.domain.value_objects.invoice_status import InvoiceStatus
     from src.modules.invoices.infrastructure.repository import InvoicesRepository
     from src.modules.invoices.schemas.request import InvoiceLineItemRequest, InvoiceRequest
     from src.modules.tasks.application.service import TaskService
@@ -67,10 +68,15 @@ async def create_invoice_for_payment_task(
     invoices_repo = InvoicesRepository(db)
     if task.invoice_id is not None:
         existing = await invoices_repo.get_by_id(task.invoice_id, owner_user_id)
-        if existing is not None:
+        if existing is not None and existing.status != InvoiceStatus.VOID:
             return existing
-        # Hóa đơn đã bị xóa (FK là SET NULL nên cột lẽ ra đã NULL). Rơi xuống tạo mới thay vì
-        # nổ: task vẫn còn đó và tiền vẫn phải thu.
+        # Hóa đơn đã bị xóa (FK là SET NULL nên cột lẽ ra đã NULL) HOẶC đã bị huỷ. Rơi xuống
+        # tạo mới thay vì nổ: task vẫn còn đó và tiền vẫn phải thu.
+        #
+        # Huỷ hóa đơn là cách người dùng nói "chứng từ này bỏ đi" (gửi nhầm số tiền, nhầm
+        # email khách). Hóa đơn `void` thì `send()` từ chối và `record_payment()` cũng từ
+        # chối — giữ nó lại ở đây là khóa vĩnh viễn mốc thu tiền đó, tiền không còn đường
+        # nào ra khỏi hệ thống. Idempotency phải chốt theo hóa đơn CÒN SỐNG.  #Huynh
 
     if task.entity_type != "project":
         raise BusinessRuleError("Công việc thu tiền phải nằm trên một dự án.")

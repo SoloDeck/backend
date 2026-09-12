@@ -115,6 +115,25 @@ if os.getenv("SKIP_DB_INIT") != "1":
 # ── Fixtures ───────────────────────────────────────────────────────────────────
 
 
+@pytest.fixture(autouse=True)
+def _don_bo_dem_rate_limit():
+    """Xoá bộ đếm chống dội trước MỖI bài test.
+
+    `FixedWindowRateLimiter` giữ trạng thái ở cấp module, tức là SỐNG SUỐT CẢ PHIÊN test.
+    Không dọn thì các bài test cộng dồn lượt của nhau: chạy riêng file auth thì xanh, chạy
+    cả bộ thì tới lượt nó trần đã đầy và mọi lần đăng nhập trả 429 — một kiểu đỏ phụ thuộc
+    thứ tự chạy, cực kỳ khó lần ra.
+
+    Đặt ở conftest gốc để mọi bài đều được dọn, kể cả bài chỉ mượn đường đăng nhập để lấy
+    token (các bài admin).  #Huynh
+    """
+    from src.shared.rate_limit.auth_guards import reset_moi_bo_dem
+
+    reset_moi_bo_dem()
+    yield
+    reset_moi_bo_dem()
+
+
 @pytest.fixture(scope="session")
 def event_loop():
     loop = asyncio.new_event_loop()

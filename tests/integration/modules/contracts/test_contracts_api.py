@@ -305,6 +305,28 @@ class TestExportContractPdf:
 
 
 # ---------------------------------------------------------------------------
+# GET /contracts/:id/pdf
+# ---------------------------------------------------------------------------
+
+
+class TestDownloadContractPdf:
+    async def test_free_plan_returns_402(self, client: AsyncClient) -> None:
+        """Đây mới là đường web gọi khi bấm "Tải PDF" — nó cũng phải theo cổng của gói.
+
+        Trước đây chỉ `/export` (đường Celery không ai gọi) mới kiểm, nên gói Free tải PDF
+        vô tư và công tắc "Cho phép xuất PDF" bên Quản trị thành vô nghĩa.  #Huynh
+        """
+        headers = await _auth(client)
+        cid = await _create_client(client, headers)
+        did = await _create_deal(client, headers, cid)
+        pid = await _create_accepted_proposal(client, headers, did)
+        contract_id = await _create_contract(client, headers, did, pid, cid)
+
+        resp = await client.get(f"/api/v1/contracts/{contract_id}/pdf", headers=headers)
+        assert resp.status_code == 402, resp.text
+
+
+# ---------------------------------------------------------------------------
 # DELETE /contracts/:id
 # ---------------------------------------------------------------------------
 

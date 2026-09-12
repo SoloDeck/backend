@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from src.integrations.momo.client import MockMomoClient
+from src.integrations.sepay.client import MockSePayClient
 from src.modules.subscriptions.application.service import SubscriptionsService
 from src.modules.subscriptions.domain.entities.subscription_payment import PaymentProvider
 from src.modules.subscriptions.domain.exceptions.exceptions import (
@@ -299,11 +300,12 @@ async def test_callback_success_after_expiry_still_activates_subscription() -> N
     repo.create_billing_event.assert_awaited_once()
 
 
-async def test_callback_with_mismatched_amount_does_not_activate() -> None:
-    """Số tiền provider báo thu lệch số ta yêu cầu → KHÔNG kích hoạt.
+async def test_momo_thu_thieu_van_danh_dau_that_bai_nhu_cu() -> None:
+    """MoMo thu thiếu → giữ nguyên hành vi cũ: không kích hoạt, đánh dấu thất bại.
 
-    Chữ ký HMAC đã phủ `amount` nên không ai giả mạo được; đây là chốt cho trường hợp lệch
-    thật (cấu hình sai, thu thiếu). Lệch mà vẫn kích hoạt là biếu không cả gói.  #Huynh
+    Ở MoMo/ZaloPay số tiền do CỔNG ép, khách không gõ được, nên lệch là bất thường thật và
+    cũng không có khái niệm "chuyển bù cho đúng đơn cũ" — muốn trả lại thì khách bấm mua
+    lại, sinh đơn mới. Để đơn sống ở đây chỉ tổ giữ rác.  #Huynh
     """
     momo = MockMomoClient()
     user_id, sub_id, plan_id, payment_id = (uuid.uuid4() for _ in range(4))
@@ -326,6 +328,79 @@ async def test_callback_with_mismatched_amount_does_not_activate() -> None:
     assert "không khớp" in (payment.failure_reason or "")
     # Gói giữ NGUYÊN như trước, không nhảy sang gói đã trả hụt tiền.
     assert subscription.plan_id == plan_truoc
+
+
+async def test_sepay_thu_thieu_thi_don_van_con_song_de_con_chuyen_bu() -> None:
+    """SePay thu thiếu → không kích hoạt, nhưng đơn KHÔNG bị khoá cứng.
+
+    Điều cốt lõi giữ nguyên: thu hụt thì tuyệt đối không kích hoạt, kẻo biếu không cả gói.
+
+    Điều đã ĐỔI, và chỉ đổi cho SePay: trước đây nhánh này gọi `mark_failed`, mà `failed`
+    là trạng thái CUỐI. SePay bắt khách GÕ TAY số tiền nên gõ thiếu rồi chuyển bù là chuyện
+    có thật — đơn chết thì khoản bù sau không còn chỗ nào để khớp, khách mất luôn cả hai
+    lần. Nay đơn ở lại `pending` tới khi hết hạn tự nhiên.  #Huynh
+    """
+    sepay = MockSePayClient()
+    user_id, sub_id, plan_id = (uuid.uuid4() for _ in range(3))
+    ma_don = "SD7K2M9PQR"
+
+    payment = PaymentStub(
+        id=uuid.uuid4(), user_id=user_id, subscription_id=sub_id, plan_id=plan_id, status="pending"
+    )
+    payment.order_code = ma_don
+    plan_truoc = uuid.uuid4()
+    subscription = SubscriptionStub(id=sub_id, user_id=user_id, plan_id=plan_truoc)
+    repo = _repo(
+        get_payment_by_order_code_for_update=payment, get_subscription=subscription
+    )
+    repo.create_billing_event = AsyncMock()
+    service = SubscriptionsService(db=AsyncMock(), repo=repo, sepay_client=sepay)
+
+    # Gói giá 199.000 nhưng khách chỉ chuyển 50.000.
+    payload = sepay.build_webhook_payload(order_code=ma_don, amount=50000)
+    await service.handle_payment_callback(
+        PaymentProvider.SEPAY, payload, headers={"authorization": f"Apikey {sepay.webhook_api_key}"}
+    )
+
+    assert payment.status == "pending", "đừng khoá cứng đơn, lần chuyển bù còn phải khớp được"
+    assert "Thu thiếu" in (payment.failure_reason or "")
+    assert subscription.plan_id == plan_truoc
+    # Phải để lại dấu vết cho người đối soát.
+    loai = [c.kwargs["event_type"] for c in repo.create_billing_event.await_args_list]
+    assert "underpayment_received" in loai
+
+
+async def test_thu_thua_van_kich_hoat_va_ghi_lai_phan_du() -> None:
+    """Thu THỪA → vẫn kích hoạt, phần dư ghi lại để hoàn sau.
+
+    SePay bắt khách GÕ TAY số tiền (chính màn hình bảo họ làm vậy), nên gõ 200.000 thay vì
+    199.000 hay làm tròn cho dễ nhớ là chuyện thường. Trước đây ca này rơi chung vào nhánh
+    "lệch → đánh dấu thất bại": khách đã trả đủ tiền cho thứ họ mua mà vừa không nhận được
+    gói, vừa không có đường đòi lại. Lấy tiền mà không giao hàng.  #Huynh
+    """
+    momo = MockMomoClient()
+    user_id, sub_id, plan_id, payment_id = (uuid.uuid4() for _ in range(4))
+    payload = momo.sign_ipn(order_id=str(payment_id), amount=200000)  # gói giá 199000
+
+    payment = PaymentStub(
+        id=payment_id, user_id=user_id, subscription_id=sub_id, plan_id=plan_id, status="pending"
+    )
+    subscription = SubscriptionStub(id=sub_id, user_id=user_id, plan_id=uuid.uuid4())
+    plan = PlanStub(id=plan_id, slug="pro")
+    repo = _repo(
+        get_payment_by_id_for_update=payment, get_plan=plan, get_subscription=subscription
+    )
+    repo.create_billing_event = AsyncMock()
+    service = SubscriptionsService(db=AsyncMock(), repo=repo, momo_client=momo)
+
+    ack = await service.handle_payment_callback(PaymentProvider.MOMO, payload)
+
+    assert ack["resultCode"] == 0
+    assert payment.status == "succeeded"
+    assert subscription.plan_id == plan_id, "khách trả đủ thì phải được nhận gói"
+    assert subscription.status == "active"
+    loai = [c.kwargs["event_type"] for c in repo.create_billing_event.await_args_list]
+    assert "overpayment_received" in loai
 
 
 async def test_callback_missing_plan_raises_instead_of_crashing() -> None:
@@ -580,3 +655,82 @@ async def test_expire_stale_payments_delegates_to_repo_bulk_update() -> None:
     assert count == 3
     repo.expire_stale_pending_payments.assert_awaited_once()
     assert "now" in repo.expire_stale_pending_payments.await_args.kwargs
+
+
+# ---------------------------------------------------------------------------
+# SePay: mỗi webhook là MỘT KHOẢN TIỀN VÀO KHÁC NHAU, không phải một lần gửi lại
+#
+# Đây là chỗ khác nhau căn bản giữa SePay và MoMo/ZaloPay, và là gốc của hai lỗi dưới đây.
+# Với MoMo/ZaloPay, cổng gửi lại đúng một giao dịch cho tới khi được ack. Với SePay, mỗi
+# callback là một lần tiền thật vào tài khoản ngân hàng — hai callback là hai khoản tiền.
+# ---------------------------------------------------------------------------
+
+
+async def test_sepay_khach_chuyen_khoan_lan_hai_khong_bi_nuot_nhu_gui_lai() -> None:
+    """Khách quét lại mã QR và chuyển thêm lần nữa → phải để lại dấu vết để hoàn tiền.
+
+    Kịch bản rất dễ xảy ra vì màn chuyển khoản giữ nguyên mã QR trên màn hình: khách
+    chuyển 199.000đ, chờ 30 giây không thấy gì (ngân hàng báo chậm), sốt ruột quét lại và
+    chuyển lần nữa. Trước bản sửa, hệ thống chỉ nhìn `status != PENDING` rồi kết luận
+    "cổng gửi lại", ack im lặng — khách mất 398.000đ cho một tháng gói và trong DB không
+    còn một dòng nào để lần ra.  #Huynh
+    """
+    sepay = MockSePayClient()
+    user_id, sub_id, plan_id, payment_id = (uuid.uuid4() for _ in range(4))
+    ma_don = "SD7K2M9PQR"
+
+    payment = PaymentStub(
+        id=payment_id,
+        user_id=user_id,
+        subscription_id=sub_id,
+        plan_id=plan_id,
+        status="succeeded",  # lần chuyển ĐẦU đã vào và đã kích hoạt gói
+    )
+    payment.order_code = ma_don
+    payment.provider_reference = "FT24001111"  # mã giao dịch của lần chuyển đầu
+
+    # SePay chỉ biết mã đơn NGẮN đọc từ nội dung chuyển khoản, nên service đi đường
+    # `get_payment_by_order_code_for_update` chứ không phải tra theo UUID.
+    repo = _repo(get_payment_by_order_code_for_update=payment)
+    repo.create_billing_event = AsyncMock()
+    service = SubscriptionsService(db=AsyncMock(), repo=repo, sepay_client=sepay)
+
+    # Lần chuyển THỨ HAI: cùng mã đơn, nhưng mã giao dịch ngân hàng khác hẳn.
+    payload = sepay.build_webhook_payload(
+        order_code=ma_don,
+        amount=199000,
+        reference_code="FT24002222",  # mã giao dịch ngân hàng KHÁC lần đầu
+        transaction_id=987654,
+    )
+
+    ack = await service.handle_payment_callback(
+        PaymentProvider.SEPAY, payload, headers={"authorization": f"Apikey {sepay.webhook_api_key}"}
+    )
+
+    assert ack is not None, "vẫn phải ack — gửi lại thêm lần nữa cũng không khớp được gì"
+    loai = [c.kwargs["event_type"] for c in repo.create_billing_event.await_args_list]
+    assert "duplicate_payment_received" in loai, "khoản thu thứ hai phải được ghi lại"
+
+
+async def test_sepay_tien_vao_ma_khong_doc_duoc_ma_don_thi_ghi_lai_chu_khong_tra_404() -> None:
+    """Khách gõ sai nội dung chuyển khoản → tiền vào tài khoản nhưng không khớp đơn nào.
+
+    SePay bắt khách GÕ TAY nội dung chuyển khoản. Gõ sai một ký tự, hoặc ngân hàng cắt bớt
+    nội dung, là mã đơn đọc ra rỗng. Trước bản sửa nhánh này ném `NotFoundError` → API trả
+    404, nên SePay coi là chưa nhận và gửi lại mãi một sự kiện không bao giờ khớp được,
+    còn trong DB thì không có một dòng nào — khoản tiền đó biến mất khỏi hệ thống.  #Huynh
+    """
+    sepay = MockSePayClient()
+    repo = _repo(get_payment_by_order_code_for_update=None)
+    repo.create_billing_event = AsyncMock()
+    service = SubscriptionsService(db=AsyncMock(), repo=repo, sepay_client=sepay)
+
+    payload = sepay.build_webhook_payload(order_code="SDKHONGCO", amount=199000)
+
+    ack = await service.handle_payment_callback(
+        PaymentProvider.SEPAY, payload, headers={"authorization": f"Apikey {sepay.webhook_api_key}"}
+    )
+
+    assert ack is not None, "phải ACK, không được để SePay dội lại mãi"
+    loai = [c.kwargs["event_type"] for c in repo.create_billing_event.await_args_list]
+    assert "unmatched_transfer" in loai, "tiền đã vào thì phải có dấu vết để khớp tay"

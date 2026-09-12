@@ -206,3 +206,46 @@ class TestPricingItemsWithAmounts:
         doc = build_proposal_document(content, **META)
         nums = [int(i.amount.replace(".", "").replace(" VND", "")) for i in doc.pricing_line_items]
         assert sum(nums) == 200_000_000  # chia đều theo giá chốt, không dùng 150tr đã gõ
+
+
+class TestLamTronTienKhopVoiWeb:
+    """Chia tiền phải làm tròn NỬA-LÊN, y như `Math.round` bên panel soạn báo giá.
+
+    Panel bên trái (`proposalHtml.ts`) và tờ báo giá server dựng là hai bộ máy khác nhau cùng
+    vẽ một bảng. `round()` của Python làm tròn ngân hàng (`round(3850.5) == 3850`) còn
+    `Math.round` là nửa-lên (`3851`), nên đúng ca .5 là hai bên ra hai con số cách nhau
+    1.000 ₫ — mà con số của server mới là con số chốt vào task thu tiền rồi thành hoá đơn.
+
+    Giá 11.001.000 ₫: cọc 30% = 3.300.000, còn 7.701.000 chia đôi = 3.850,5 nghìn — đúng mốc
+    .5 để bắt lỗi.  #Huynh
+    """
+
+    def test_chia_deu_dung_moc_ruoi_thi_lam_tron_len(self):
+        content = {
+            "pricing_detail": {"final_price": 11_001_000},
+            "pricing_items": ["Thiet ke", "Lap trinh"],
+        }
+        doc = build_proposal_document(content, **META)
+        nums = [int(i.amount.replace(".", "").replace(" VND", "")) for i in doc.pricing_line_items]
+
+        # [cọc, dòng chia đều, dòng cuối gánh phần lẻ]
+        assert nums == [3_300_000, 3_851_000, 3_850_000]
+        assert sum(nums) == 11_001_000
+
+    def test_gian_ty_le_dung_moc_ruoi_thi_lam_tron_len(self):
+        # Nhánh bảng của bộ định giá: giãn theo tỷ lệ rồi làm tròn — cũng phải nửa-lên.
+        content = {
+            "pricing_detail": {
+                "final_price": 11_001_000,
+                "suggested": 10_000_000,
+                "line_items": [
+                    {"label": "Thiet ke", "amount": 5_000_000},
+                    {"label": "Lap trinh", "amount": 5_000_000},
+                ],
+            },
+        }
+        doc = build_proposal_document(content, **META)
+        nums = [int(i.amount.replace(".", "").replace(" VND", "")) for i in doc.pricing_line_items]
+
+        assert nums == [3_300_000, 3_851_000, 3_850_000]
+        assert sum(nums) == 11_001_000

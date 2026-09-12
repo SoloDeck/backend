@@ -1,6 +1,6 @@
-from typing import Any, Literal
+from typing import Any, ClassVar, Literal
 
-from pydantic import PostgresDsn, RedisDsn, field_validator
+from pydantic import PostgresDsn, RedisDsn, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -275,6 +275,75 @@ class Settings(BaseSettings):
     @property
     def is_production(self) -> bool:
         return self.app_env == "production"
+
+    # Giá trị mặc định của chính file này, cộng vài chuỗi mẫu hay bị chép từ tài liệu.
+    # Khoá nào còn mang một trong các giá trị này nghĩa là biến môi trường CHƯA tới nơi.  #Huynh
+    _GIA_TRI_MAU: ClassVar[frozenset[str]] = frozenset(
+        {
+            "change-me",
+            "change-me-in-production-minimum-32-chars",
+            "your-secret-key",
+            "secret",
+            # Khoá sandbox công khai — ai đọc tài liệu của cổng cũng có.
+            "sdngKKJmqEMzvh5QQcdD2A9XBSKUNaYn",  # zalopay key1
+            "trMrHtvjo6myautxDUiAcYsVtaeQ8nhf",  # zalopay key2
+            "F8BBA842ECF85",  # momo access key
+            "K951B6PE1waDMi640xX08PD3vg6EkVlz",  # momo secret key
+        }
+    )
+
+    @model_validator(mode="after")
+    def chan_khoa_mac_dinh(self) -> "Settings":
+        """Không cho chạy staging/production bằng khoá bí mật mặc định.
+
+        Vì sao phải chết ngay lúc khởi động thay vì ghi log cảnh báo: `env_ignore_empty=True`
+        ở đầu file khiến một biến môi trường RỖNG (pipeline ghi `JWT_SECRET_KEY=` khi GitHub
+        secret chưa đặt hoặc bị đổi tên) rơi êm về giá trị mặc định. Không có lỗi, không có
+        log, API vẫn khởi động, mọi người vẫn đăng nhập bình thường — trong khi bất kỳ ai
+        cũng tự ký được token `role: admin` bằng khoá `change-me` mà đọc và sửa dữ liệu của
+        MỌI freelancer. Hỏng ồn ào lúc deploy còn hơn chạy êm với khoá ai cũng đoán ra.  #Huynh
+
+        Hai mức khắt khe khác nhau, theo đúng thứ pipeline đang truyền được:
+
+        * `secret_key` và `jwt_secret_key` — chặn ở CẢ staging lẫn production. `ci.yml` đã
+          truyền sẵn hai biến này cho cả hai môi trường nên chỉ cần GitHub secret tồn tại.
+        * Khoá cổng thanh toán — chỉ chặn ở production. `ci.yml` hiện KHÔNG truyền
+          `ZALOPAY_KEY1/KEY2` cho môi trường nào, và `MOMO_SECRET_KEY` chỉ có ở khối
+          production; chặn ở staging là staging chết ngay lần merge tới trong khi staging
+          vốn chỉ cần cổng sandbox. Trước lần deploy production kế tiếp phải bổ sung hai
+          dòng ZALOPAY_KEY1/KEY2 vào `ci.yml` và đặt secret tương ứng, nếu không job deploy
+          sẽ đỏ ở đúng bước này.
+        """
+        if self.app_env == "development":
+            return self
+
+        thieu: list[str] = []
+
+        for ten in ("secret_key", "jwt_secret_key"):
+            gia_tri = getattr(self, ten)
+            if gia_tri in self._GIA_TRI_MAU:
+                thieu.append(f"{ten.upper()} còn là giá trị mặc định")
+            elif len(gia_tri) < 32:
+                thieu.append(f"{ten.upper()} ngắn hơn 32 ký tự (đang {len(gia_tri)})")
+
+        if self.is_production:
+            for ten in (
+                "zalopay_key1",
+                "zalopay_key2",
+                "momo_access_key",
+                "momo_secret_key",
+            ):
+                if getattr(self, ten) in self._GIA_TRI_MAU:
+                    thieu.append(f"{ten.upper()} còn là khoá sandbox công khai")
+
+        if thieu:
+            raise ValueError(
+                f"Cấu hình bí mật chưa sẵn sàng cho môi trường {self.app_env!r}: "
+                + "; ".join(thieu)
+                + ". Đặt các biến môi trường tương ứng rồi khởi động lại."
+            )
+
+        return self
 
 
 settings = Settings()  # type: ignore[call-arg]

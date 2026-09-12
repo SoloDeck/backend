@@ -311,6 +311,20 @@ def deposit_amount(total: int, percent: int, rest_count: int) -> int:
     return max(0, min(int(raw), ceiling))
 
 
+def _round_to_step(value: float | int | Decimal) -> int:
+    """Làm tròn một khoản tiền tới bội 1.000 ₫ theo lối NỬA-LÊN.
+
+    Cùng lý do với `deposit_amount`: `round()` của Python là làm tròn ngân hàng
+    (`round(3850.5) == 3850`), `Math.round` bên web là nửa-lên (`3851`). Mọi phép chia tiền
+    trong file này phải đi qua đây, nếu không panel soạn báo giá và tờ báo giá server dựng
+    lại lệch nhau đúng 1.000 ₫ mỗi khi phần chia rơi vào số .5.  #Huynh
+    """
+    return int(
+        (Decimal(str(value)) / _MONEY_STEP).quantize(Decimal("1"), rounding=ROUND_HALF_UP)
+        * _MONEY_STEP
+    )
+
+
 def _deposit_row(amount: int, currency: str = "VND") -> CostItem:
     return CostItem(
         label=DEPOSIT_LABEL, amount=amount, due_type=DUE_ON_SIGNING, currency=currency
@@ -350,7 +364,7 @@ def _resolve_cost_items_with_total(content: dict[str, Any]) -> tuple[list[CostIt
                 if index == n - 1:
                     amount = rest_total - allocated  # dồn phần lẻ vào dòng cuối
                 else:
-                    amount = round(rest_total / n / 1000) * 1000
+                    amount = _round_to_step(rest_total / n)
                     allocated += amount
                 items.append(CostItem(label=label, amount=amount))
             if deposit > 0:
@@ -384,7 +398,7 @@ def _resolve_cost_items_with_total(content: dict[str, Any]) -> tuple[list[CostIt
                     amount = rest_total - allocated  # dồn phần lẻ vào dòng cuối
                 else:
                     base = int(it.get("amount") or 0) * ratio
-                    amount = round(base / 1000) * 1000
+                    amount = _round_to_step(base)
                     allocated += amount
                 items.append(
                     CostItem(

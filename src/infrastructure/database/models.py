@@ -58,6 +58,11 @@ _billing_event_type = PgEnum(
     "subscription_expired",
     "subscription_upgraded",
     "subscription_downgrade_scheduled",
+    # Bon loai duoi day sinh ra tu chuyen khoan SePay go tay — xem migration d2e3f4a5b6c7.
+    "overpayment_received",
+    "underpayment_received",
+    "duplicate_payment_received",
+    "unmatched_transfer",
     name="billing_event_type",
     create_type=False,
 )
@@ -363,9 +368,14 @@ class PasswordResetTokenModel(UUIDMixin, Base):
     user_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id"), nullable=False
     )
-    token_hash: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
+    # KHONG unique: ma OTP chi co 6 chu so nen chi co 1.000.000 hash, bang lai khong bao
+    # gio duoc don -> hai nguoi trung ma la lan INSERT sau vo rang buoc va tra ve 500.
+    # Tra cuu nay da duoc rang buoc theo user_id nen trung ma khong lam lo du lieu.  #Huynh
+    token_hash: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # So lan go sai ma. Qua SO_LAN_GO_SAI_TOI_DA thi ma bi huy, phai xin ma moi.  #Huynh
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0", default=0)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -480,11 +490,13 @@ class UsageRecordModel(UUIDMixin, TimestampMixin, Base):
 class BillingEventModel(UUIDMixin, Base):
     __tablename__ = "billing_events"
 
-    user_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("users.id"), nullable=False
+    # NULLABLE chi vi mot loai su kien: `unmatched_transfer` — tien da vao tai khoan nhung
+    # chua biet cua ai (khach go sai noi dung chuyen khoan). Moi loai con lai luon ghi du.
+    user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=True
     )
-    subscription_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("subscriptions.id"), nullable=False
+    subscription_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("subscriptions.id"), nullable=True
     )
     event_type: Mapped[str] = mapped_column(_billing_event_type, nullable=False)
     amount: Mapped[Decimal | None] = mapped_column(Numeric(10, 2), nullable=True)

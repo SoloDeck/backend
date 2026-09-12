@@ -397,11 +397,11 @@ class TestDeleteClient:
         resp = await client.delete(f"/api/v1/clients/{created['id']}", headers=headers)
         assert resp.status_code == 409
         message = resp.json()["error"]["message"]
-        assert (
-            "deals" in message.lower()
-            or "invoices" in message.lower()
-            or "contracts" in message.lower()
-        )
+        # Câu này hiện thẳng cho freelancer đọc nên phải là tiếng Việt, phải gọi tên thứ
+        # đang vướng, và phải nói rõ bản ghi đã xoá vẫn tính — nếu không, người vừa xoá
+        # dự án xong sẽ không hiểu vì sao vẫn bị chặn.
+        assert "1 dự án" in message, message
+        assert "đã xóa vẫn tính" in message, message
 
     async def test_client_with_soft_deleted_deal_still_returns_409(
         self, client: AsyncClient
