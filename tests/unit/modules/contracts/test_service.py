@@ -278,7 +278,7 @@ class TestExportPdf:
         db = AsyncMock()
         db.scalar.side_effect = [contract, sub, plan]
 
-        with pytest.raises(EntitlementError, match="PDF export"):
+        with pytest.raises(EntitlementError, match="xuất PDF"):
             await ContractsService(db=db).export_pdf(contract.owner_user_id, contract.id)
 
     async def test_queues_task_and_returns_pending(self) -> None:
@@ -303,6 +303,68 @@ class TestExportPdf:
 
         with pytest.raises(NotFoundError):
             await ContractsService(db=db).export_pdf(uuid.uuid4(), uuid.uuid4())
+
+
+class TestGeneratePdf:
+    """`GET /contracts/{id}/pdf` — đường tải PDF mà WEB THẬT SỰ gọi.
+
+    Trước đây cổng `can_export_pdf` chỉ đứng ở `export_pdf` (đường Celery không ai gọi), nên
+    gói Free vẫn tải PDF vô tư. Ba bài dưới khoá lại: không gói → 402, gói không có PDF → 402,
+    có gói mới render.  #Huynh
+    """
+
+    async def test_raises_without_subscription(self) -> None:
+        db = AsyncMock()
+        db.scalar.side_effect = [None]
+
+        with pytest.raises(EntitlementError):
+            await ContractsService(db=db).generate_pdf(uuid.uuid4(), uuid.uuid4())
+
+    async def test_raises_when_plan_disallows_pdf(self) -> None:
+        sub = _make_sub()
+        plan = _make_plan(can_export_pdf=False)
+        db = AsyncMock()
+        db.scalar.side_effect = [sub, plan]
+
+        with pytest.raises(EntitlementError, match="xuất PDF"):
+            await ContractsService(db=db).generate_pdf(uuid.uuid4(), uuid.uuid4())
+
+    async def test_does_not_build_document_when_blocked(self) -> None:
+        """Chặn TRƯỚC khi dựng document — không tốn công render rồi mới từ chối."""
+        sub = _make_sub()
+        plan = _make_plan(can_export_pdf=False)
+        db = AsyncMock()
+        db.scalar.side_effect = [sub, plan]
+
+        with (
+            patch(
+                "src.modules.contracts.application.service.ContractsService._build_document",
+                new_callable=AsyncMock,
+            ) as build_doc,
+            pytest.raises(EntitlementError),
+        ):
+            await ContractsService(db=db).generate_pdf(uuid.uuid4(), uuid.uuid4())
+
+        build_doc.assert_not_awaited()
+
+    async def test_renders_when_plan_allows_pdf(self) -> None:
+        sub = _make_sub()
+        plan = _make_plan(can_export_pdf=True)
+        db = AsyncMock()
+        db.scalar.side_effect = [sub, plan]
+
+        with (
+            patch(
+                "src.modules.contracts.application.service.ContractsService._build_document",
+                new_callable=AsyncMock,
+                return_value=MagicMock(),
+            ),
+            patch("src.ai.contract_generator.application.render.ContractPdfRenderer") as renderer,
+        ):
+            renderer.return_value.render_pdf.return_value = b"%PDF-1.4 fake"
+            result = await ContractsService(db=db).generate_pdf(uuid.uuid4(), uuid.uuid4())
+
+        assert result == b"%PDF-1.4 fake"
 
 
 class TestDelete:

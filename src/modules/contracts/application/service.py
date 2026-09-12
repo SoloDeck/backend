@@ -522,15 +522,43 @@ class ContractsService:
         document = await self._build_document(user_id, contract_id)
         return ContractPdfRenderer().render_html(document, editable=editable)
 
+    async def _require_pdf_entitlement(self, user_id: uuid.UUID) -> None:
+        """Cổng "Cho phép xuất PDF" của gói — gọi TRƯỚC khi render bất cứ tờ PDF nào.
+
+        Trước đây khối kiểm này chỉ nằm trong `export_pdf`, tức đường Celery mà web không hề
+        gọi, nên công tắc admin bật hay tắt đều như nhau: người dùng gói Free vẫn tải PDF bình
+        thường qua GET /contracts/{id}/pdf. Tách ra đây để đường tải THẬT cũng phải đi qua
+        đúng một cổng.
+
+        Câu lỗi để tiếng Việt vì nó hiện thẳng cho freelancer (EntitlementError → HTTP 402).
+        #Huynh
+        """
+        sub = await self.repo.get_subscription(user_id)
+        if sub is None:
+            raise EntitlementError(
+                "Bạn chưa có gói đăng ký nào đang hoạt động nên chưa xuất được PDF.",
+                "can_export_pdf",
+            )
+        plan = await self.repo.get_plan(sub.plan_id)
+        if plan is None or not plan.can_export_pdf:
+            raise EntitlementError(
+                "Gói của bạn chưa có tính năng xuất PDF. Hãy nâng cấp gói để tải bản PDF.",
+                "can_export_pdf",
+            )
+
     async def generate_pdf(self, user_id: uuid.UUID, contract_id: uuid.UUID) -> bytes:
         """Kết xuất PDF NGAY (đồng bộ) từ CÙNG document với bản xem trước — để freelancer
         tải về gửi khách. Cùng khuôn với proposals.generate_pdf (weasyprint).
 
         Khác `export_pdf` cũ: cái đó đẩy task Celery `render_contract_pdf` (đang là stub
-        NotImplementedError) nên chưa chạy được. Ở đây render thẳng, không qua worker.  #Huynh
+        NotImplementedError) nên chưa chạy được. Ở đây render thẳng, không qua worker.
+
+        Kiểm gói ĐẦU TIÊN, trước cả khi dựng document: đây mới là đường web thật sự gọi, nên
+        thiếu nó thì cột `can_export_pdf` chỉ là trang trí.  #Huynh
         """
         from src.ai.contract_generator.application.render import ContractPdfRenderer
 
+        await self._require_pdf_entitlement(user_id)
         document = await self._build_document(user_id, contract_id)
         return ContractPdfRenderer().render_pdf(document)
 
@@ -538,15 +566,7 @@ class ContractsService:
         from src.workers.pdf_jobs.tasks import render_contract_pdf
 
         contract = await self._get_contract(user_id, contract_id)
-
-        sub = await self.repo.get_subscription(user_id)
-        if sub is None:
-            raise EntitlementError("No active subscription found", "can_export_pdf")
-        plan = await self.repo.get_plan(sub.plan_id)
-        if plan is None or not plan.can_export_pdf:
-            raise EntitlementError(
-                "Your subscription plan does not include PDF export", "can_export_pdf"
-            )
+        await self._require_pdf_entitlement(user_id)
 
         task = render_contract_pdf.delay(str(contract.id))
         return {"status": "pending", "task_id": task.id, "download_url": None}
