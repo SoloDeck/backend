@@ -363,9 +363,14 @@ class PasswordResetTokenModel(UUIDMixin, Base):
     user_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id"), nullable=False
     )
-    token_hash: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
+    # KHONG unique: ma OTP chi co 6 chu so nen chi co 1.000.000 hash, bang lai khong bao
+    # gio duoc don -> hai nguoi trung ma la lan INSERT sau vo rang buoc va tra ve 500.
+    # Tra cuu nay da duoc rang buoc theo user_id nen trung ma khong lam lo du lieu.  #Huynh
+    token_hash: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # So lan go sai ma. Qua SO_LAN_GO_SAI_TOI_DA thi ma bi huy, phai xin ma moi.  #Huynh
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0", default=0)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

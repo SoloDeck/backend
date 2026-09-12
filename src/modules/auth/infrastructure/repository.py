@@ -3,7 +3,7 @@
 import uuid
 from dataclasses import dataclass
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.infrastructure.database.models import (
@@ -88,13 +88,49 @@ class AuthRepository:
     async def add_oauth_identity(self, identity: OAuthIdentityModel) -> None:
         self.db.add(identity)
 
-    async def get_reset_token(self, token_hash: str, now):
+    async def get_reset_token(self, token_hash: str, now, user_id):
+        # `user_id` la dieu kien BAT BUOC, khong phai tuy chon: thieu no thi ma cua nguoi
+        # nay mo khoa duoc tai khoan nguoi kia.  #Huynh
         return await self.db.scalar(
             select(PasswordResetTokenModel).where(
                 PasswordResetTokenModel.token_hash == token_hash,
+                PasswordResetTokenModel.user_id == user_id,
                 PasswordResetTokenModel.used_at.is_(None),
                 PasswordResetTokenModel.expires_at > now,
             )
+        )
+
+    async def get_ma_dat_lai_con_song(self, user_id, now):
+        """Ma dat lai con hieu luc cua mot nguoi (moi luc chi co dung mot).
+
+        Lay theo user_id chu KHONG theo hash, de con cong duoc so lan go sai khi nguoi ta
+        go nham — tra theo hash thi go sai la khong tim thay gi de ma dem.  #Huynh
+        """
+        return await self.db.scalar(
+            select(PasswordResetTokenModel)
+            .where(
+                PasswordResetTokenModel.user_id == user_id,
+                PasswordResetTokenModel.used_at.is_(None),
+                PasswordResetTokenModel.expires_at > now,
+            )
+            .order_by(PasswordResetTokenModel.created_at.desc())
+        )
+
+    async def huy_ma_dat_lai_con_song(self, user_id, now) -> None:
+        """Danh dau moi ma dat lai con hieu luc cua mot nguoi la da dung.
+
+        Goi ngay truoc khi phat ma moi, de moi luc chi co DUNG MOT ma hop le. Truoc day
+        ma cu khong bi huy, nen goi xin ma vai tram lan la co vai tram ma cung song trong
+        khong gian 1.000.000 — do la thu bien viec doan ma tu vo vong thanh kha thi.  #Huynh
+        """
+        await self.db.execute(
+            update(PasswordResetTokenModel)
+            .where(
+                PasswordResetTokenModel.user_id == user_id,
+                PasswordResetTokenModel.used_at.is_(None),
+                PasswordResetTokenModel.expires_at > now,
+            )
+            .values(used_at=now)
         )
 
     async def add_reset_token(self, token: PasswordResetTokenModel) -> None:

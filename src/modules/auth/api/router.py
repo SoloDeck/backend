@@ -4,7 +4,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config.settings import settings
@@ -25,6 +25,11 @@ from src.modules.auth.schemas.response import (
     MessageResponse,
 )
 from src.shared.dependencies.auth import CurrentUser
+from src.shared.rate_limit.auth_guards import (
+    chan_nhip_dang_nhap,
+    chan_nhip_go_ma,
+    chan_nhip_xin_ma,
+)
 from src.shared.responses.response import ApiResponse
 
 router = APIRouter()
@@ -68,7 +73,11 @@ async def register(
 async def login(
     payload: LoginRequest,
     db: DBSession,
+    request: Request,
 ) -> ApiResponse[AuthTokenResponse]:
+    # Chặn TRƯỚC khi đụng tới DB và trước khi băm mật khẩu: mỗi lượt đăng nhập với email
+    # có thật tiêu 64 MiB RAM cho Argon2id, nên để lọt vào tới đó là đã tốn rồi.  #Huynh
+    chan_nhip_dang_nhap(request, payload.email)
     result = await AuthService(db=db).login(payload)
     return ApiResponse.ok(result)
 
@@ -127,7 +136,11 @@ async def google_auth(
 async def password_reset_request(
     payload: PasswordResetRequestBody,
     db: DBSession,
+    request: Request,
 ) -> ApiResponse[MessageResponse]:
+    # Mỗi lượt lọt qua đây là một lá thư thật rời hệ thống và một suất trong hạn mức gửi
+    # hằng ngày. Hạn mức cháy là cả hệ thống mất email tới hôm sau.  #Huynh
+    chan_nhip_xin_ma(request, payload.email)
     await AuthService(db=db).request_password_reset(payload)
     return ApiResponse.ok(MessageResponse(detail="Nếu email tồn tại, mã OTP đã được gửi"))
 
@@ -140,6 +153,10 @@ async def password_reset_request(
 async def password_reset_confirm(
     payload: PasswordResetConfirmRequest,
     db: DBSession,
+    request: Request,
 ) -> ApiResponse[MessageResponse]:
+    # Lớp thứ hai, sau bộ đếm `attempts` nằm trên chính bản ghi mã: `attempts` chặn người
+    # dò một tài khoản, chốt này chặn người rải mã qua hàng loạt tài khoản.  #Huynh
+    chan_nhip_go_ma(request)
     await AuthService(db=db).confirm_password_reset(payload)
     return ApiResponse.ok(MessageResponse(detail="Password reset successfully"))

@@ -55,6 +55,11 @@ class PasswordResetRequestBody(BaseModel):
 
 
 class PasswordResetConfirmRequest(BaseModel):
+    # `email` la bat buoc, khong phai de tien tra cuu ma de RANG BUOC ma voi dung nguoi.
+    # Truoc day than yeu cau chi co `otp`, nen truy van quet ca bang: bat ky ma nao con
+    # song cua BAT KY ai cung mo khoa duoc, va ke tan cong chi can ban thu 000000 len
+    # den khi trung mot ma bat ky trong hang tram ma dang song.  #Huynh
+    email: EmailStr
     otp: str = Field(pattern=r"^\d{6}$", description="6-digit OTP sent via email")
     new_password: str = Field(min_length=8)
 

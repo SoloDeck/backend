@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from src.config.settings import settings
-from src.modules.auth.application.service import AuthService
+from src.modules.auth.application.service import SO_LAN_GO_SAI_TOI_DA, AuthService
 from src.modules.auth.schemas.request import (
     GoogleAuthRequest,
     LoginRequest,
@@ -252,6 +252,18 @@ class TestGoogleAuth:
         assert db.add.call_count == 2  # linked identity + refresh token record
 
 
+def _ma_dat_lai(user_id, otp: str, *, attempts: int = 0) -> SimpleNamespace:
+    """Dựng bản ghi password_reset_tokens giống thật: mang hash của OTP và bộ đếm."""
+    import hashlib
+
+    return SimpleNamespace(
+        user_id=user_id,
+        token_hash=hashlib.sha256(otp.encode()).hexdigest(),
+        used_at=None,
+        attempts=attempts,
+    )
+
+
 # ---------------------------------------------------------------------------
 # TestPasswordReset
 # ---------------------------------------------------------------------------
@@ -280,13 +292,16 @@ class TestPasswordReset:
         mock_send_email.assert_not_called()
 
     async def test_confirm_reset_success(self) -> None:
-        token_model = SimpleNamespace(user_id=uuid.uuid4(), used_at=None)
         user = _make_user()
-        db = _mock_db([token_model, user])
+        token_model = _ma_dat_lai(user.id, "123456")
+        # Thu tu scalar: tra nguoi theo email TRUOC, roi moi lay ma cua chinh nguoi do.
+        db = _mock_db([user, token_model])
         service = AuthService(db=db)
 
         await service.confirm_password_reset(
-            PasswordResetConfirmRequest(otp="123456", new_password="NewPassword@123!")
+            PasswordResetConfirmRequest(
+                email=user.email, otp="123456", new_password="NewPassword@123!"
+            )
         )
 
         assert token_model.used_at is not None
@@ -298,10 +313,97 @@ class TestPasswordReset:
         db.flush.assert_called_once()
 
     async def test_confirm_reset_invalid_token_raises_error(self) -> None:
-        db = _mock_db([None])
+        user = _make_user()
+        db = _mock_db([user, None])
         service = AuthService(db=db)
 
         with pytest.raises(AuthenticationError, match="Invalid or expired reset token"):
             await service.confirm_password_reset(
-                PasswordResetConfirmRequest(otp="123456", new_password="NewPassword@123!")
+                PasswordResetConfirmRequest(
+                    email=user.email, otp="123456", new_password="NewPassword@123!"
+                )
             )
+
+    async def test_ma_cua_nguoi_nay_khong_mo_khoa_duoc_tai_khoan_nguoi_kia(self) -> None:
+        """Lỗ hổng gốc: mã được tra trên TOÀN BẢNG, không ràng buộc người dùng.
+
+        Trước bản sửa, thân yêu cầu chỉ có `otp` nên bất kỳ mã nào còn sống của bất kỳ ai
+        cũng đặt lại được mật khẩu của người khác. Nay mã được tra trong phạm vi người
+        khớp `email`, nên mã của nạn nhân B không dùng cho tài khoản A.  #Huynh
+        """
+        nan_nhan = _make_user(email="nan-nhan@example.com")
+        ke_tan_cong = _make_user(email="ke-tan-cong@example.com")
+        # Mã "123456" là của NẠN NHÂN; kẻ tấn công gõ đúng mã đó nhưng kèm email của mình.
+        ma_cua_nan_nhan = _ma_dat_lai(nan_nhan.id, "123456")
+        db = _mock_db([ke_tan_cong, None])
+        service = AuthService(db=db)
+
+        with pytest.raises(AuthenticationError, match="Invalid or expired reset token"):
+            await service.confirm_password_reset(
+                PasswordResetConfirmRequest(
+                    email=ke_tan_cong.email, otp="123456", new_password="Chiem@Quyen123!"
+                )
+            )
+
+        assert ma_cua_nan_nhan.used_at is None, "mã của nạn nhân không được đụng tới"
+
+    async def test_go_sai_qua_nam_lan_thi_ma_bi_huy(self) -> None:
+        """Không đếm lần gõ sai thì kẻ tấn công cứ bắn 000000 đi lên tới khi trúng."""
+        user = _make_user()
+        ma = _ma_dat_lai(user.id, "123456", attempts=SO_LAN_GO_SAI_TOI_DA - 1)
+        db = _mock_db([user, ma])
+        service = AuthService(db=db)
+
+        with pytest.raises(AuthenticationError):
+            await service.confirm_password_reset(
+                PasswordResetConfirmRequest(
+                    email=user.email, otp="999999", new_password="NewPassword@123!"
+                )
+            )
+
+        assert ma.attempts == SO_LAN_GO_SAI_TOI_DA
+        assert ma.used_at is not None, "quá ngưỡng thì mã phải bị huỷ, không chỉ đếm"
+
+    async def test_go_sai_chua_toi_nguong_thi_chi_cong_them_mot(self) -> None:
+        user = _make_user()
+        ma = _ma_dat_lai(user.id, "123456", attempts=0)
+        db = _mock_db([user, ma])
+        service = AuthService(db=db)
+
+        with pytest.raises(AuthenticationError):
+            await service.confirm_password_reset(
+                PasswordResetConfirmRequest(
+                    email=user.email, otp="000000", new_password="NewPassword@123!"
+                )
+            )
+
+        assert ma.attempts == 1
+        assert ma.used_at is None, "người dùng thật gõ nhầm một lần không được mất mã"
+
+    @patch("src.shared.email.smtp.send_email")
+    async def test_xin_ma_moi_thi_huy_het_ma_cu(self, mock_send_email: AsyncMock) -> None:
+        """Mã cũ không bị huỷ thì xin mã vài trăm lần là có vài trăm mã cùng sống."""
+        user = _make_user()
+        db = _mock_db([user])
+        service = AuthService(db=db)
+
+        await service.request_password_reset(PasswordResetRequestBody(email=user.email))
+
+        # `huy_ma_dat_lai_con_song` chạy bằng UPDATE nên dấu vết nằm ở db.execute.
+        assert db.execute.await_count >= 1, "phải có lệnh huỷ mã cũ trước khi phát mã mới"
+
+    @patch("src.shared.email.smtp.send_email")
+    async def test_ten_nguoi_dung_duoc_escape_trong_thu_otp(
+        self, mock_send_email: AsyncMock
+    ) -> None:
+        """`full_name` là thứ duy nhất người dùng tự nhập vào lá thư này."""
+        user = _make_user(full_name="<script>alert(1)</script>")
+        db = _mock_db([user])
+        service = AuthService(db=db)
+
+        await service.request_password_reset(PasswordResetRequestBody(email=user.email))
+
+        html = mock_send_email.await_args.kwargs["html"]
+        assert "<script>" not in html
+        assert "&lt;script&gt;" in html
+
