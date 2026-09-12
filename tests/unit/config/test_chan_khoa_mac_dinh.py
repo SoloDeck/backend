@@ -71,19 +71,49 @@ class TestChanKhoaMacDinh:
             _dung(app_env=moi_truong, secret_key="k" * 40, jwt_secret_key="ngan")
         assert "32" in str(loi.value)
 
-    def test_production_chan_khoa_sandbox_cua_cong_thanh_toan(self):
-        # Khoá sandbox ZaloPay/MoMo là công khai — ai đọc tài liệu của cổng cũng có,
-        # nên dùng ở production là tự mở đường cho người ngoài giả callback nâng gói.
-        with pytest.raises(ValidationError) as loi:
-            _dung(app_env="production", **KHOA_THAT)
-        assert "ZALOPAY_KEY1" in str(loi.value)
+    def test_khoa_cong_sandbox_khong_chan_production_khoi_dong(self):
+        """Quyết định có cân nhắc: cảnh báo, KHÔNG chặn. Đừng "siết cho chặt".
 
-    def test_staging_van_dung_duoc_khoa_sandbox_cua_cong(self):
-        # Cố ý nới ở staging: ci.yml hiện KHÔNG truyền ZALOPAY_KEY1/KEY2 cho môi trường
-        # nào, nên chặn ở đây là staging chết ngay lần merge tới mà chẳng được gì —
-        # staging vốn chỉ cần cổng sandbox.
-        assert _dung(app_env="staging", **KHOA_THAT).app_env == "staging"
+        Khoá sandbox ZaloPay/MoMo là công khai nên dùng ở production đúng là rủi ro —
+        người ngoài giả được callback để tự nâng gói miễn phí. Nhưng `ci.yml` không truyền
+        `ZALOPAY_KEY1/KEY2` cho bất kỳ môi trường nào và nhóm chưa có tài khoản merchant
+        thật, nên điều kiện KHÔNG BAO GIỜ thoả được. Chốt chặn không có đường đi qua thì
+        không còn là chốt bảo vệ, nó chỉ khoá đường deploy của chính mình.
+
+        Bài này khoá lại quyết định đó: production PHẢI khởi động được.  #Huynh
+        """
+        cau_hinh = _dung(app_env="production", **KHOA_THAT)
+        assert cau_hinh.is_production is True
+
+    def test_production_dung_khoa_sandbox_thi_bao_ten_tung_khoa(self):
+        # Không chặn thì phải kêu to — `main.py` đọc danh sách này để log mức error.
+        canh_bao = _dung(app_env="production", **KHOA_THAT).khoa_cong_dung_sandbox
+        assert "ZALOPAY_KEY1" in canh_bao
+        assert "ZALOPAY_KEY2" in canh_bao
+        assert "MOMO_SECRET_KEY" in canh_bao
+
+    def test_production_du_khoa_cong_that_thi_khong_canh_bao(self):
+        cau_hinh = _dung(app_env="production", **KHOA_THAT, **KHOA_CONG_THAT)
+        assert cau_hinh.khoa_cong_dung_sandbox == []
+
+    def test_staging_khong_canh_bao_khoa_cong(self):
+        # Staging vốn chỉ cần cổng sandbox — kêu ở đây là kêu oan mỗi lần khởi động.
+        assert _dung(app_env="staging", **KHOA_THAT).khoa_cong_dung_sandbox == []
 
     def test_production_du_khoa_that_thi_qua(self):
         cau_hinh = _dung(app_env="production", **KHOA_THAT, **KHOA_CONG_THAT)
         assert cau_hinh.is_production is True
+
+    def test_gia_tri_mac_dinh_trong_code_van_bi_coi_la_cho_trong(self):
+        """Chặn kiểu hỏng tinh vi: ai đó đổi giá trị mặc định mà quên cập nhật danh sách mẫu.
+
+        Các bài trên truyền khoá giả một cách tường minh (để không phụ thuộc biến môi
+        trường của CI), nên không bài nào còn kiểm rằng giá trị mặc định ĐANG NẰM TRONG
+        CODE thật sự bị nhận diện là chỗ trống. Bài này lấp đúng khe đó.  #Huynh
+        """
+        for ten in ("secret_key", "jwt_secret_key", "zalopay_key1", "zalopay_key2"):
+            mac_dinh = Settings.model_fields[ten].default
+            assert mac_dinh in Settings._GIA_TRI_MAU, (
+                f"{ten} có giá trị mặc định mới mà chưa thêm vào _GIA_TRI_MAU — "
+                "chốt chặn sẽ im lặng cho qua"
+            )

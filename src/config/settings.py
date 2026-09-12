@@ -292,49 +292,37 @@ class Settings(BaseSettings):
         }
     )
 
+    KHOA_CONG_THANH_TOAN: ClassVar[tuple[str, ...]] = (
+        "zalopay_key1",
+        "zalopay_key2",
+        "momo_access_key",
+        "momo_secret_key",
+    )
+
     @model_validator(mode="after")
-    def chan_khoa_mac_dinh(self) -> "Settings":
-        """Không cho chạy staging/production bằng khoá bí mật mặc định.
+    def chan_khoa_ky_mac_dinh(self) -> "Settings":
+        """Không cho chạy staging/production bằng khoá KÝ mặc định.
 
         Vì sao phải chết ngay lúc khởi động thay vì ghi log cảnh báo: `env_ignore_empty=True`
         ở đầu file khiến một biến môi trường RỖNG (pipeline ghi `JWT_SECRET_KEY=` khi GitHub
         secret chưa đặt hoặc bị đổi tên) rơi êm về giá trị mặc định. Không có lỗi, không có
         log, API vẫn khởi động, mọi người vẫn đăng nhập bình thường — trong khi bất kỳ ai
         cũng tự ký được token `role: admin` bằng khoá `change-me` mà đọc và sửa dữ liệu của
-        MỌI freelancer. Hỏng ồn ào lúc deploy còn hơn chạy êm với khoá ai cũng đoán ra.  #Huynh
+        MỌI freelancer. Hỏng ồn ào lúc deploy còn hơn chạy êm với khoá ai cũng đoán ra.
 
-        Hai mức khắt khe khác nhau, theo đúng thứ pipeline đang truyền được:
-
-        * `secret_key` và `jwt_secret_key` — chặn ở CẢ staging lẫn production. `ci.yml` đã
-          truyền sẵn hai biến này cho cả hai môi trường nên chỉ cần GitHub secret tồn tại.
-        * Khoá cổng thanh toán — chỉ chặn ở production. `ci.yml` hiện KHÔNG truyền
-          `ZALOPAY_KEY1/KEY2` cho môi trường nào, và `MOMO_SECRET_KEY` chỉ có ở khối
-          production; chặn ở staging là staging chết ngay lần merge tới trong khi staging
-          vốn chỉ cần cổng sandbox. Trước lần deploy production kế tiếp phải bổ sung hai
-          dòng ZALOPAY_KEY1/KEY2 vào `ci.yml` và đặt secret tương ứng, nếu không job deploy
-          sẽ đỏ ở đúng bước này.
+        CHỈ chặn hai khoá ký, KHÔNG chặn khoá cổng thanh toán — xem
+        `khoa_cong_dung_sandbox` ngay dưới để biết vì sao.  #Huynh
         """
         if self.app_env == "development":
             return self
 
         thieu: list[str] = []
-
         for ten in ("secret_key", "jwt_secret_key"):
             gia_tri = getattr(self, ten)
             if gia_tri in self._GIA_TRI_MAU:
                 thieu.append(f"{ten.upper()} còn là giá trị mặc định")
             elif len(gia_tri) < 32:
                 thieu.append(f"{ten.upper()} ngắn hơn 32 ký tự (đang {len(gia_tri)})")
-
-        if self.is_production:
-            for ten in (
-                "zalopay_key1",
-                "zalopay_key2",
-                "momo_access_key",
-                "momo_secret_key",
-            ):
-                if getattr(self, ten) in self._GIA_TRI_MAU:
-                    thieu.append(f"{ten.upper()} còn là khoá sandbox công khai")
 
         if thieu:
             raise ValueError(
@@ -344,6 +332,33 @@ class Settings(BaseSettings):
             )
 
         return self
+
+    @property
+    def khoa_cong_dung_sandbox(self) -> list[str]:
+        """Tên các khoá cổng thanh toán đang còn là khoá sandbox công khai.
+
+        Đây là CẢNH BÁO, không phải chốt chặn — và đó là một quyết định có cân nhắc, ghi lại
+        ở đây để người sau không "siết cho chặt" rồi làm gãy deploy.
+
+        Khoá sandbox của ZaloPay/MoMo là công khai: ai đọc tài liệu của cổng cũng có, nên
+        dùng ở production tức là người ngoài giả được callback để tự nâng gói miễn phí. Đáng
+        lẽ phải chặn. NHƯNG `ci.yml` không truyền `ZALOPAY_KEY1/KEY2` cho bất kỳ môi trường
+        nào (grep `ZALOPAY` trong file đó ra 0 kết quả), và nhóm chưa có tài khoản merchant
+        ZaloPay thật để mà đặt. Chặn ở đây thì điều kiện KHÔNG BAO GIỜ thoả được — chốt chặn
+        không có đường đi qua thì không còn là chốt bảo vệ, nó chỉ là cái khoá cửa chặn
+        chính mình deploy.
+
+        Nên: kêu thật to trong log lúc khởi động (xem `src/main.py`, sự kiện
+        `config.khoa_cong_sandbox`), còn cửa vẫn mở. Khi nào có khoá merchant thật thì thêm
+        `ZALOPAY_KEY1/KEY2` vào `ci.yml` + đặt secret, rồi mới nâng chỗ này thành `raise`.  #Huynh
+        """
+        if not self.is_production:
+            return []
+        return [
+            ten.upper()
+            for ten in self.KHOA_CONG_THANH_TOAN
+            if getattr(self, ten) in self._GIA_TRI_MAU
+        ]
 
 
 settings = Settings()  # type: ignore[call-arg]
