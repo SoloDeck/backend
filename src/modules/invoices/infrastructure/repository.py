@@ -102,6 +102,7 @@ class InvoicesRepository:
         self,
         owner_user_id: uuid.UUID,
         status: str | None = None,
+        deal_id: uuid.UUID | None = None,
         invoice_number: str | None = None,
         from_issue_date: date | None = None,
         to_issue_date: date | None = None,
@@ -116,6 +117,8 @@ class InvoicesRepository:
         conditions = [InvoiceModel.owner_user_id == owner_user_id]
         if status is not None:
             conditions.append(InvoiceModel.status == status)
+        if deal_id is not None:
+            conditions.append(InvoiceModel.deal_id == deal_id)
         if invoice_number is not None:
             conditions.append(InvoiceModel.invoice_number.ilike(f"%{invoice_number}%"))
         if from_issue_date is not None:

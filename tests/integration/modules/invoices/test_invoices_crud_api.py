@@ -112,6 +112,60 @@ class TestListInvoices:
         assert len(data) == 1
         assert data[0]["id"] == inv["id"]
 
+    async def test_filter_by_deal_id_returns_only_that_deal(self, client: AsyncClient) -> None:
+        headers = await _auth_headers(client)
+        client_obj = await _create_client(client, headers)
+        deal_id = await _create_deal(client, headers, client_obj["id"])
+        mine = await _create_invoice(client, headers, client_id=client_obj["id"], deal_id=deal_id)
+        await _create_invoice(client, headers)  # hoá đơn của deal khác
+
+        resp = await client.get(f"/api/v1/invoices?deal_id={deal_id}", headers=headers)
+        assert resp.status_code == 200, resp.text
+        data = resp.json()["data"]
+        assert [inv["id"] for inv in data] == [mine["id"]]
+        assert resp.json()["pagination"]["total"] == 1
+
+    async def test_filter_by_deal_id_finds_invoice_off_the_first_page(
+        self, client: AsyncClient
+    ) -> None:
+        """Deal cũ vẫn phải ra hoá đơn dù nó đã bị hoá đơn mới đẩy khỏi trang đầu.
+
+        Trước đây web lấy trang đầu rồi lọc theo deal ở trình duyệt, nên ai có nhiều hoá đơn
+        hơn một trang thì mở deal cũ ra thấy trống trơn.
+        """
+        headers = await _auth_headers(client)
+        client_obj = await _create_client(client, headers)
+        deal_id = await _create_deal(client, headers, client_obj["id"])
+        old = await _create_invoice(
+            client,
+            headers,
+            client_id=client_obj["id"],
+            deal_id=deal_id,
+            issue_date=date(2026, 1, 5).isoformat(),
+        )
+        for _ in range(3):
+            await _create_invoice(
+                client,
+                headers,
+                issue_date=date(2027, 12, 1).isoformat(),
+                due_date=date(2027, 12, 31).isoformat(),
+            )
+
+        resp = await client.get(f"/api/v1/invoices?deal_id={deal_id}&page_size=2", headers=headers)
+        assert resp.status_code == 200, resp.text
+        assert [inv["id"] for inv in resp.json()["data"]] == [old["id"]]
+
+    async def test_filter_by_deal_id_of_another_user_returns_empty(
+        self, client: AsyncClient
+    ) -> None:
+        headers_a = await _auth_headers(client)
+        headers_b = await _auth_headers(client)
+        inv_a = await _create_invoice(client, headers_a)
+
+        resp = await client.get(f"/api/v1/invoices?deal_id={inv_a['deal_id']}", headers=headers_b)
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["data"] == []
+
     async def test_tenant_isolation(self, client: AsyncClient) -> None:
         headers_a = await _auth_headers(client)
         headers_b = await _auth_headers(client)

@@ -95,6 +95,7 @@ class InvoicesService:
         self,
         user_id: uuid.UUID,
         status: str | None = None,
+        deal_id: uuid.UUID | None = None,
         invoice_number: str | None = None,
         from_issue_date: date | None = None,
         to_issue_date: date | None = None,
@@ -109,6 +110,7 @@ class InvoicesService:
         return await self.repo.list_all(
             user_id,
             status=status,
+            deal_id=deal_id,
             invoice_number=invoice_number,
             from_issue_date=from_issue_date,
             to_issue_date=to_issue_date,
