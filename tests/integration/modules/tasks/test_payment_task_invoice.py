@@ -199,3 +199,29 @@ async def test_task_chua_xuat_hoa_don_thi_invoice_la_none(client: AsyncClient) -
     task = (await client.get(f"/api/v1/tasks/{task_id}", headers=headers)).json()["data"]
 
     assert task["invoice"] is None
+
+
+async def test_huy_hoa_don_roi_van_xuat_lai_duoc(client: AsyncClient) -> None:
+    """Gửi nhầm số tiền → huỷ hóa đơn → phải soạn lại được cái mới.
+
+    Hóa đơn `void` không gửi lại được (`send` chỉ nhận `draft`) và cũng không ghi nhận
+    thanh toán được. Bản cũ chốt idempotency theo "hàng còn tồn tại" nên trả về chính hóa
+    đơn đã huỷ — khoản phải thu của mốc đó mắc kẹt vĩnh viễn.  #Huynh
+    """
+    headers, task_id = await _seed(client)
+    cu = (await client.post(f"/api/v1/tasks/{task_id}/invoice", headers=headers)).json()["data"]
+
+    huy = await client.post(f"/api/v1/invoices/{cu['id']}/void", headers=headers)
+    assert huy.status_code == 200, huy.text
+
+    lan2 = await client.post(f"/api/v1/tasks/{task_id}/invoice", headers=headers)
+
+    assert lan2.status_code == 201, lan2.text
+    moi = lan2.json()["data"]
+    assert moi["id"] != cu["id"]
+    assert moi["status"] == "draft"
+    assert moi["total"] == "12000000.00"
+
+    # Mốc thu tiền phải trỏ sang hóa đơn mới, không còn dính hóa đơn đã huỷ.
+    task = (await client.get(f"/api/v1/tasks/{task_id}", headers=headers)).json()["data"]
+    assert task["invoice"]["id"] == moi["id"]
