@@ -366,6 +366,54 @@ async def test_thu_bao_deal_moi_gui_NGAY_va_neu_so_tep_khach_khai() -> None:
     assert "2 tệp" in body
 
 
+async def test_broker_chet_van_khong_lam_mat_phieu_cua_khach() -> None:
+    """Redis chết thì mất điểm AI thôi, KHÔNG được mất phiếu khách vừa gửi.
+
+    `.delay()` là lời gọi cuối luồng và là lời gọi DUY NHẤT chạm tới broker. Trước đây nó
+    ném lên thì route ném theo, `get_db_session` rollback sạch client + deal + phiếu +
+    thông báo — trong khi thư "Khách hàng mới gửi yêu cầu" ĐÃ đi và không thu hồi được.
+    Freelancer mở app không thấy deal nào.  #Huynh
+    """
+    owner = OwnerStub(id=uuid.uuid4(), email="owner@example.com")
+    client_id = uuid.uuid4()
+    intake = IntakeStub(id=uuid.uuid4(), client_id=client_id)
+    deal = DealStub(id=uuid.uuid4(), stage="new_lead", client_id=client_id)
+    repo = AsyncMock()
+    repo.get_owner_by_public_link.return_value = owner
+    repo.create_client.return_value = DealStub(id=client_id, stage="prospect")
+    repo.create.return_value = deal
+    repo.create_intake.return_value = intake
+    repo.get_owner_by_id.return_value = owner
+    repo.get_by_id.return_value = deal
+    repo.get_client_by_id.return_value = ClientStub(id=client_id)
+    repo.get_intake_for_deal.return_value = intake
+
+    db = AsyncMock()
+    db.add = MagicMock()
+
+    def _broker_died(*_args: object) -> None:
+        raise ConnectionError("Error 111 connecting to redis:6379. Connection refused.")
+
+    with pytest.MonkeyPatch().context() as mp:
+        mp.setattr("src.workers.ai_jobs.tasks.qualify_deal_async_by_id.delay", _broker_died)
+        mp.setattr("src.shared.email.smtp.send_email", AsyncMock())
+        mp.setattr(
+            "src.modules.deals.application.attachment_service.DealAttachmentService.list_for_deal",
+            AsyncMock(return_value=[]),
+        )
+        result = await DealsService(db=db, repo=repo, usage=AsyncMock()).create_public_intake(
+            f"tok-{uuid.uuid4().hex}", _intake_payload()
+        )
+
+    # Phiếu vẫn về được tới người gọi -> route không ném -> không bị rollback.
+    assert result is intake
+    repo.create_client.assert_awaited_once()
+    repo.create.assert_awaited_once()
+    repo.create_intake.assert_awaited_once()
+    # Thông báo trong app vẫn được ghi cùng transaction với deal.
+    assert db.add.call_args.args[0].type == "intake_submitted"
+
+
 class TestPublicIntakeAttachment:
     """Đường ĐÍNH KÈM công khai — không đăng nhập mà nhận file, nên phải khoá kỹ.
 

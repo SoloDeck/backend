@@ -14,11 +14,13 @@ import pytest
 from src.modules.reminders.application import delivery_service as _delivery_mod
 from src.modules.reminders.application.delivery_service import (
     MAX_DELIVERY_ATTEMPTS,
+    NOTIFICATION_NAME_MAX,
     ReminderDeliveryService,
     build_body,
     build_footer,
     build_subject,
     is_retryable_smtp_error,
+    short_client_name,
 )
 from src.shared.exceptions.domain import NotFoundError
 
@@ -79,9 +81,13 @@ def make_owner(**overrides):  # type: ignore[no-untyped-def]
 
 def make_db():  # type: ignore[no-untyped-def]
     """Session giả. `add()` phải là MagicMock — AsyncMock biến nó thành coroutine không
-    ai await, pytest báo `PytestUnraisableExceptionWarning` mà không nói rõ vì sao."""
+    ai await, pytest báo `PytestUnraisableExceptionWarning` mà không nói rõ vì sao.
+
+    `begin_nested()` cũng vậy: nó là hàm ĐỒNG BỘ trả về một async context manager. Để
+    AsyncMock tự sinh thì nó trả coroutine, và `async with` nổ TypeError."""
     db = AsyncMock()
     db.add = MagicMock()
+    db.begin_nested = MagicMock(return_value=AsyncMock())
     return db
 
 
@@ -603,3 +609,95 @@ class TestRetry:
         assert result.should_retry is False
         assert reminder.status == "failed"
         assert reminder.retry_count == 0
+
+
+class TestChuongHongKhongDuocHuyLuotGuiDaThanhCong:
+    """Khách nhận ĐI NHẬN LẠI cùng một thư mỗi 60 giây — vết nặng nhất của file này.
+
+    Chuỗi nhân quả: thư gửi đi thật → dựng biên nhận `Đã gửi email nhắc {tên khách}` nhét
+    vào `notifications.title` (VARCHAR 200) trong khi `clients.name` tới 255 ký tự →
+    INSERT vỡ → transaction đổ → lời nhắc không kịp sang `sent`, quay về `pending` →
+    beat quét lại sau một phút → gửi lại. Không có trần.
+    """
+
+    def test_ten_khach_ngan_thi_giu_nguyen(self) -> None:
+        assert short_client_name("Quán cà phê Nắng") == "Quán cà phê Nắng"
+        assert short_client_name(None) is None
+
+    def test_ten_khach_dai_bi_cat_cho_vua_cot_tieu_de(self) -> None:
+        """`clients.name` tới 255 ký tự, `notifications.title` chỉ 200 — phải cắt."""
+        cut = short_client_name("Nguyễn" * 50)  # 300 ký tự
+        assert cut is not None
+        assert len(cut) <= NOTIFICATION_NAME_MAX
+        assert cut.endswith("…")
+        # Tiêu đề thật ghép thêm "Đã gửi email nhắc " vẫn phải lọt cột VARCHAR(200).
+        assert len(f"Đã gửi email nhắc {cut}") <= 200
+
+    async def test_ten_khach_dai_khong_lot_nguyen_vao_thong_bao(
+        self, notifications: MagicMock
+    ) -> None:
+        reminder = make_reminder(channel="email")
+        service, _ = make_service(
+            reminder, client=make_client(name="Công ty " + "A" * 240), send_email=AsyncMock()
+        )
+
+        await service.deliver(reminder.id)
+
+        name = notifications.notify_reminder_sent.await_args.kwargs["client_name"]
+        assert len(name) <= NOTIFICATION_NAME_MAX
+
+    async def test_chuong_hong_thi_van_chot_da_gui_chu_khong_de_quay_ve_pending(
+        self, notifications: MagicMock
+    ) -> None:
+        """Thư ĐÃ rời hệ thống. Ghi biên nhận hỏng thì mất biên nhận, không mất lượt gửi."""
+        notifications.notify_reminder_sent.side_effect = RuntimeError(
+            "value too long for type character varying(200)"
+        )
+        send_email = AsyncMock()
+        reminder = make_reminder(channel="email")
+        service, _ = make_service(reminder, send_email=send_email)
+
+        result = await service.deliver(reminder.id)
+
+        send_email.assert_awaited_once()
+        assert reminder.status == "sent"  # KHÔNG còn "pending" → beat không quét lại
+        assert result.delivered is True
+
+    async def test_chuong_hong_o_kenh_zalo_cung_khong_huy_luot_gui(
+        self, notifications: MagicMock
+    ) -> None:
+        notifications.notify_reminder_sent.side_effect = RuntimeError("insert failed")
+        zalo = AsyncMock()
+        reminder = make_reminder(channel="zalo")
+        service, _, _ = make_zalo_service(
+            reminder, oa_token="tok", zalo_user_id="follower-1", zalo_client=zalo
+        )
+
+        result = await service.deliver(reminder.id)
+
+        zalo.send_cs_message.assert_awaited_once()
+        assert reminder.status == "sent"
+        assert result.delivered is True
+
+    async def test_kenh_in_app_hong_thi_khong_nuot_loi(self, notifications: MagicMock) -> None:
+        """Ở kênh này thông báo CHÍNH LÀ việc gửi — nuốt lỗi là khoe "đã gửi" mà không gửi."""
+        notifications.notify_reminder_due.side_effect = RuntimeError("insert failed")
+        reminder = make_reminder(channel="in_app")
+        service, _ = make_service(reminder)
+
+        with pytest.raises(RuntimeError):
+            await service.deliver(reminder.id)
+
+        assert reminder.status == "pending"
+
+    async def test_bao_hong_cung_cat_ten_khach(self, notifications: MagicMock) -> None:
+        """`notify_reminder_failed` ghép tên vào tiêu đề y hệt — cùng một cái bẫy."""
+        reminder = make_reminder(channel="email")
+        service, _ = make_service(
+            reminder, client=make_client(name="B" * 250, email=None), send_email=AsyncMock()
+        )
+
+        await service.deliver(reminder.id)
+
+        name = notifications.notify_reminder_failed.await_args.kwargs["client_name"]
+        assert len(name) <= NOTIFICATION_NAME_MAX

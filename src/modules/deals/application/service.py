@@ -239,7 +239,25 @@ class DealsService:
 
         from src.workers.ai_jobs.tasks import qualify_deal_async_by_id
 
-        qualify_deal_async_by_id.delay(str(owner.id), str(deal.id))
+        # Xếp lệnh chấm điểm AI — BEST-EFFORT, đúng cách đã xử lý thư ở ngay trên.
+        #
+        # Đây là lời gọi CUỐI CÙNG của luồng và là lời gọi DUY NHẤT chạm tới broker. Để nó
+        # ném lên thì route ném theo, `get_db_session` rollback SẠCH mọi thứ vừa ghi: không
+        # client, không deal, không phiếu, không thông báo — trong khi thư "Khách hàng mới
+        # gửi yêu cầu" ĐÃ đi và không thu hồi được. Freelancer mở app không thấy deal nào,
+        # loại lỗi mất cả ngày mới lần ra.
+        #
+        # Redis chết thì cùng lắm mất điểm AI, mà freelancer vẫn bấm "Đánh giá deal" tay
+        # được. Mất phiếu của khách thì không có đường lấy lại.  #Huynh
+        try:
+            qualify_deal_async_by_id.delay(str(owner.id), str(deal.id))
+        except Exception as exc:  # noqa: BLE001 — best-effort, không chặn luồng intake
+            log.warning(
+                "intake.qualify_dispatch_failed",
+                owner_id=str(owner.id),
+                deal_id=str(deal.id),
+                error=str(exc),
+            )
 
         return intake
 

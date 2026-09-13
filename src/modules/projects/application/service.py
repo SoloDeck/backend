@@ -31,6 +31,14 @@ class ProjectService:
         return project
 
     async def create(self, owner_user_id: uuid.UUID, payload: CreateProjectRequest) -> ProjectModel:
+        if (
+            payload.deal_id is not None
+            and await self.repo.get_deal_by_id(payload.deal_id, owner_user_id) is None
+        ):
+            raise NotFoundError(
+                f"Không tìm thấy deal {payload.deal_id} của bạn. "
+                "Hãy chọn lại deal, hoặc tạo dự án không gắn deal nào."
+            )
         return await self.repo.create(
             owner_id=owner_user_id,
             deal_id=payload.deal_id,

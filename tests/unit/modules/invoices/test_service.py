@@ -118,3 +118,16 @@ async def test_get_public_view_raises_for_invalid_token() -> None:
 
     with pytest.raises(NotFoundError):
         await service.get_public_view("bad_token")
+
+
+async def test_list_all_forwards_deal_filter_to_repository() -> None:
+    """Lọc theo deal phải xuống tận câu SQL, không để trình duyệt tự lọc trang đầu."""
+    repo = AsyncMock()
+    repo.list_all.return_value = ([], 0)
+    service = InvoicesService(db=AsyncMock(), repo=repo)
+    deal_id = uuid.uuid4()
+    user_id = uuid.uuid4()
+
+    await service.list_all(user_id, deal_id=deal_id, page=1, page_size=20)
+
+    assert repo.list_all.await_args.kwargs["deal_id"] == deal_id

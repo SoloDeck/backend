@@ -12,6 +12,7 @@ from src.modules.proposals.application.service import (
 )
 from src.shared.exceptions.domain import (
     BusinessRuleError,
+    EntitlementError,
     InvalidStateTransitionError,
     NotFoundError,
 )
@@ -459,3 +460,91 @@ class TestCongChanTongHangMuc:
             )
 
         assert result.status == "sent"
+
+
+def _make_plan(**kwargs) -> MagicMock:
+    m = MagicMock()
+    m.can_export_pdf = kwargs.get("can_export_pdf", True)
+    return m
+
+
+def _make_sub(**kwargs) -> MagicMock:
+    m = MagicMock()
+    m.plan_id = kwargs.get("plan_id", uuid.uuid4())
+    return m
+
+
+class TestXuatPdfBaoGiaTheoGoi:
+    """`GET /proposals/{id}/pdf` — đường TẢI PDF báo giá mà web thật sự gọi.
+
+    Trước đây không hề kiểm `can_export_pdf`, nên gói Free tải PDF thoải mái và công tắc
+    bên Quản trị chỉ là đồ trang trí. Cùng khuôn với hợp đồng: không gói → 402, gói không có
+    PDF → 402, có quyền mới render — và chặn trước khi dựng document.
+    """
+
+    async def test_khong_co_goi_thi_chan(self) -> None:
+        db = AsyncMock()
+        db.scalar.side_effect = [None]
+
+        with pytest.raises(EntitlementError, match="chưa có gói"):
+            await ProposalsService(db=db).generate_pdf(uuid.uuid4(), uuid.uuid4())
+
+    async def test_goi_khong_cho_xuat_pdf_thi_chan(self) -> None:
+        db = AsyncMock()
+        db.scalar.side_effect = [_make_sub(), _make_plan(can_export_pdf=False)]
+
+        with pytest.raises(EntitlementError, match="xuất PDF"):
+            await ProposalsService(db=db).generate_pdf(uuid.uuid4(), uuid.uuid4())
+
+    async def test_chan_truoc_khi_dung_document(self) -> None:
+        """Chặn TRƯỚC khi dựng document — không tốn công render rồi mới từ chối."""
+        db = AsyncMock()
+        db.scalar.side_effect = [_make_sub(), _make_plan(can_export_pdf=False)]
+
+        with (
+            patch(
+                "src.modules.proposals.application.service.ProposalsService._build_document",
+                new_callable=AsyncMock,
+            ) as build_doc,
+            pytest.raises(EntitlementError),
+        ):
+            await ProposalsService(db=db).generate_pdf(uuid.uuid4(), uuid.uuid4())
+
+        build_doc.assert_not_awaited()
+
+    async def test_goi_cho_phep_thi_render(self) -> None:
+        db = AsyncMock()
+        db.scalar.side_effect = [_make_sub(), _make_plan(can_export_pdf=True)]
+
+        with (
+            patch(
+                "src.modules.proposals.application.service.ProposalsService._build_document",
+                new_callable=AsyncMock,
+                return_value=MagicMock(),
+            ),
+            patch("src.modules.proposals.application.service.ProposalPdfRenderer") as renderer,
+        ):
+            renderer.return_value.render_pdf.return_value = b"%PDF-1.4 fake"
+            result = await ProposalsService(db=db).generate_pdf(uuid.uuid4(), uuid.uuid4())
+
+        assert result == b"%PDF-1.4 fake"
+
+    async def test_xem_truoc_html_van_mo_cho_moi_goi(self) -> None:
+        """Chỉ chặn đường TẢI. Xem trước HTML không được chặn nhầm — chặn nó là chặn
+        luôn việc freelancer xem lại tờ báo giá của chính mình.
+        """
+        db = AsyncMock()
+        db.scalar.side_effect = [None]  # không gói nào cả
+
+        with (
+            patch(
+                "src.modules.proposals.application.service.ProposalsService._build_document",
+                new_callable=AsyncMock,
+                return_value=MagicMock(),
+            ),
+            patch("src.modules.proposals.application.service.ProposalPdfRenderer") as renderer,
+        ):
+            renderer.return_value.render_html.return_value = "<html>báo giá</html>"
+            html = await ProposalsService(db=db).render_preview_html(uuid.uuid4(), uuid.uuid4())
+
+        assert html == "<html>báo giá</html>"

@@ -12,6 +12,27 @@ def _project_payload(**overrides: object) -> dict[str, Any]:
     return {"name": f"Project {uuid.uuid4().hex[:6]}", **overrides}
 
 
+async def _create_deal(http: AsyncClient, headers: dict[str, str]) -> str:
+    """Tạo client + deal thuộc về chủ của `headers`, trả về id của deal."""
+    client_resp = await http.post(
+        "/api/v1/clients",
+        json={"name": f"Client {uuid.uuid4().hex[:6]}", "status": "prospect"},
+        headers=headers,
+    )
+    assert client_resp.status_code == 201, client_resp.text
+    deal_resp = await http.post(
+        "/api/v1/deals",
+        json={
+            "client_id": client_resp.json()["data"]["id"],
+            "title": "Deal for project test",
+            "stage": "new_lead",
+        },
+        headers=headers,
+    )
+    assert deal_resp.status_code == 201, deal_resp.text
+    return deal_resp.json()["data"]["id"]  # type: ignore[no-any-return]
+
+
 async def _create_project(
     http: AsyncClient, headers: dict[str, str], **overrides: object
 ) -> dict[str, Any]:
@@ -45,6 +66,45 @@ class TestCreateProject:
         headers = await _auth_headers(client)
         resp = await client.post("/api/v1/projects", json={}, headers=headers)
         assert resp.status_code == 422
+
+    async def test_create_project_with_own_deal_201(self, client: AsyncClient) -> None:
+        headers = await _auth_headers(client)
+        deal_id = await _create_deal(client, headers)
+
+        resp = await client.post(
+            "/api/v1/projects",
+            json={"name": "Landing page", "deal_id": deal_id},
+            headers=headers,
+        )
+        assert resp.status_code == 201, resp.text
+        assert resp.json()["data"]["deal_id"] == deal_id
+
+    async def test_create_project_with_other_owner_deal_404(self, client: AsyncClient) -> None:
+        """Deal của người khác không được nhận: dự án tạo ra sẽ là hàng mồ côi."""
+        victim = await _auth_headers(client)
+        deal_id = await _create_deal(client, victim)
+
+        attacker = await _auth_headers(client)
+        resp = await client.post(
+            "/api/v1/projects",
+            json={"name": "Stolen", "deal_id": deal_id},
+            headers=attacker,
+        )
+        assert resp.status_code == 404, resp.text
+        assert "không tìm thấy" in resp.json()["error"]["message"].lower()
+
+        listed = await client.get("/api/v1/projects", headers=attacker)
+        assert listed.json()["pagination"]["total"] == 0
+
+    async def test_create_project_with_unknown_deal_404(self, client: AsyncClient) -> None:
+        """UUID gõ sai phải là 404 tiếng Việt, không phải 500 do vỡ khoá ngoại."""
+        headers = await _auth_headers(client)
+        resp = await client.post(
+            "/api/v1/projects",
+            json={"name": "Typo", "deal_id": str(uuid.uuid4())},
+            headers=headers,
+        )
+        assert resp.status_code == 404, resp.text
 
 
 class TestListProjects:

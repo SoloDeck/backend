@@ -5,6 +5,8 @@ from unittest.mock import patch
 
 from httpx import AsyncClient
 
+from tests.conftest import grant_ai_plan
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -33,6 +35,19 @@ async def _make_deal(client: AsyncClient, headers: dict, title: str = "Deal") ->
     )
     assert d.status_code == 201
     return d.json()["data"]["id"]
+
+
+async def _grant_pdf_plan(client: AsyncClient, headers: dict, db_session) -> None:
+    """Cấp gói có quyền xuất PDF cho user test.
+
+    `GET /proposals/{id}/pdf` giờ đi qua cổng `can_export_pdf` như bên hợp đồng, mà user
+    đăng ký mới trong test không có gói nào nên mặc định là 402. Bài nào kiểm những thứ
+    KHÁC (404, quyền đọc chéo, byte trả về) thì cấp gói trước để vẫn kiểm đúng thứ nó định
+    kiểm. Bài kiểm chính cổng 402 thì đừng gọi.
+    """
+    me = await client.get("/api/v1/users/me", headers=headers)
+    assert me.status_code == 200, me.text
+    await grant_ai_plan(db_session, uuid.UUID(me.json()["data"]["id"]))
 
 
 async def _create_proposal(
@@ -368,8 +383,9 @@ _FULL_CONTENT = {
 class TestProposalPdf:
     """GET /api/v1/proposals/{id}/pdf"""
 
-    async def test_returns_pdf_bytes(self, client: AsyncClient) -> None:
+    async def test_returns_pdf_bytes(self, client: AsyncClient, db_session) -> None:
         headers = await _auth(client)
+        await _grant_pdf_plan(client, headers, db_session)
         deal_id = await _make_deal(client, headers)
         proposal = await _create_proposal(client, headers, deal_id, content=_FULL_CONTENT)
 
@@ -388,8 +404,9 @@ class TestProposalPdf:
         resp = await client.get(f"/api/v1/proposals/{uuid.uuid4()}/pdf")
         assert resp.status_code == 401
 
-    async def test_unknown_proposal_returns_404(self, client: AsyncClient) -> None:
+    async def test_unknown_proposal_returns_404(self, client: AsyncClient, db_session) -> None:
         headers = await _auth(client)
+        await _grant_pdf_plan(client, headers, db_session)
         with patch(
             "src.ai.proposal_generator.application.render.ProposalPdfRenderer.render_pdf",
             return_value=_FAKE_PDF,
@@ -397,9 +414,10 @@ class TestProposalPdf:
             resp = await client.get(f"/api/v1/proposals/{uuid.uuid4()}/pdf", headers=headers)
         assert resp.status_code == 404
 
-    async def test_other_users_proposal_returns_404(self, client: AsyncClient) -> None:
+    async def test_other_users_proposal_returns_404(self, client: AsyncClient, db_session) -> None:
         headers_a = await _auth(client)
         headers_b = await _auth(client)
+        await _grant_pdf_plan(client, headers_b, db_session)
         deal_id = await _make_deal(client, headers_a)
         proposal = await _create_proposal(client, headers_a, deal_id, content=_FULL_CONTENT)
 
@@ -409,3 +427,28 @@ class TestProposalPdf:
         ):
             resp = await client.get(f"/api/v1/proposals/{proposal['id']}/pdf", headers=headers_b)
         assert resp.status_code == 404
+
+    async def test_goi_khong_cho_xuat_pdf_tra_402(self, client: AsyncClient) -> None:
+        """Đường web gọi khi bấm "Tải PDF" phải theo cổng của gói.
+
+        Trước đây báo giá không kiểm gì cả, nên gói Free tải PDF thoải mái và công tắc
+        "Cho phép xuất PDF" bên Quản trị chỉ là đồ trang trí — giống hệt lỗi đã sửa ở hợp đồng.
+        """
+        headers = await _auth(client)  # user mới: không gói nào
+        deal_id = await _make_deal(client, headers)
+        proposal = await _create_proposal(client, headers, deal_id, content=_FULL_CONTENT)
+
+        resp = await client.get(f"/api/v1/proposals/{proposal['id']}/pdf", headers=headers)
+
+        assert resp.status_code == 402, resp.text
+
+    async def test_xem_truoc_html_khong_bi_chan_boi_goi(self, client: AsyncClient) -> None:
+        """Chỉ chặn đường TẢI. Xem trước HTML vẫn mở cho mọi gói."""
+        headers = await _auth(client)  # user mới: không gói nào
+        deal_id = await _make_deal(client, headers)
+        proposal = await _create_proposal(client, headers, deal_id, content=_FULL_CONTENT)
+
+        resp = await client.get(f"/api/v1/proposals/{proposal['id']}/preview", headers=headers)
+
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["data"]["html"]

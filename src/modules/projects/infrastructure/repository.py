@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.infrastructure.database.models import ProjectModel
+from src.infrastructure.database.models import DealModel, ProjectModel
 
 
 @dataclass
@@ -28,6 +28,18 @@ class ProjectRepository:
             )
         )
         return res
+
+    async def get_deal_by_id(
+        self, deal_id: uuid.UUID, owner_user_id: uuid.UUID
+    ) -> DealModel | None:
+        """Deal của chính chủ, chưa xoá mềm. Cùng khuôn với InvoicesRepository."""
+        return await self.db.scalar(
+            select(DealModel).where(
+                DealModel.id == deal_id,
+                DealModel.owner_user_id == owner_user_id,
+                DealModel.deleted_at.is_(None),
+            )
+        )
 
     async def get_by_deal_id(
         self, deal_id: uuid.UUID, owner_user_id: uuid.UUID

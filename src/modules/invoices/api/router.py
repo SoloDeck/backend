@@ -50,6 +50,7 @@ async def list_invoices(
         default=None,
         description="Filter by status: draft, sent, partially_paid, paid, overdue, void",
     ),
+    deal_id: uuid.UUID | None = Query(default=None, description="Filter by deal"),
     invoice_number: str | None = Query(
         default=None, description="Search by invoice number (partial match)"
     ),
@@ -69,6 +70,7 @@ async def list_invoices(
     invoices, total = await InvoicesService(db=db).list_all(
         user_id,
         status=status,
+        deal_id=deal_id,
         invoice_number=invoice_number,
         from_issue_date=from_issue_date,
         to_issue_date=to_issue_date,

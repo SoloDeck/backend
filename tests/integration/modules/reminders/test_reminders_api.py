@@ -116,6 +116,38 @@ class TestCreateReminder:
         resp = await client.post("/api/v1/reminders", json=payload, headers=headers)
         assert resp.status_code == 422
 
+    async def test_dat_lich_tren_du_an_nguoi_khac_thi_404(self, client: AsyncClient) -> None:
+        """`target_id` tới thẳng từ body — không kiểm chủ sở hữu thì API nhận lưu một id
+        trỏ sang dữ liệu người khác và trả 201 "đã đặt lịch"."""
+        headers_a = await _auth(client)
+        headers_b = await _auth(client)
+        deal_id = await _make_deal_id(client, headers_a)
+
+        resp = await client.post(
+            "/api/v1/reminders", json=_reminder_payload(deal_id), headers=headers_b
+        )
+        assert resp.status_code == 404, resp.text
+        assert "dự án" in resp.json()["error"]["message"]
+
+    async def test_dat_lich_tren_id_khong_ton_tai_thi_404(self, client: AsyncClient) -> None:
+        headers = await _auth(client)
+        resp = await client.post(
+            "/api/v1/reminders", json=_reminder_payload(str(uuid.uuid4())), headers=headers
+        )
+        assert resp.status_code == 404, resp.text
+
+    async def test_dat_lich_tren_khach_cua_minh_thi_201(self, client: AsyncClient) -> None:
+        headers = await _auth(client)
+        c = await client.post(
+            "/api/v1/clients", json={"name": "Client", "status": "prospect"}, headers=headers
+        )
+        resp = await client.post(
+            "/api/v1/reminders",
+            json=_reminder_payload(c.json()["data"]["id"], target_type="client"),
+            headers=headers,
+        )
+        assert resp.status_code == 201, resp.text
+
 
 # ---------------------------------------------------------------------------
 # GET /reminders
@@ -440,6 +472,44 @@ class TestSendReminderNow:
 
         assert resp.json()["data"]["status"] == "cancelled"
         send_email.assert_not_awaited()
+
+    async def test_ten_khach_dai_khong_lam_do_luot_gui_da_thanh_cong(
+        self, client: AsyncClient
+    ) -> None:
+        """Vết "khách nhận lại cùng một thư mỗi 60 giây", chạy qua DB thật.
+
+        `clients.name` cho tới 255 ký tự, `notifications.title` chỉ VARCHAR(200). Trước
+        đây biên nhận "Đã gửi email nhắc {tên khách}" làm vỡ INSERT SAU khi thư đã đi,
+        kéo đổ cả transaction: lời nhắc không kịp sang `sent` nên quay về `pending`, beat
+        quét lại sau một phút và gửi tiếp — không có trần.
+        """
+        headers = await _auth(client)
+        c = await client.post(
+            "/api/v1/clients",
+            json={"name": "Công ty " + "A" * 240, "email": "khach@example.com"},
+            headers=headers,
+        )
+        d = await client.post(
+            "/api/v1/deals",
+            json={"client_id": c.json()["data"]["id"], "title": "Deal"},
+            headers=headers,
+        )
+        payload = _reminder_payload(d.json()["data"]["id"])
+        # "both" để biên nhận trong chuông chắc chắn được ghi ngay trong lượt gửi này.
+        payload["channel"] = "both"
+        created = await client.post("/api/v1/reminders", json=payload, headers=headers)
+        reminder_id = created.json()["data"]["id"]
+
+        with patch(SEND_EMAIL, new=AsyncMock()) as send_email:
+            resp = await client.post(f"/api/v1/reminders/{reminder_id}/send", headers=headers)
+
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["data"]["delivered"] is True
+        send_email.assert_awaited_once()
+
+        # Điều quan trọng nhất: lời nhắc đã CHỐT ở `sent`. Còn `pending` là beat gửi lại.
+        after = await client.get(f"/api/v1/reminders/{reminder_id}", headers=headers)
+        assert after.json()["data"]["status"] == "sent"
 
     async def test_not_found_returns_404(self, client: AsyncClient) -> None:
         headers = await _auth(client)

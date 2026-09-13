@@ -284,6 +284,7 @@ class IntakeFormService:
             raise NotFoundError("Intake form not found or link is invalid")
 
         config = await self.repo.get_by_owner(user.id)
+        labels = {f["field_key"]: f["label"] for f in _DEFAULT_FIELDS}
         if config is None:
             required_keys = {"name", "inquiry_text"}
         else:
@@ -296,6 +297,7 @@ class IntakeFormService:
                 raise ValidationError("Freelancer hiện không nhận yêu cầu mới qua biểu mẫu này.")
             fields = await self.repo.get_visible_fields(config.id)
             required_keys = {f.field_key for f in fields if f.is_required}
+            labels = {f.field_key: f.label for f in fields}
 
         payload_values = {
             "name": getattr(payload, "name", None),
@@ -306,6 +308,17 @@ class IntakeFormService:
             "estimated_budget": getattr(payload, "estimated_budget", None),
             "desired_timeline": getattr(payload, "desired_timeline", None),
         }
-        missing = [k for k in required_keys if not payload_values.get(k)]
+        # Chỉ xét bắt buộc với khoá mà body THẬT SỰ mang. Trường tự tạo (`custom-...`) không
+        # nằm trong 7 khoá chuẩn ở trên — web gộp câu trả lời của nó vào `inquiry_text` — nên
+        # khoá đó không bao giờ có mặt trong body. Vòng kiểm cũ coi "không có mặt" là "để
+        # trống", nên chỉ cần freelancer thêm một trường tự tạo rồi gạt Bắt buộc là biểu mẫu
+        # công khai chết hẳn: khách điền đủ mọi ô vẫn ăn 422 kèm khoá nội bộ, không deal nào
+        # vào được. Bắt buộc cho trường tự tạo vẫn có hiệu lực — web chặn nút Gửi trước.
+        missing = [k for k in required_keys if k in payload_values and not payload_values[k]]
         if missing:
-            raise ValidationError(f"Required fields missing: {', '.join(sorted(missing))}")
+            # Câu này khách đọc, không phải lập trình viên: đọc tên trường theo nhãn
+            # freelancer đặt, không phun khoá nội bộ ra trang công khai.  #Huynh
+            names = ", ".join(labels.get(k, k) for k in sorted(missing))
+            raise ValidationError(
+                f"Bạn chưa điền: {names}. Vui lòng điền đủ các mục bắt buộc rồi gửi lại."
+            )

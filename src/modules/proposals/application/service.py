@@ -40,6 +40,7 @@ from src.shared.domain.template_blocks import (
 from src.shared.events.bus import event_bus
 from src.shared.exceptions.domain import (
     BusinessRuleError,
+    EntitlementError,
     ExpiredError,
     InvalidStateTransitionError,
     NotFoundError,
@@ -724,11 +725,43 @@ class ProposalsService:
         document = await self._build_document(user_id, proposal_id)
         return ProposalPdfRenderer().render_html(document, editable=editable)
 
+    async def _require_pdf_entitlement(self, user_id: uuid.UUID) -> None:
+        """Cổng "Cho phép xuất PDF" của gói — gọi TRƯỚC khi dựng bất cứ tờ PDF nào.
+
+        Báo giá trước đây không hề kiểm cổng này, nên người dùng gói Free vẫn tải PDF bình
+        thường qua GET /proposals/{id}/pdf và công tắc bên Quản trị bật hay tắt đều như nhau.
+        Giữ y nguyên cách kiểm và giọng câu lỗi của
+        `ContractsService._require_pdf_entitlement` để hai loại giấy tờ không mỗi thứ một luật.
+
+        Chỉ chặn đường TẢI PDF. Xem trước HTML (`render_preview_html`) và gửi báo giá cho khách
+        vẫn mở cho mọi gói — chặn nhầm hai đường đó là chặn luôn việc bán hàng.
+
+        Câu lỗi để tiếng Việt vì nó hiện thẳng cho freelancer (EntitlementError → HTTP 402).
+        """
+        sub = await self.repo.get_subscription(user_id)
+        if sub is None:
+            raise EntitlementError(
+                "Bạn chưa có gói đăng ký nào đang hoạt động nên chưa xuất được PDF.",
+                "can_export_pdf",
+            )
+        plan = await self.repo.get_plan(sub.plan_id)
+        if plan is None or not plan.can_export_pdf:
+            raise EntitlementError(
+                "Gói của bạn chưa có tính năng xuất PDF. Hãy nâng cấp gói để tải bản PDF.",
+                "can_export_pdf",
+            )
+
     async def generate_pdf(
         self,
         user_id: uuid.UUID,
         proposal_id: uuid.UUID,
     ) -> bytes:
+        """Kết xuất PDF báo giá — đây là đường `GET /proposals/{id}/pdf` mà web thật sự gọi.
+
+        Kiểm gói ĐẦU TIÊN, trước cả khi dựng document: dựng xong mới từ chối là trả tiền
+        cho một việc nặng không ai dùng đến.
+        """
+        await self._require_pdf_entitlement(user_id)
         document = await self._build_document(user_id, proposal_id)
         return ProposalPdfRenderer().render_pdf(document)
 

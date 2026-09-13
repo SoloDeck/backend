@@ -353,3 +353,91 @@ async def test_submit_succeeds_with_all_required_fields_present(client: AsyncCli
             json={"name": "Dave", "inquiry_text": "Need a logo"},
         )
     assert resp.status_code == 201
+
+
+async def test_submit_with_required_custom_field_still_creates_deal(client: AsyncClient):
+    """Trường tự tạo gạt Bắt buộc KHÔNG được làm chết biểu mẫu công khai.
+
+    Khoá `custom-...` không nằm trong 7 khoá chuẩn backend nhận, web gộp câu trả lời của
+    nó vào `inquiry_text`, nên nó không bao giờ có mặt trong body. Trước đây vòng kiểm coi
+    "không có mặt" là "để trống" và trả 422 với khoá nội bộ — khách điền đủ vẫn bị chặn,
+    freelancer mất sạch lead mà không hay biết.
+    """
+    headers, _ = await _auth(client)
+    token = await _get_share_token(client, headers)
+    fields = [
+        {
+            "field_key": "name",
+            "label": "Họ tên khách hàng",
+            "field_type": "text",
+            "is_required": True,
+            "is_visible": True,
+            "sort_order": 1,
+        },
+        {
+            "field_key": "inquiry_text",
+            "label": "Mô tả nhu cầu",
+            "field_type": "textarea",
+            "is_required": True,
+            "is_visible": True,
+            "sort_order": 2,
+        },
+        {
+            "field_key": "custom-1757290123456-7",
+            "label": "Bạn biết tôi qua đâu?",
+            "field_type": "text",
+            "is_required": True,
+            "is_visible": True,
+            "sort_order": 3,
+        },
+    ]
+    await client.put(
+        "/api/v1/intake-form",
+        headers=headers,
+        json={"title": "F", "is_active": True, "fields": fields},
+    )
+    with patch("src.workers.ai_jobs.tasks.qualify_deal_async_by_id.delay"):
+        resp = await client.post(
+            f"/api/v1/intake/{token}",
+            json={
+                "name": "Erin",
+                "inquiry_text": "Cần landing page\nBạn biết tôi qua đâu?: Facebook",
+            },
+        )
+    assert resp.status_code == 201, resp.text
+    deals = await client.get("/api/v1/deals", headers=headers)
+    assert len(deals.json()["data"]) == 1
+
+
+async def test_submit_missing_required_field_returns_vietnamese_label(client: AsyncClient):
+    """Câu 422 phải đọc được: nhãn freelancer đặt, không phải khoá nội bộ."""
+    headers, _ = await _auth(client)
+    token = await _get_share_token(client, headers)
+    fields = [
+        {
+            "field_key": "name",
+            "label": "Họ tên khách hàng",
+            "field_type": "text",
+            "is_required": True,
+            "is_visible": True,
+            "sort_order": 1,
+        },
+        {
+            "field_key": "phone",
+            "label": "Số điện thoại",
+            "field_type": "phone",
+            "is_required": True,
+            "is_visible": True,
+            "sort_order": 2,
+        },
+    ]
+    await client.put(
+        "/api/v1/intake-form",
+        headers=headers,
+        json={"title": "F", "is_active": True, "fields": fields},
+    )
+    resp = await client.post(f"/api/v1/intake/{token}", json={"name": "Fiona"})
+    assert resp.status_code == 422
+    message = str(resp.json()["error"])
+    assert "Số điện thoại" in message
+    assert "phone" not in message

@@ -3,10 +3,12 @@
 import uuid
 from dataclasses import dataclass
 
+import structlog
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.infrastructure.database.models import AiJobModel
+from src.modules.ai_jobs.domain.value_objects.job_error import JobError
 from src.modules.ai_jobs.domain.value_objects.status import AiJobStatus, can_transition
 from src.modules.ai_jobs.infrastructure.repository import AiJobsRepository
 from src.modules.ai_jobs.schemas.request import CreateAiJobRequest
@@ -15,6 +17,9 @@ from src.shared.exceptions.domain import (
     InvalidStateTransitionError,
     NotFoundError,
 )
+from src.shared.responses.error import ErrorCode
+
+log = structlog.get_logger(__name__)
 
 # Which entity_type a job type is allowed to target. proposal_generator
 # targets the source deal (it creates a new proposal); contract_generator
@@ -96,7 +101,7 @@ class AiJobsService:
         # job's attributes right after this.
         await self.db.commit()
         await self.db.refresh(job)
-        self._dispatch(job)
+        await self._dispatch(job)
         return job
 
     async def get_job(self, owner_user_id: uuid.UUID, job_id: uuid.UUID) -> AiJobModel:
@@ -147,7 +152,7 @@ class AiJobsService:
             if contract is None:
                 raise NotFoundError(f"Contract {entity_id} not found")
 
-    def _dispatch(self, job: AiJobModel) -> None:
+    async def _dispatch(self, job: AiJobModel) -> None:
         from src.workers.ai_jobs.tasks import (
             generate_contract_async,
             generate_proposal_async,
@@ -159,4 +164,32 @@ class AiJobsService:
             "proposal_generator": generate_proposal_async,
             "contract_generator": generate_contract_async,
         }
-        task_by_type[job.type].delay(str(job.id))
+        # BROKER CHẾT KHÔNG ĐƯỢC LÀM SẬP REQUEST.
+        #
+        # Dòng job đã `commit()` ở trên (worker phải thấy được nó), nên `.delay()` ném lỗi
+        # thì route trả 500 mà dòng job vẫn nằm đó ở trạng thái `queued` — không worker nào
+        # nhận, không ai dọn, màn hình quay vòng "Đang xử lý" mãi mãi.
+        #
+        # Chốt nó lại thành `failed` kèm câu tiếng Việt nói rõ phải làm gì: người dùng thấy
+        # được lỗi và bấm chạy lại khi hàng đợi sống lại, thay vì ngồi đợi một thứ sẽ không
+        # bao giờ tới.  #Huynh
+        try:
+            task_by_type[job.type].delay(str(job.id))
+        except Exception as exc:  # noqa: BLE001 — broker hỏng, không phải lỗi của người dùng
+            log.warning(
+                "ai_job.dispatch_failed",
+                job_id=str(job.id),
+                job_type=job.type,
+                error=str(exc),
+            )
+            await self.repo.mark_failed(
+                job,
+                JobError(
+                    code=ErrorCode.INTERNAL_SERVER_ERROR.value,
+                    message=(
+                        "Không xếp được lệnh chạy AI vào hàng đợi vì dịch vụ nền đang gián "
+                        "đoạn. Vui lòng bấm chạy lại sau ít phút."
+                    ),
+                    retryable=True,
+                ),
+            )

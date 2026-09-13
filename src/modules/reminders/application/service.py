@@ -9,6 +9,15 @@ from src.modules.reminders.infrastructure.repository import RemindersRepository
 from src.modules.reminders.schemas.request import CreateReminderRequest, UpdateReminderRequest
 from src.shared.exceptions.domain import NotFoundError
 
+# Nhãn tiếng Việt cho câu báo lỗi. "Không tìm thấy hoá đơn…" đọc ra nghĩa ngay, còn
+# "Không tìm thấy invoice…" thì người dùng phải tự dịch.
+_TARGET_LABELS = {
+    "client": "khách hàng",
+    "deal": "dự án",
+    "invoice": "hoá đơn",
+    "contract": "hợp đồng",
+}
+
 
 @dataclass
 class RemindersService:
@@ -26,6 +35,30 @@ class RemindersService:
         return reminder
 
     async def create(self, user_id: uuid.UUID, payload: CreateReminderRequest):  # type: ignore[return]
+        """Đặt lịch một lời nhắc cho một đối tượng CỦA CHÍNH NGƯỜI GỌI.
+
+        `target_id` tới thẳng từ body. Không kiểm chủ sở hữu thì API vẫn trả 201 "đã đặt
+        lịch" cho một id trỏ sang dữ liệu người khác; lời nhắc nằm ở Chờ gửi trông như
+        bình thường, tới giờ mới hỏng và báo SAI nguyên nhân ("có thể dữ liệu đã bị
+        xoá"). Mọi endpoint ghi khác đều đã kiểm chỗ này — đây là chỗ sót.  #Huynh
+        """
+        # Dùng lại đúng hàm khâu gửi vẫn dùng: nó đã lọc sẵn theo `owner_user_id`, nên
+        # không phải viết thêm một cách kiểm thứ hai để rồi hai cách lệch nhau.
+        target_client, label = await self.repo.resolve_target(
+            target_type=payload.target_type,
+            target_id=payload.target_id,
+            owner_user_id=user_id,
+        )
+        # Không ra gì = đối tượng không tồn tại HOẶC không phải của người này. Trả cùng
+        # một câu cho cả hai trường hợp là cố ý: nói "không phải của bạn" tức là xác nhận
+        # hộ rằng id đó có thật.
+        if target_client is None and label is None:
+            what = _TARGET_LABELS.get(str(payload.target_type), "đối tượng")
+            raise NotFoundError(
+                f"Không tìm thấy {what} bạn muốn nhắc trong dữ liệu của bạn. "
+                "Hãy chọn lại từ danh sách rồi đặt lịch giúp nhé."
+            )
+
         return await self.repo.create(
             owner_user_id=user_id,
             target_type=payload.target_type,

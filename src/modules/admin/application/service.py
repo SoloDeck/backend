@@ -39,6 +39,10 @@ from src.shared.exceptions.domain import (
 # cả hai đều `if free_plan is None` rồi bỏ qua.  #Huynh
 _SYSTEM_PLAN_SLUG = "free"
 
+# Những trạng thái khiến một tài khoản thôi là admin ĐANG HOẠT ĐỘNG — khớp đúng bộ lọc của
+# `AdminRepository.count_active_admins()`.  #Huynh
+_ADMIN_DISABLING_STATUSES = ("suspended", "deleted")
+
 
 def _vnd(amount: Decimal | int) -> str:
     """``50000000`` → ``"50.000.000"``.
@@ -95,10 +99,68 @@ class AdminService:
             raise NotFoundError(f"User {user_id} not found")
         return user
 
+    @staticmethod
+    def _assert_not_changing_own_access(
+        user: UserModel, payload: AdminUpdateUserRequest, *, admin_id: uuid.UUID
+    ) -> None:
+        """Admin không tự đổi quyền/trạng thái của DÒNG CHÍNH MÌNH.
+
+        Đây là cú bấm nhầm hay gặp nhất: đang mở form sửa người dùng, sửa nhầm dòng của
+        mình, chọn `freelancer` — và mất luôn trang quản trị. Không có đường nào trong sản
+        phẩm để tự phong lại (đăng ký mới luôn ra `freelancer`), phải vào thẳng PostgreSQL.
+
+        Chỉ chặn khi giá trị THẬT SỰ khác giá trị đang có, chứ không chặn theo "có mặt
+        trong payload". Lý do: form web LUÔN gửi cả `role` lẫn `status` lấy từ chính giá
+        trị hiện tại (`AdminDashboard.tsx`, hàm `save`), nên chặn theo sự có mặt sẽ khiến
+        admin bấm Lưu trên dòng của mình là ăn lỗi ngay cả khi không đổi gì.
+        """
+        if user.id != admin_id:
+            return
+        if payload.role is not None and payload.role != user.role:
+            field = "quyền"
+        elif payload.status is not None and payload.status != user.status:
+            field = "trạng thái"
+        else:
+            return
+        raise BusinessRuleError(
+            f"Không tự đổi {field} của tài khoản chính mình được — một lần bấm nhầm ở đây "
+            f"là tự khoá mình ra khỏi trang quản trị ngay lập tức. Hãy nhờ một admin khác "
+            f"thao tác; nếu hệ thống đang chỉ có mình bạn là admin, hãy phong thêm một "
+            f"admin nữa trước."
+        )
+
+    async def _assert_update_keeps_an_admin(
+        self, user: UserModel, payload: AdminUpdateUserRequest
+    ) -> None:
+        """Không hạ quyền / khoá / xoá ADMIN CUỐI CÙNG.
+
+        `suspend_user` đã có đúng chốt này (`count_active_admins`), nhưng `PATCH` thì không
+        — mà `PATCH` mới là chỗ DUY NHẤT đổi được `role`. Hết admin là hỏng không cứu được
+        từ trong sản phẩm: phải sửa thẳng cột `role` trong PostgreSQL.  #Huynh
+        """
+        if user.role != "admin":
+            return
+        loses_role = payload.role is not None and payload.role != "admin"
+        loses_access = payload.status is not None and payload.status in _ADMIN_DISABLING_STATUSES
+        if not (loses_role or loses_access):
+            return
+        if await self.repo.count_active_admins() > 1:
+            return
+        raise BusinessRuleError(
+            "Đây là admin cuối cùng của hệ thống — không hạ quyền, khoá hay xoá tài khoản "
+            "này được. Không còn admin nào thì không ai vào được trang quản trị nữa, và "
+            "người đăng ký mới luôn là freelancer nên trong sản phẩm không có đường phong "
+            "lại. Hãy phong một admin khác trước, rồi quay lại thao tác này."
+        )
+
     async def update_user(
         self, user_id: uuid.UUID, payload: AdminUpdateUserRequest, *, admin_id: uuid.UUID
     ) -> UserModel:
         user = await self.get_user(user_id)
+        self._assert_not_changing_own_access(user, payload, admin_id=admin_id)
+        await self._assert_update_keeps_an_admin(user, payload)
+
+        previous_role, previous_status = user.role, user.status
         changes: list[str] = []
         if payload.role is not None:
             user.role = payload.role
@@ -121,6 +183,24 @@ class AdminService:
                 raise AlreadyExistsError(f"Phone '{payload.phone}' is already in use")
             user.phone = payload.phone
             changes.append(f"phone={payload.phone}")
+
+        if user.role != previous_role or user.status != previous_status:
+            # `require_admin` đọc `role` TỪ JWT chứ không đọc lại DB, và access token sống
+            # 15 phút. Không thu hồi phiên thì người vừa bị hạ quyền còn nguyên 15 phút để
+            # tự gọi lại chính endpoint này mà phong lại mình, còn tài khoản vừa bị khoá
+            # vẫn đọc/ghi CRM như thường. `suspend_user` đã làm đúng chỗ này.  #Huynh
+            user.sessions_revoked_at = datetime.now(UTC)
+        if user.status == "deleted" and previous_status != "deleted":
+            # Mọi truy vấn người dùng lọc `deleted_at IS NULL` (repository, count_active_admins,
+            # users). Để trống cột này thì `status="deleted"` chỉ là một cái nhãn: tài khoản
+            # vẫn nằm trong danh sách và vẫn được tính là admin đang hoạt động. Cùng cách
+            # `UsersService.delete_me` đặt cả hai.  #Huynh
+            user.deleted_at = datetime.now(UTC)
+            # Nhả tên đường dẫn ra, đúng như `delete_me` làm. Ràng buộc UNIQUE trên
+            # `profile_slug` KHÔNG loại hàng đã xoá mềm, nên giữ lại là tài khoản đã xoá
+            # ngồi giữ chỗ vĩnh viễn — không ai lấy được tên đó nữa, kể cả chính chủ khi
+            # đăng ký lại. Xoá mềm bằng tay admin phải dọn y hệt xoá mềm tự phục vụ.  #Huynh
+            user.profile_slug = None
 
         user = await self.repo.save(user)
         if changes:
