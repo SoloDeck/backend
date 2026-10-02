@@ -11,6 +11,10 @@ ký, gửi lại — chứ không phải "bấm vào đây để ký".  #Huynh
 from dataclasses import dataclass
 from html import escape
 
+# Hậu tố mà tờ hợp đồng IN SAU số hợp đồng (xem `contract.html`: `{{ contract_number }}/HĐDV`).
+# Thư phải nêu đúng số khách thấy trên tờ giấy, nếu không hai bên nhắc tới hai mã khác nhau.
+CONTRACT_NUMBER_SUFFIX = "/HĐDV"
+
 
 @dataclass(frozen=True)
 class EmailContent:
@@ -47,7 +51,7 @@ def build_contract_email(
 
     who = sender or "Chúng tôi"
     about = f'dự án "{project}"' if project else "dịch vụ"
-    number_text = f" (số {number})" if number else ""
+    number_text = f" (số {number}{CONTRACT_NUMBER_SUFFIX})" if number else ""
     ask = (
         "Vui lòng đọc kỹ hợp đồng trong file PDF đính kèm. Nếu đồng ý, bạn ký rồi gửi lại "
         "bản đã ký bằng cách trả lời thẳng email này. Cần chỉnh điều khoản nào, cứ nói trong "
