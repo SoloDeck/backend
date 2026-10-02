@@ -261,7 +261,7 @@ async def send_proposal(
     user_id: CurrentUserId,
     db: DBSession,
 ) -> ApiResponse[ProposalResponse]:
-    proposal = await ProposalsService(db=db).transition_status(user_id, proposal_id, "sent")
+    proposal = await ProposalsService(db=db).send(user_id, proposal_id)
     return ApiResponse.ok(ProposalResponse.model_validate(proposal))
 
 

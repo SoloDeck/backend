@@ -1,7 +1,8 @@
 import uuid
 from dataclasses import dataclass
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import Select, func, or_, select
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.infrastructure.database.models import (
@@ -15,6 +16,35 @@ from src.infrastructure.database.models import (
     UserModel,
 )
 
+# SQLSTATE 55P03 = `lock_not_available`: câu `SELECT ... FOR ... NOWAIT` không giành được khoá.
+_LOCK_NOT_AVAILABLE = "55P03"
+
+
+class RowLockedError(Exception):
+    """Hàng đang bị một giao dịch khác giữ khoá, mà ta xin khoá kiểu NOWAIT nên bị từ chối ngay.
+
+    Repository chỉ DỊCH lỗi của driver sang loại ngoại lệ này; nói gì với người dùng là việc
+    của service. Chỉ được ném khi gọi với `nowait=True`.  #Huynh
+    """
+
+
+def _is_lock_not_available(exc: DBAPIError) -> bool:
+    """Lỗi driver này có phải "không giành được khoá" (55P03) không.
+
+    SQLAlchemy bọc lỗi của asyncpg hai lớp: `DBAPIError.orig` là bản dịch của adapter (có
+    `sqlstate`), và lỗi asyncpg gốc (`LockNotAvailableError`) nằm ở `__cause__`. Lần theo cả chuỗi
+    để không phụ thuộc vào việc bản SQLAlchemy nào bọc kiểu nào.  #Huynh
+    """
+    chain: list[BaseException] = []
+    error: BaseException | None = exc.orig
+    while error is not None and error not in chain:
+        chain.append(error)
+        error = error.__cause__
+    return any(
+        _LOCK_NOT_AVAILABLE in (getattr(item, "sqlstate", None), getattr(item, "pgcode", None))
+        for item in chain
+    )
+
 
 @dataclass
 class ProposalsRepository:
@@ -26,6 +56,73 @@ class ProposalsRepository:
                 ProposalModel.id == proposal_id,
                 ProposalModel.owner_user_id == owner_user_id,
             )
+        )
+
+    async def _scalar_for_update(self, statement: Select, *, nowait: bool):
+        """Chạy câu SELECT và KHOÁ hàng tìm được tới hết transaction.
+
+        `key_share=True` = FOR NO KEY UPDATE: vẫn chặn mọi UPDATE khác lên hàng (cái ta cần),
+        nhưng KHÔNG chặn INSERT của bảng khác trỏ khoá ngoại vào hàng này (hợp đồng, hoá đơn,
+        việc của deal).
+
+        `populate_existing` bắt buộc đọc lại cột từ DB: không có nó thì object đã nằm sẵn trong
+        phiên giữ nguyên giá trị cũ dù hàng đã đổi.
+
+        `nowait=True`: hàng đang bị khoá thì KHÔNG đứng chờ mà ném `RowLockedError` ngay. Sau lỗi
+        này transaction ở trạng thái hỏng cho tới khi rollback, nên chỗ gọi phải kết thúc request
+        chứ không được tiếp tục dùng phiên.  #Huynh
+        """
+        try:
+            return await self.db.scalar(
+                statement.with_for_update(key_share=True, nowait=nowait).execution_options(
+                    populate_existing=True
+                )
+            )
+        except DBAPIError as exc:
+            if nowait and _is_lock_not_available(exc):
+                raise RowLockedError from exc
+            raise
+
+    async def get_by_id_for_update(
+        self, proposal_id: uuid.UUID, owner_user_id: uuid.UUID, *, nowait: bool = False
+    ):
+        """Như `get_by_id` nhưng KHOÁ HÀNG tới hết transaction (`SELECT ... FOR NO KEY UPDATE`).
+
+        Dùng cho `ProposalsService.send`: email đi TRƯỚC khi transaction commit, nên không có
+        khoá thì hai request đồng thời (bấm đúp) cùng đọc thấy `draft`, cùng gửi thư, rồi mới
+        tranh nhau UPDATE — khách nhận hai thư. Có khoá, request thứ hai không đọc được trạng thái
+        cũ nữa: hoặc đứng chờ tới khi request đầu commit rồi mới đọc lại và thấy `sent`, hoặc
+        (`nowait=True`) bị từ chối ngay.  #Huynh
+        """
+        return await self._scalar_for_update(
+            select(ProposalModel).where(
+                ProposalModel.id == proposal_id,
+                ProposalModel.owner_user_id == owner_user_id,
+            ),
+            nowait=nowait,
+        )
+
+    async def get_deal_for_update(
+        self, deal_id: uuid.UUID, owner_user_id: uuid.UUID, *, nowait: bool = False
+    ):
+        """Khoá hàng DEAL — cổng nối tiếp các lượt gửi báo giá của CÙNG MỘT deal.
+
+        Khoá theo từng hàng báo giá thì chỉ chặn được hai lượt gửi cùng một bản. Hai bản nháp
+        KHÁC NHAU của một deal gửi gần như cùng lúc thì khoá hai hàng khác nhau, không vướng nhau;
+        `get_sent_by_deal` lại là câu đọc thường nên không thấy bản kia chưa commit, và cả hai
+        cùng thành `sent`. Khoá hàng deal bắt chúng xếp hàng: lượt sau chỉ chạy tiếp khi lượt
+        trước đã commit, nên câu đọc đó thấy đúng.
+
+        THỨ TỰ KHOÁ LÀ BẮT BUỘC: mọi chỗ khoá cả hai hàng đều phải khoá deal TRƯỚC, báo giá SAU
+        (xem `ProposalsService._lock_deal_then_proposal`). Đảo thứ tự ở một chỗ nào đó là có thể
+        tạo vòng chờ khoá và Postgres sẽ giết một trong hai giao dịch.  #Huynh
+        """
+        return await self._scalar_for_update(
+            select(DealModel).where(
+                DealModel.id == deal_id,
+                DealModel.owner_user_id == owner_user_id,
+            ),
+            nowait=nowait,
         )
 
     async def get_public_by_token(self, share_token: str):

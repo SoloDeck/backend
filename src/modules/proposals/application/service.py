@@ -28,7 +28,7 @@ from src.modules.proposals.application.pdf_content import (
     infer_due_type,
     resolve_cost_items,
 )
-from src.modules.proposals.infrastructure.repository import ProposalsRepository
+from src.modules.proposals.infrastructure.repository import ProposalsRepository, RowLockedError
 from src.modules.proposals.schemas.request import CreateProposalRequest, UpdateProposalRequest
 from src.modules.subscriptions.application.ai_usage import AiUsageService
 from src.modules.tasks.application.service import PAYMENT_TASK_PREFIX, BillingTaskPayload
@@ -60,6 +60,10 @@ SHARE_LINK_VALID_DAYS = 30
 # — khách chỉ còn ~2 ngày làm việc để hỏi lại, xin duyệt ngân sách, so với báo giá khác. Ai
 # đổi con số này nên cân nhắc điều đó.  #Huynh
 DEFAULT_VALID_DAYS = 4
+
+# Câu nói với người dùng khi `send` không giành được khoá ngay (xem `_lock_deal_then_proposal`).
+# 409 chứ không phải lỗi hệ thống: việc kia sắp xong, thử lại sau vài giây là được.
+_MSG_BUSY = "Báo giá này đang được gửi hoặc đang lưu ở một thao tác khác. Đợi vài giây rồi thử lại."
 
 
 def _vn_date(value: date) -> str:
@@ -226,6 +230,49 @@ class ProposalsService:
             raise NotFoundError(f"Proposal {proposal_id} not found")
         return proposal
 
+    async def _get_proposal_for_update(self, user_id: uuid.UUID, proposal_id: uuid.UUID):  # type: ignore[return]
+        """Như `_get_proposal` nhưng KHOÁ HÀNG tới hết transaction.
+
+        Dùng cho các thao tác SỬA báo giá nháp (nội dung, chốt giá). `send` cũng khoá hàng này,
+        nên một lượt sửa đến đúng lúc đang gửi phải ĐỨNG CHỜ rồi đọc lại thấy `sent` và bị từ chối,
+        thay vì lọt qua kiểm tra `draft` bằng bản đọc cũ rồi ghi đè lên báo giá vừa gửi đi.  #Huynh
+        """
+        proposal = await self.repo.get_by_id_for_update(proposal_id, user_id)
+        if proposal is None:
+            raise NotFoundError(f"Proposal {proposal_id} not found")
+        return proposal
+
+    async def _lock_deal_then_proposal(  # type: ignore[no-untyped-def]
+        self, user_id: uuid.UUID, proposal_id: uuid.UUID, *, nowait: bool
+    ):
+        """Khoá DEAL rồi mới khoá BÁO GIÁ — trả `(báo giá, deal)` đã đọc lại từ DB.
+
+        MỌI chỗ khoá cả hai hàng đều đi qua đây, nên thứ tự luôn là deal → báo giá và không thể
+        có vòng chờ khoá (A giữ deal chờ báo giá, B giữ báo giá chờ deal). Khoá deal là thứ nối
+        tiếp được hai bản nháp KHÁC NHAU của cùng một deal; xem
+        `ProposalsRepository.get_deal_for_update`.
+
+        Cần biết `deal_id` trước khi khoá nên phải đọc báo giá một lượt không khoá. Không sao:
+        `deal_id` không bao giờ đổi sau khi tạo, còn trạng thái thì được đọc LẠI sau khi đã giữ
+        khoá (caller đừng dùng bản đọc không khoá để kiểm trạng thái).
+
+        `nowait=True` (chỉ `send` dùng): không giành được khoá ngay thì báo 409 chứ không đứng chờ.
+        Request trùng mà chờ thì mỗi cái giữ một kết nối DB trong lúc người gửi thật còn đang chờ
+        máy chủ thư. `update` / `set_price` thì KHÔNG dùng nowait: hai lượt tự lưu liên tiếp phải
+        xếp hàng chứ không được thất bại.  #Huynh
+        """
+        unlocked = await self.repo.get_by_id(proposal_id, user_id)
+        if unlocked is None:
+            raise NotFoundError(f"Proposal {proposal_id} not found")
+        try:
+            deal = await self.repo.get_deal_for_update(unlocked.deal_id, user_id, nowait=nowait)
+            proposal = await self.repo.get_by_id_for_update(proposal_id, user_id, nowait=nowait)
+        except RowLockedError:
+            raise BusinessRuleError(_MSG_BUSY) from None
+        if proposal is None:
+            raise NotFoundError(f"Proposal {proposal_id} not found")
+        return proposal, deal
+
     async def create(  # type: ignore[return]
         self,
         user_id: uuid.UUID,
@@ -262,7 +309,7 @@ class ProposalsService:
         return await self._get_proposal(user_id, proposal_id)
 
     async def update(self, user_id: uuid.UUID, proposal_id: uuid.UUID, payload: UpdateProposalRequest):  # type: ignore[return]
-        proposal = await self._get_proposal(user_id, proposal_id)
+        proposal = await self._get_proposal_for_update(user_id, proposal_id)
         if proposal.status != "draft":
             raise BusinessRuleError(
                 f"Proposal content can only be edited in draft status "
@@ -286,7 +333,11 @@ class ProposalsService:
         CHƯA CHỐT GIÁ THÌ KHÔNG GỬI ĐƯỢC BÁO GIÁ (xem `transition_status`). Gửi cho khách
         một bản báo giá ghi "87 – 162 triệu" là tự bắn vào chân mình.  #Huynh
         """
-        proposal = await self._get_proposal(user_id, proposal_id)
+        # Hàm này ghi cả `deal.estimated_value`, tức là đụng tới hàng deal — nên khoá deal TRƯỚC
+        # rồi mới tới báo giá, đúng thứ tự `send` dùng. Khoá báo giá trước rồi mới ghi deal (như
+        # bản cũ) là đi NGƯỢC thứ tự của `send`: hai bên mỗi người giữ một hàng chờ hàng kia thì
+        # Postgres phải giết một giao dịch.  #Huynh
+        proposal, deal = await self._lock_deal_then_proposal(user_id, proposal_id, nowait=False)
         if proposal.status != "draft":
             raise BusinessRuleError(
                 f"Chỉ chốt được giá khi báo giá còn ở trạng thái nháp "
@@ -307,8 +358,7 @@ class ProposalsService:
         content["pricing"] = f"{int(price):,} ₫".replace(",", ".")
         proposal.content = content
 
-        deal = await self.repo.get_deal(proposal.deal_id)
-        if deal is not None and deal.owner_user_id == user_id:
+        if deal is not None:
             deal.estimated_value = price
 
         return await self.repo.save(proposal)
@@ -766,8 +816,19 @@ class ProposalsService:
         return ProposalPdfRenderer().render_pdf(document)
 
     async def transition_status(
-        self, user_id: uuid.UUID, proposal_id: uuid.UUID, target_status: str
+        self,
+        user_id: uuid.UUID,
+        proposal_id: uuid.UUID,
+        target_status: str,
+        *,
+        publish_event: bool = True,
     ):  # type: ignore[return]
+        """Chuyển trạng thái báo giá, qua các cổng nghiệp vụ.
+
+        `publish_event=False` để CALLER tự phát sự kiện sau. Chỉ `send` dùng: nó phải đợi thư đi
+        được rồi mới phát `proposals.proposal_sent` (xem `send`). Đường `PATCH .../status` giữ
+        mặc định True — ghi nhận tay thì không có thư nào để đợi.  #Huynh
+        """
         proposal = await self._get_proposal(user_id, proposal_id)
         current = proposal.status
         allowed = _VALID_TRANSITIONS.get(current, frozenset())
@@ -885,6 +946,9 @@ class ProposalsService:
         proposal.status = target_status
         await self.repo.save(proposal)
 
+        if not publish_event:
+            return proposal
+
         if target_status == "accepted":
             # KHÔNG sinh task thanh toán ở đây: chốt báo giá mới chỉ là khách gật đầu, chưa ký
             # gì cả — chưa có gì để đi đòi tiền. Task "Thu tiền:" sinh khi HỢP ĐỒNG được ghi
@@ -900,15 +964,130 @@ class ProposalsService:
                 },
             )
         elif target_status == "sent":
-            await event_bus.publish(
-                "proposals.proposal_sent",
-                {
-                    "proposal_id": str(proposal_id),
-                    "deal_id": str(proposal.deal_id),
-                    "owner_user_id": str(user_id),
-                },
+            await self._publish_sent(user_id, proposal_id, proposal.deal_id)
+
+        return proposal
+
+    async def _publish_sent(
+        self, user_id: uuid.UUID, proposal_id: uuid.UUID, deal_id: uuid.UUID
+    ) -> None:
+        """Phát `proposals.proposal_sent` — chỗ DUY NHẤT định nghĩa nội dung sự kiện này, dùng
+        chung cho đường ghi nhận tay (`transition_status`) và đường gửi thật (`send`)."""
+        await event_bus.publish(
+            "proposals.proposal_sent",
+            {
+                "proposal_id": str(proposal_id),
+                "deal_id": str(deal_id),
+                "owner_user_id": str(user_id),
+            },
+        )
+
+    async def send(self, user_id: uuid.UUID, proposal_id: uuid.UUID):  # type: ignore[return]
+        """Gửi báo giá cho khách: chốt trạng thái `sent` VÀ gửi email kèm file PDF.
+
+        Trước đây hàm này chỉ đổi trạng thái (`transition_status`) và không gửi gì cả, nên nút
+        "Lưu & gửi cho khách hàng" là một lời nói dối: khách không nhận được gì mà hệ thống vẫn
+        ghi "đã gửi", deal vẫn nhảy sang cột "Đã gửi báo giá". Giờ thư đi thật, cùng lối với
+        `InvoicesService.send`.
+
+        **Gửi hỏng thì KHÔNG đánh dấu đã gửi.** Email được gửi SAU khi đã chốt trạng thái trong
+        phiên làm việc, nhưng nếu SMTP ném `EmailDeliveryError` thì lỗi bay lên route và
+        `get_db_session` rollback toàn bộ — báo giá nằm nguyên ở `draft`, freelancer thấy lý do
+        và gửi lại được. Thà báo lỗi còn hơn để họ yên tâm ngồi đợi phản hồi từ một khách chưa
+        hề nhận được gì.
+
+        Khách PHẢI có email: kiểm TRƯỚC mọi thay đổi, để không chốt giá rồi mới biết không có
+        chỗ gửi. PDF được đính kèm cho MỌI gói — cổng `can_export_pdf` chỉ chặn đường TẢI về
+        (xem `_require_pdf_entitlement`), còn gửi báo giá cho khách vẫn mở cho mọi gói vì chặn
+        nó là chặn luôn việc bán hàng.
+
+        Các cổng giá / hạng mục / tổng tiền nằm trong `transition_status`, và chạy TRƯỚC khi
+        dựng PDF nên không bao giờ gửi đi một bản báo giá mà chính hệ thống sẽ từ chối.
+
+        Hai lượt gửi đụng nhau (cùng bản, hoặc hai bản của cùng một deal) thì lượt đến sau nhận 409
+        ngay, không đứng chờ — xem `_lock_deal_then_proposal`. Sự kiện `proposals.proposal_sent`
+        chỉ phát khi thư đã đi được.  #Huynh
+        """
+        from src.modules.proposals.application.emails import build_proposal_email
+        from src.modules.reminders.application.delivery_service import build_footer
+        from src.shared.email.addresses import looks_like_email
+        from src.shared.email.filenames import attachment_filename
+        from src.shared.email.smtp import send_email
+
+        # KHOÁ HÀNG trước khi đọc trạng thái — deal TRƯỚC, báo giá SAU, và KHÔNG ĐỨNG CHỜ.
+        #
+        # Thư đi TRƯỚC khi transaction commit, nên không có khoá thì bấm đúp (hai request cùng
+        # lúc) cùng thấy `draft`, cùng gửi thư, rồi mới tranh nhau UPDATE — đã đo: 2 request đồng
+        # thời = khách nhận 2 thư, 5 request = 2 thư.
+        #
+        # Khoá cả DEAL vì khoá riêng hàng báo giá chỉ chặn được hai lượt gửi cùng MỘT bản; hai bản
+        # nháp khác nhau của một deal thì khoá hai hàng khác nhau, không vướng nhau, và cả hai
+        # cùng thành `sent` (đã đo: 3 bản nháp cùng deal gửi đồng thời = 3 bản `sent`).
+        #
+        # `nowait`: request trùng thấy khoá đang bị giữ thì báo 409 ngay, không đứng chờ. Chờ thì
+        # mỗi request trùng giữ một kết nối DB (pool có 30) suốt thời gian người gửi thật còn đang
+        # đợi máy chủ thư. Request nào tới SAU khi lượt trước đã commit thì đọc lại thấy `sent` và
+        # bị từ chối ở ngay dưới — trước khi có thư nào được gửi.  #Huynh
+        proposal, deal = await self._lock_deal_then_proposal(user_id, proposal_id, nowait=True)
+        if "sent" not in _VALID_TRANSITIONS.get(proposal.status, frozenset()):
+            raise BusinessRuleError(
+                "Chỉ bản nháp mới gửi được. Báo giá này đã gửi cho khách hoặc đã có phản hồi."
             )
 
+        client = await self.repo.get_client(deal.client_id) if deal and deal.client_id else None
+        to_email = (getattr(client, "email", "") or "").strip()
+        if not to_email:
+            raise BusinessRuleError(
+                "Khách hàng của báo giá này chưa có email, chưa gửi được. "
+                "Bổ sung email cho khách rồi gửi lại."
+            )
+        if not looks_like_email(to_email):
+            raise BusinessRuleError(
+                f"Email của khách hàng ({to_email}) có vẻ không hợp lệ nên chưa gửi được. "
+                "Sửa lại email khách rồi gửi lại."
+            )
+
+        # `publish_event=False`: sự kiện `proposals.proposal_sent` phải phát SAU khi thư đi được
+        # (cuối hàm), không phải ngay lúc chốt trạng thái. Nơi nhận sự kiện (thông báo, Zalo...) là
+        # việc chạy NGOÀI phạm vi rollback của transaction này: phát trước thì thư hỏng, báo giá
+        # được hoàn về `draft`, mà người ta đã bị báo "đã gửi" mất rồi.
+        proposal = await self.transition_status(user_id, proposal_id, "sent", publish_event=False)
+
+        # Dựng SAU khi chốt: `sent_at` vừa được ghi nên ngày lập trên PDF là ngày gửi thật.
+        document = await self._build_document(user_id, proposal_id)
+        pdf_bytes = ProposalPdfRenderer().render_pdf(document)
+        owner = await self.repo.get_user(user_id)
+
+        content = build_proposal_email(
+            client_name=client.name,
+            freelancer_name=getattr(owner, "full_name", None),
+            project_name=document.project_type,
+            total=document.pricing_total,
+            valid_until=document.valid_until,
+            footer=build_footer(
+                getattr(owner, "full_name", None),
+                getattr(owner, "email", None),
+                document.project_type,
+            ),
+        )
+        await send_email(
+            to=to_email,
+            subject=content.subject,
+            html=content.html,
+            plain=content.plain,
+            from_name=getattr(owner, "full_name", None),
+            reply_to=getattr(owner, "email", None),
+            attachments=[
+                (
+                    attachment_filename("bao-gia", document.project_type),
+                    pdf_bytes,
+                    "application/pdf",
+                )
+            ],
+        )
+        # Tới đây thư đã đi. Phát sự kiện bây giờ: thư hỏng thì `send_email` đã ném lỗi ở trên và
+        # sự kiện không bao giờ được phát.
+        await self._publish_sent(user_id, proposal_id, proposal.deal_id)
         return proposal
 
     async def _get_by_share_token(self, share_token: str):  # type: ignore[return]
