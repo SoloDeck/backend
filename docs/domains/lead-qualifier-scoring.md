@@ -37,7 +37,13 @@ ra được một báo giá đúng.**
 
 Và **ngưỡng HOT = 75 = đúng tổng ba tiêu chí thiết yếu**. Nghĩa là:
 
-> **HOT ⇔ có đủ ba thứ cốt lõi (biết làm gì + ngân sách + thời gian) để báo giá tự tin.**
+> **Dưới 75 điểm thì CHẮC CHẮN còn thiếu ít nhất một trong ba thứ cốt lõi (biết làm gì + ngân
+> sách + thời gian)** — vì ba thứ đó cộng lại tối đa mới được 75.
+
+Chiều ngược lại **không** được bảo đảm: HOT chỉ đòi tổng ≥ 75 chứ không đòi từng tiêu chí, nên
+một deal vẫn có thể HOT khi thiếu một thứ cốt lõi mà bù bằng hai tiêu chí tinh chỉnh (ví dụ
+phạm vi 30 + ngân sách 0 + thời gian 20 + chi tiết 15 + bối cảnh 10 = 75). Vì vậy đừng phát biểu
+"HOT = đủ ba thứ cốt lõi"; chỉ nói chiều "dưới 75 thì chắc chắn còn thiếu".
 
 Đây là câu trả lời mạnh nhất cho *"vì sao có con điểm đó"*: cả rubric ăn khớp với nhau.
 
@@ -144,8 +150,9 @@ mình đang đánh đổi gì:
 | **75 – 99** | Nhắc nhẹ: ba mảng thiết yếu đã đủ, phần thiếu chỉ làm báo giá sắc hơn |
 | **< 75** | Cảnh báo nặng, nêu đích danh mảng thiết yếu đang thiếu, **phải tích ô xác nhận** mới chốt được |
 
-Ngưỡng chia ở **75** không phải số chọn cho tròn — đó đúng là ranh giới "có đủ ba thứ cốt lõi
-để báo giá hay chưa".
+Ngưỡng chia ở **75** không phải số chọn cho tròn — nó bằng đúng tổng ba tiêu chí cốt lõi, nên
+**dưới 75 chắc chắn còn thiếu ít nhất một mảng cốt lõi** (từ 75 trở lên thì chưa chắc đủ cả ba,
+xem mục 2).
 
 Chốt ở mức thiếu điểm thì `lead_scores.gap_acknowledged = true`. Số điểm thiếu suy lại được
 từ `breakdown`, nhưng việc **có được cảnh báo** thì không suy ra từ đâu — không lưu thì nhìn
