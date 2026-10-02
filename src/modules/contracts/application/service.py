@@ -12,7 +12,11 @@ from src.modules.contracts.domain.value_objects.contract_status import (
     TERMINAL_CONTRACT_STATUSES,
     ContractStatus,
 )
-from src.modules.contracts.infrastructure.repository import ContractsRepository
+from src.modules.contracts.infrastructure.repository import (
+    ContractsRepository,
+    LiveContractExistsError,
+    RowLockedError,
+)
 from src.modules.contracts.schemas.request import (
     CreateContractRequest,
     CreatePaymentMilestoneRequest,
@@ -34,6 +38,19 @@ from src.shared.exceptions.domain import (
 # matching constant for the reasoning; kept in sync at the same value.
 SHARE_LINK_VALID_DAYS = 30
 
+# Câu nói với người dùng khi `send` không giành được khoá ngay (xem `_lock_deal_then_contract`).
+# 409 chứ không phải lỗi hệ thống: việc kia sắp xong, thử lại sau vài giây là được.
+_MSG_BUSY = (
+    "Hợp đồng này đang được gửi hoặc đang lưu ở một thao tác khác. Đợi vài giây rồi thử lại."
+)
+
+# Chỉ mục `uq_contracts_one_active_per_deal` cho phép mỗi deal tối đa MỘT hợp đồng chờ ký / đang
+# hiệu lực. Câu này hiện thẳng cho freelancer nên nói rõ cách gỡ, không chỉ báo "bị chặn".
+_MSG_LIVE_CONTRACT_EXISTS = (
+    "Deal này đã có một hợp đồng khác đang chờ khách ký hoặc đang có hiệu lực, nên chưa gửi thêm "
+    "hợp đồng mới được. Hãy hoàn tất hoặc đóng hợp đồng kia trước."
+)
+
 
 @dataclass
 class ContractsService:
@@ -46,6 +63,49 @@ class ContractsService:
 
     async def _get_contract(self, user_id: uuid.UUID, contract_id: uuid.UUID):  # type: ignore[return]
         contract = await self.repo.get_by_id(contract_id, user_id)
+        if contract is None:
+            raise NotFoundError(f"Contract {contract_id} not found")
+        return contract
+
+    async def _get_contract_for_update(self, user_id: uuid.UUID, contract_id: uuid.UUID):  # type: ignore[return]
+        """Như `_get_contract` nhưng KHOÁ HÀNG tới hết transaction.
+
+        Dùng cho mọi thao tác SỬA hợp đồng nháp (nội dung, mốc thanh toán). `send` cũng khoá hàng
+        này (xem `send`), nên một lượt sửa đến đúng lúc đang gửi phải ĐỨNG CHỜ rồi đọc lại thấy
+        `pending_signatures` và bị từ chối — thay vì lọt qua kiểm tra `draft` bằng bản đọc cũ rồi
+        ghi đè lên hợp đồng vừa được gửi đi. Không có khoá này, khách nhận PDF khác với bản đang
+        lưu trong app.  #Huynh
+        """
+        contract = await self.repo.get_by_id_for_update(contract_id, user_id)
+        if contract is None:
+            raise NotFoundError(f"Contract {contract_id} not found")
+        return contract
+
+    async def _lock_deal_then_contract(  # type: ignore[no-untyped-def]
+        self, user_id: uuid.UUID, contract_id: uuid.UUID, *, nowait: bool
+    ):
+        """Khoá DEAL rồi mới khoá HỢP ĐỒNG — trả hợp đồng đã đọc lại từ DB.
+
+        Cùng khuôn với `ProposalsService._lock_deal_then_proposal`: deal luôn đứng TRƯỚC nên
+        không có vòng chờ khoá, và khoá deal là thứ nối tiếp được hai hợp đồng nháp KHÁC NHAU của
+        cùng một deal (chúng va vào chỉ mục `uq_contracts_one_active_per_deal` nếu cùng chạy).
+
+        Cần biết `deal_id` trước khi khoá nên phải đọc hợp đồng một lượt không khoá. Không sao:
+        `deal_id` không bao giờ đổi sau khi tạo, còn trạng thái thì được đọc LẠI sau khi đã giữ
+        khoá (caller đừng dùng bản đọc không khoá để kiểm trạng thái).
+
+        `nowait=True` (chỉ `send` dùng): không giành được khoá ngay thì báo 409 chứ không đứng
+        chờ. `update` / milestones thì KHÔNG dùng nowait: hai lượt tự lưu liên tiếp phải xếp hàng
+        chứ không được thất bại.  #Huynh
+        """
+        unlocked = await self.repo.get_by_id(contract_id, user_id)
+        if unlocked is None:
+            raise NotFoundError(f"Contract {contract_id} not found")
+        try:
+            await self.repo.get_deal_for_update(unlocked.deal_id, user_id, nowait=nowait)
+            contract = await self.repo.get_by_id_for_update(contract_id, user_id, nowait=nowait)
+        except RowLockedError:
+            raise BusinessRuleError(_MSG_BUSY) from None
         if contract is None:
             raise NotFoundError(f"Contract {contract_id} not found")
         return contract
@@ -105,7 +165,7 @@ class ContractsService:
         return await self._get_contract(user_id, contract_id)
 
     async def update(self, user_id: uuid.UUID, contract_id: uuid.UUID, payload: UpdateContractRequest):  # type: ignore[return]
-        contract = await self._get_contract(user_id, contract_id)
+        contract = await self._get_contract_for_update(user_id, contract_id)
         if contract.status != "draft":
             raise BusinessRuleError(
                 f"Contract content can only be edited in draft status "
@@ -126,7 +186,7 @@ class ContractsService:
     async def add_milestone(
         self, user_id: uuid.UUID, contract_id: uuid.UUID, payload: CreatePaymentMilestoneRequest
     ):  # type: ignore[return]
-        contract = await self._get_contract(user_id, contract_id)
+        contract = await self._get_contract_for_update(user_id, contract_id)
         if contract.status != ContractStatus.DRAFT:
             raise BusinessRuleError(
                 f"Milestones can only be added while the contract is in draft status "
@@ -154,7 +214,7 @@ class ContractsService:
         milestone_id: uuid.UUID,
         payload: UpdatePaymentMilestoneRequest,
     ):  # type: ignore[return]
-        contract = await self._get_contract(user_id, contract_id)
+        contract = await self._get_contract_for_update(user_id, contract_id)
         if contract.status != ContractStatus.DRAFT:
             raise BusinessRuleError(
                 f"Milestones can only be edited while the contract is in draft status "
@@ -174,7 +234,7 @@ class ContractsService:
     async def delete_milestone(
         self, user_id: uuid.UUID, contract_id: uuid.UUID, milestone_id: uuid.UUID
     ) -> None:
-        contract = await self._get_contract(user_id, contract_id)
+        contract = await self._get_contract_for_update(user_id, contract_id)
         if contract.status != ContractStatus.DRAFT:
             raise BusinessRuleError(
                 f"Milestones can only be deleted while the contract is in draft status "
@@ -241,6 +301,14 @@ class ContractsService:
         elif target == ContractStatus.PENDING_SIGNATURES:
             contract.share_token = secrets.token_urlsafe(32)
             contract.share_expires_at = now + timedelta(days=SHARE_LINK_VALID_DAYS)
+            # Bước duy nhất đẩy hợp đồng vào chỗ chỉ mục `uq_contracts_one_active_per_deal` canh
+            # giữ. `send` đã hỏi trước (nên đây là lưới an toàn cho nó), nhưng `PATCH .../status`
+            # đi thẳng vào đây không qua câu hỏi đó — và không khoá deal, nên hai lượt ghi nhận
+            # cùng lúc vẫn có thể va nhau. Để chỉ mục từ chối thì ra 500; bắt lại để ra 409.
+            try:
+                return await self.repo.save_entering_live_status(contract)
+            except LiveContractExistsError:
+                raise BusinessRuleError(_MSG_LIVE_CONTRACT_EXISTS) from None
         elif target in TERMINAL_CONTRACT_STATUSES:
             pass
 
@@ -430,7 +498,102 @@ class ContractsService:
         return await self.repo.save(contract)
 
     async def send(self, user_id: uuid.UUID, contract_id: uuid.UUID):  # type: ignore[return]
-        return await self.transition_status(user_id, contract_id, "pending_signatures")
+        """Gửi hợp đồng cho khách ký: chuyển sang `pending_signatures` VÀ gửi email kèm PDF.
+
+        Trước đây hàm này chỉ đổi trạng thái và không gửi gì cả, nên nút "Gửi cho khách ký" là
+        một lời nói dối: khách không nhận được tờ hợp đồng nào mà hệ thống vẫn ghi "đã gửi cho
+        khách ký". Giờ thư đi thật, cùng lối với `ProposalsService.send` và
+        `InvoicesService.send`.
+
+        **Gửi hỏng thì KHÔNG đánh dấu đã gửi.** Email được gửi SAU khi đã chuyển trạng thái trong
+        phiên làm việc, nhưng nếu SMTP ném `EmailDeliveryError` thì lỗi bay lên route và
+        `get_db_session` rollback toàn bộ — hợp đồng nằm nguyên ở `draft`, freelancer thấy lý do
+        và gửi lại được.
+
+        Khách PHẢI có email: kiểm TRƯỚC mọi thay đổi. PDF đính kèm cho MỌI gói — cổng
+        `can_export_pdf` chỉ chặn đường TẢI về (xem `_require_pdf_entitlement`), còn gửi giấy
+        tờ cho khách vẫn mở cho mọi gói.
+
+        Chuyển trạng thái chạy TRƯỚC khi dựng PDF nên các luật chuyển trạng thái vẫn là cổng
+        đầu tiên: hợp đồng không được phép gửi thì không bao giờ có thư nào đi.
+
+        Hai lượt gửi đụng nhau (cùng hợp đồng, hoặc hai hợp đồng của cùng một deal) thì lượt đến
+        sau nhận 409 ngay, không đứng chờ — xem `_lock_deal_then_contract`. Deal đã có hợp đồng
+        khác đang chờ ký / có hiệu lực cũng là 409, không phải 500.  #Huynh
+        """
+        from src.ai.contract_generator.application.render import ContractPdfRenderer
+        from src.modules.contracts.application.emails import build_contract_email
+        from src.modules.reminders.application.delivery_service import build_footer
+        from src.shared.email.addresses import looks_like_email
+        from src.shared.email.filenames import attachment_filename
+        from src.shared.email.smtp import send_email
+
+        # KHOÁ HÀNG trước khi đọc trạng thái — deal TRƯỚC, hợp đồng SAU, và KHÔNG ĐỨNG CHỜ. Cùng
+        # lý do với `ProposalsService.send`: thư đi trước khi commit, nên bấm đúp mà không có khoá
+        # thì khách nhận hai tờ hợp đồng (đã đo: 5 request đồng thời = 5 thư); request trùng mà
+        # đứng chờ thì giữ một kết nối DB suốt thời gian người gửi thật còn đợi máy chủ thư.
+        #
+        # Khoá cả DEAL vì hai hợp đồng nháp của cùng một deal gửi cùng lúc sẽ va vào chỉ mục
+        # `uq_contracts_one_active_per_deal` (mỗi deal tối đa một hợp đồng chờ ký / đang hiệu
+        # lực): lượt sau đứng chờ lượt trước — cả lúc nó gửi thư — rồi ăn lỗi toàn vẹn, ra 500.
+        # Khoá deal thì lượt sau bị từ chối ngay hoặc thấy lượt trước đã commit và bị từ chối gọn
+        # ở câu hỏi bên dưới.  #Huynh
+        contract = await self._lock_deal_then_contract(user_id, contract_id, nowait=True)
+        if contract.status != ContractStatus.DRAFT:
+            raise BusinessRuleError(
+                "Chỉ hợp đồng nháp mới gửi được. Hợp đồng này đã gửi cho khách hoặc đã có hiệu lực."
+            )
+        # Hỏi TRƯỚC khi chốt trạng thái hay dựng PDF: hợp đồng khác của deal đang chờ ký / có hiệu
+        # lực thì chỉ mục chắc chắn từ chối, mà đến lúc đó thì không thể làm gì nữa ngoài báo lỗi.
+        if await self.repo.get_live_contract_for_deal(contract.deal_id, contract.id) is not None:
+            raise BusinessRuleError(_MSG_LIVE_CONTRACT_EXISTS)
+
+        client = await self.repo.get_client(contract.client_id)
+        to_email = (getattr(client, "email", "") or "").strip()
+        if not to_email:
+            raise BusinessRuleError(
+                "Khách hàng của hợp đồng này chưa có email, chưa gửi được. "
+                "Bổ sung email cho khách rồi gửi lại."
+            )
+        if not looks_like_email(to_email):
+            raise BusinessRuleError(
+                f"Email của khách hàng ({to_email}) có vẻ không hợp lệ nên chưa gửi được. "
+                "Sửa lại email khách rồi gửi lại."
+            )
+
+        contract = await self.transition_status(user_id, contract_id, "pending_signatures")
+
+        document = await self._build_document(user_id, contract_id)
+        pdf_bytes = ContractPdfRenderer().render_pdf(document)
+        owner = await self.repo.get_user(user_id)
+
+        content = build_contract_email(
+            client_name=client.name,
+            freelancer_name=getattr(owner, "full_name", None),
+            project_name=document.project_name,
+            contract_number=document.contract_number,
+            footer=build_footer(
+                getattr(owner, "full_name", None),
+                getattr(owner, "email", None),
+                document.project_name,
+            ),
+        )
+        await send_email(
+            to=to_email,
+            subject=content.subject,
+            html=content.html,
+            plain=content.plain,
+            from_name=getattr(owner, "full_name", None),
+            reply_to=getattr(owner, "email", None),
+            attachments=[
+                (
+                    attachment_filename("hop-dong", document.project_name),
+                    pdf_bytes,
+                    "application/pdf",
+                )
+            ],
+        )
+        return contract
 
     async def sign(self, user_id: uuid.UUID, contract_id: uuid.UUID):  # type: ignore[return]
         contract = await self._get_contract(user_id, contract_id)

@@ -23,7 +23,7 @@ async def _auth(client: AsyncClient) -> dict:
 async def _create_client(http: AsyncClient, headers: dict) -> str:
     resp = await http.post(
         "/api/v1/clients",
-        json={"name": "Acme", "status": "prospect"},
+        json={"name": "Acme", "status": "prospect", "email": "khach@example.com"},
         headers=headers,
     )
     assert resp.status_code == 201, resp.text
