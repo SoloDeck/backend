@@ -675,6 +675,7 @@ def _make_qualify_service(
     # last_usage() là hàm ĐỒNG BỘ. Để AsyncMock thì nó trả coroutine không ai await,
     # pytest báo lỗi (filterwarnings = error).
     ai_facade.last_usage = MagicMock(return_value=None)
+    ai_facade.last_model = MagicMock(return_value="test-model")  # đồng bộ như last_usage
 
     service = DealsService(db=AsyncMock(), repo=repo, ai_facade=ai_facade, usage=AsyncMock())
     return service, intake, deal_model

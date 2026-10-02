@@ -87,6 +87,23 @@ UPDATED_BLOCK_HEADING = "## KHÁCH TRẢ LỜI THÊM — MỚI HƠN, ƯU TIÊN H
 EXCLUDED_BLOCK_HEADING = "## KHÔNG PHẢI LỜI KHÁCH — CẤM DÙNG ĐỂ CHẤM ĐIỂM"
 
 
+_MODEL_VERSION_MAX_LENGTH = 100  # độ dài cột `lead_scores.model_version`
+
+
+def _resolve_model_version(last_model: str | None, usage: dict | None) -> str:
+    """Tên model ghi vào `lead_scores.model_version` cho một lượt chấm điểm.
+
+    Ưu tiên `usage["model_used"]` — đúng thứ bảng Chi phí AI ghi, nên hai nơi không bao giờ nói
+    khác nhau. Provider không báo usage (hoặc usage thiếu tên) thì rơi về tên model của chính
+    provider đã chạy. KHÔNG bao giờ rơi về một tên model cứng: ghi sai model là ghi sai bằng
+    chứng. Không biết thật sự thì ghi "unknown" cho trung thực.  #Huynh
+    """
+    from_usage = (usage or {}).get("model_used")
+    name = from_usage if isinstance(from_usage, str) and from_usage.strip() else last_model
+    name = (name or "").strip() or "unknown"
+    return name[:_MODEL_VERSION_MAX_LENGTH]
+
+
 @dataclass
 class DealsService:
     db: AsyncSession
@@ -705,9 +722,14 @@ class DealsService:
         }
         confidence = _confidence_map.get(lead_level, AIConfidence.medium())
         reasoning = str(result.get("reasoning", ""))
-        # Trước ghi "gemma-4-31b-it" — SAI. Model chạy thật là llama-4-scout (xem
-        # lead_qualifier/chain.py). Ghi sai model là ghi sai bằng chứng.  #Huynh
-        model_version = "meta-llama/llama-4-scout-17b-16e-instruct"
+        # Ghi model THẬT đã chấm lượt này. Trước đây là chuỗi cứng (lúc là "gemma-4-31b-it", lúc là
+        # llama-4-scout) nên khi admin đổi sang Gemini/Groq thì lịch sử vẫn ghi sai mô hình — ghi
+        # sai model là ghi sai bằng chứng. Lấy từ provider đã chạy; provider có usage thì dùng
+        # đúng `model_used` mà bảng Chi phí AI đang ghi để hai nơi không nói khác nhau.  #Huynh
+        model_version = _resolve_model_version(
+            self.ai_facade.last_model("lead_qualifier"),  # type: ignore[union-attr]
+            self.ai_facade.last_usage("lead_qualifier"),  # type: ignore[union-attr]
+        )
 
         # Khả năng chốt deal — tính bằng CODE từ CHÍNH bảng phân rã ở trên, không hỏi AI
         # và không dò chuỗi trong câu văn của model.  #Huynh

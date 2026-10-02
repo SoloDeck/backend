@@ -109,6 +109,18 @@ class AIFacade:
             tone=tone,
         )
 
+    def last_model(self, module: str) -> str | None:
+        """Tên model của lần gọi gần nhất cho một module (None nếu chưa gọi hoặc không biết).
+
+        Cùng lý do an toàn với `last_usage`: facade dựng mới mỗi request.  #Huynh
+        """
+        chain = getattr(self, module, None)
+        if chain is None:
+            return None
+        inner = getattr(chain, "generation_service", None)
+        model = getattr(inner or chain, "last_model", None)
+        return model if isinstance(model, str) and model else None
+
     def last_usage(self, module: str) -> dict[str, Any] | None:
         """Token của lần gọi gần nhất cho một module.
 
