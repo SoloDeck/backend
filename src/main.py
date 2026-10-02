@@ -52,6 +52,7 @@ from src.shared.logging import (
     RequestContextMiddleware,
     setup_logging,
 )
+from src.shared.pdf_warmup import warm_up_pdf_engine
 
 setup_logging()
 log = structlog.get_logger()
@@ -159,7 +160,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # hỏng. Chặn ở đây là vì một file đính kèm mà cả hệ thống không lên.
         log.warning("storage.ensure_bucket_failed", error=str(exc))
 
+    # Làm nóng WeasyPrint ở NỀN: không chặn khởi động, và không làm hỏng gì nếu thiếu thư viện.
+    # Xem `src/shared/pdf_warmup.py` để biết vì sao cần.  #Huynh
+    pdf_warmup_task = asyncio.create_task(asyncio.to_thread(warm_up_pdf_engine))
+
     yield
+    # Tắt máy mà việc làm nóng chưa xong thì thôi, đừng đợi.
+    pdf_warmup_task.cancel()
     await engine.dispose()
     await close_redis_pool()
     log.info("solodesk.shutdown")
