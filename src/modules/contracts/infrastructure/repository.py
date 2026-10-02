@@ -1,7 +1,8 @@
 import uuid
 from dataclasses import dataclass
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import Select, func, or_, select
+from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.infrastructure.database.models import (
@@ -16,6 +17,52 @@ from src.infrastructure.database.models import (
     UserModel,
 )
 
+# SQLSTATE 55P03 = `lock_not_available`: câu `SELECT ... FOR ... NOWAIT` không giành được khoá.
+_LOCK_NOT_AVAILABLE = "55P03"
+
+# Chỉ mục duy nhất từng phần của bảng `contracts`: mỗi deal tối đa MỘT hợp đồng ở trạng thái
+# `active` hoặc `pending_signatures`. Xem `ContractModel.__table_args__`.
+_ONE_LIVE_PER_DEAL_INDEX = "uq_contracts_one_active_per_deal"
+
+
+class RowLockedError(Exception):
+    """Hàng đang bị một giao dịch khác giữ khoá, mà ta xin khoá kiểu NOWAIT nên bị từ chối ngay.
+
+    Repository chỉ DỊCH lỗi của driver sang loại ngoại lệ này; nói gì với người dùng là việc
+    của service. Chỉ được ném khi gọi với `nowait=True`.  #Huynh
+    """
+
+
+class LiveContractExistsError(Exception):
+    """Deal đã có một hợp đồng khác đang chờ ký / đang hiệu lực (chỉ mục duy nhất từ chối)."""
+
+
+def _error_chain(error: BaseException | None) -> list[BaseException]:
+    """Lỗi và các lỗi gốc của nó (`__cause__`). SQLAlchemy bọc lỗi asyncpg hai lớp: bản dịch của
+    adapter ở `DBAPIError.orig`, lỗi asyncpg gốc ở `__cause__` của bản dịch."""
+    chain: list[BaseException] = []
+    while error is not None and error not in chain:
+        chain.append(error)
+        error = error.__cause__
+    return chain
+
+
+def _is_lock_not_available(exc: DBAPIError) -> bool:
+    """Lỗi driver này có phải "không giành được khoá" (55P03) không."""
+    return any(
+        _LOCK_NOT_AVAILABLE in (getattr(error, "sqlstate", None), getattr(error, "pgcode", None))
+        for error in _error_chain(exc.orig)
+    )
+
+
+def _violates_one_live_per_deal(exc: IntegrityError) -> bool:
+    """Lỗi toàn vẹn này có đúng là chỉ mục "mỗi deal một hợp đồng sống" từ chối không."""
+    return any(
+        getattr(error, "constraint_name", None) == _ONE_LIVE_PER_DEAL_INDEX
+        or _ONE_LIVE_PER_DEAL_INDEX in str(error)
+        for error in _error_chain(exc.orig)
+    )
+
 
 @dataclass
 class ContractsRepository:
@@ -27,6 +74,85 @@ class ContractsRepository:
                 ContractModel.id == contract_id,
                 ContractModel.owner_user_id == owner_user_id,
             )
+        )
+
+    async def _scalar_for_update(self, statement: Select, *, nowait: bool):
+        """Chạy câu SELECT và KHOÁ hàng tìm được tới hết transaction.
+
+        `key_share=True` = FOR NO KEY UPDATE: vẫn chặn mọi UPDATE khác lên hàng (cái ta cần),
+        nhưng KHÔNG chặn INSERT của bảng khác trỏ khoá ngoại vào hàng này (hoá đơn, mốc thanh
+        toán của hợp đồng).
+
+        `populate_existing` bắt buộc đọc lại cột từ DB: không có nó thì object đã nằm sẵn trong
+        phiên giữ nguyên giá trị cũ dù hàng đã đổi.
+
+        `nowait=True`: hàng đang bị khoá thì KHÔNG đứng chờ mà ném `RowLockedError` ngay. Sau lỗi
+        này transaction ở trạng thái hỏng cho tới khi rollback, nên chỗ gọi phải kết thúc request
+        chứ không được tiếp tục dùng phiên.  #Huynh
+        """
+        try:
+            return await self.db.scalar(
+                statement.with_for_update(key_share=True, nowait=nowait).execution_options(
+                    populate_existing=True
+                )
+            )
+        except DBAPIError as exc:
+            if nowait and _is_lock_not_available(exc):
+                raise RowLockedError from exc
+            raise
+
+    async def get_by_id_for_update(
+        self, contract_id: uuid.UUID, owner_user_id: uuid.UUID, *, nowait: bool = False
+    ):
+        """Như `get_by_id` nhưng KHOÁ HÀNG tới hết transaction (`SELECT ... FOR NO KEY UPDATE`).
+
+        Cùng lý do với `ProposalsRepository.get_by_id_for_update`: email đi TRƯỚC khi commit,
+        nên không có khoá thì bấm đúp là khách nhận hai (thậm chí năm) tờ hợp đồng.  #Huynh
+        """
+        return await self._scalar_for_update(
+            select(ContractModel).where(
+                ContractModel.id == contract_id,
+                ContractModel.owner_user_id == owner_user_id,
+            ),
+            nowait=nowait,
+        )
+
+    async def get_deal_for_update(
+        self, deal_id: uuid.UUID, owner_user_id: uuid.UUID, *, nowait: bool = False
+    ):
+        """Khoá hàng DEAL — cổng nối tiếp các lượt gửi hợp đồng của CÙNG MỘT deal.
+
+        Cùng lý do với `ProposalsRepository.get_deal_for_update`. Ở đây còn một lý do nữa: chỉ mục
+        duy nhất `uq_contracts_one_active_per_deal` cho phép tối đa một hợp đồng chờ ký / đang
+        hiệu lực mỗi deal, nên hai hợp đồng nháp của một deal gửi cùng lúc sẽ va vào nó — lượt
+        sau đứng chờ lượt trước (cả lúc gửi thư) rồi nhận lỗi toàn vẹn. Khoá deal bắt chúng xếp
+        hàng, và lượt sau thấy hợp đồng kia đã commit để từ chối gọn.
+
+        THỨ TỰ KHOÁ: deal TRƯỚC, hợp đồng SAU (xem `ContractsService._lock_deal_then_contract`).
+        #Huynh
+        """
+        return await self._scalar_for_update(
+            select(DealModel).where(
+                DealModel.id == deal_id,
+                DealModel.owner_user_id == owner_user_id,
+            ),
+            nowait=nowait,
+        )
+
+    async def get_live_contract_for_deal(self, deal_id: uuid.UUID, exclude_id: uuid.UUID):
+        """Hợp đồng KHÁC của deal đang chờ khách ký hoặc đang có hiệu lực, nếu có.
+
+        Đúng điều kiện của chỉ mục `uq_contracts_one_active_per_deal`, hỏi trước để từ chối gọn
+        thay vì để chỉ mục ném lỗi.  #Huynh
+        """
+        return await self.db.scalar(
+            select(ContractModel)
+            .where(
+                ContractModel.deal_id == deal_id,
+                ContractModel.id != exclude_id,
+                ContractModel.status.in_(("active", "pending_signatures")),
+            )
+            .limit(1)
         )
 
     async def get_public_by_token(self, share_token: str):
@@ -200,6 +326,21 @@ class ContractsRepository:
         await self.db.flush()
         await self.db.refresh(obj)
         return obj
+
+    async def save_entering_live_status(self, contract):
+        """Như `save`, cho hợp đồng VỪA được chuyển sang `pending_signatures`.
+
+        Đó là bước duy nhất đẩy một hợp đồng vào chỗ mà chỉ mục `uq_contracts_one_active_per_deal`
+        canh giữ, nên là nơi chỉ mục có thể từ chối. Dịch lỗi đó thành `LiveContractExistsError`
+        để service trả 409 gọn thay vì để `IntegrityError` trần rơi xuống thành 500. Sau lỗi này
+        transaction ở trạng thái hỏng, nên chỗ gọi phải kết thúc request.  #Huynh
+        """
+        try:
+            return await self.save(contract)
+        except IntegrityError as exc:
+            if _violates_one_live_per_deal(exc):
+                raise LiveContractExistsError from exc
+            raise
 
     async def delete(self, obj) -> None:
         await self.db.delete(obj)
