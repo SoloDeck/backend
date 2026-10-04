@@ -527,6 +527,11 @@ class ContractsService:
         from src.shared.email.addresses import looks_like_email
         from src.shared.email.filenames import attachment_filename
         from src.shared.email.smtp import send_email
+        from src.shared.rate_limit.send_guards import chan_nhip_gui_giay_to
+
+        # Chặn dồn dập TRƯỚC mọi việc khác (kể cả khoá hàng): mỗi lượt gửi là một lá thư thật dùng
+        # chung hạn mức Gmail của hệ thống. Xem `send_guards`.
+        chan_nhip_gui_giay_to(user_id)
 
         # KHOÁ HÀNG trước khi đọc trạng thái — deal TRƯỚC, hợp đồng SAU, và KHÔNG ĐỨNG CHỜ. Cùng
         # lý do với `ProposalsService.send`: thư đi trước khi commit, nên bấm đúp mà không có khoá

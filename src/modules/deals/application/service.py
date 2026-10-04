@@ -87,6 +87,23 @@ UPDATED_BLOCK_HEADING = "## KHÁCH TRẢ LỜI THÊM — MỚI HƠN, ƯU TIÊN H
 EXCLUDED_BLOCK_HEADING = "## KHÔNG PHẢI LỜI KHÁCH — CẤM DÙNG ĐỂ CHẤM ĐIỂM"
 
 
+_MODEL_VERSION_MAX_LENGTH = 100  # độ dài cột `lead_scores.model_version`
+
+
+def _resolve_model_version(last_model: str | None, usage: dict | None) -> str:
+    """Tên model ghi vào `lead_scores.model_version` cho một lượt chấm điểm.
+
+    Ưu tiên `usage["model_used"]` — đúng thứ bảng Chi phí AI ghi, nên hai nơi không bao giờ nói
+    khác nhau. Provider không báo usage (hoặc usage thiếu tên) thì rơi về tên model của chính
+    provider đã chạy. KHÔNG bao giờ rơi về một tên model cứng: ghi sai model là ghi sai bằng
+    chứng. Không biết thật sự thì ghi "unknown" cho trung thực.  #Huynh
+    """
+    from_usage = (usage or {}).get("model_used")
+    name = from_usage if isinstance(from_usage, str) and from_usage.strip() else last_model
+    name = (name or "").strip() or "unknown"
+    return name[:_MODEL_VERSION_MAX_LENGTH]
+
+
 @dataclass
 class DealsService:
     db: AsyncSession
@@ -422,6 +439,26 @@ class DealsService:
             page_size=page_size,
         )
 
+    async def lose_open_deals_of_client(
+        self, user_id: uuid.UUID, client_id: uuid.UUID, *, reason: str
+    ) -> int:
+        """Đưa mọi deal CHƯA ĐÓNG của một khách sang KHÔNG THÀNH CÔNG, kèm `reason`. Trả số deal.
+
+        Dùng khi khách bị lưu trữ: không còn ai theo dự án của họ nữa. Đi qua đúng
+        `transition_stage` nên có đủ nhật ký, ngày đóng và việc huỷ lời nhắc đang chờ — không
+        có đường tắt ghi thẳng cột `stage`. Deal ĐÃ hoàn thành thì để nguyên: nó là một thương
+        vụ thắng, biến nó thành thất bại là sai sự thật (và vòng đời cũng không cho đi ra khỏi
+        giai đoạn cuối).  #Huynh
+        """
+        deals = await self.repo.list_open_by_client(user_id, client_id)
+        for deal in deals:
+            await self.transition_stage(
+                user_id,
+                deal.id,
+                DealStageRequest(target_stage=DealStage.LOST, reason=reason),
+            )
+        return len(deals)
+
     async def list_intakes(
         self, user_id: uuid.UUID, page: int = 1, page_size: int = 20
     ) -> tuple[list, int]:
@@ -484,8 +521,14 @@ class DealsService:
         return await self.repo.save(deal)
 
     async def delete(self, user_id: uuid.UUID, deal_id: uuid.UUID) -> None:
+        """Xoá mềm một deal, kèm huỷ mọi lời nhắc đang chờ gửi của nó.
+
+        Xoá mềm chỉ gán `deleted_at`, còn beat gửi lời nhắc không biết deal đã bị xoá. Không
+        huỷ ở đây thì khách vẫn nhận thư nhắc về một dự án freelancer đã gỡ đi.  #Huynh
+        """
         deal = await self._get_deal(user_id, deal_id)
         deal.deleted_at = datetime.now(UTC)
+        await self.repo.cancel_pending_reminders_of_deal_tree(deal_id, user_id)
         await self.repo.save(deal)
 
     async def upload_document(
@@ -532,6 +575,11 @@ class DealsService:
             raise BusinessRuleError("Invalid deal stage") from exc
         if target not in STAGE_TRANSITIONS.get(current, frozenset()):
             raise InvalidStateTransitionError("deal", deal.stage, payload.stage)
+        # Lý do dự án KHÔNG THÀNH CÔNG: chỗ duy nhất ghi lại "vì sao mất deal", Kho lưu trữ
+        # liệt kê nó ra. Web BẮT BUỘC nhập (hộp "Loại bỏ dự án"), còn API cố ý KHÔNG bắt: app
+        # di động vốn cho bấm "Đã mất" mà không gửi lý do nào, đòi ở đây là làm hỏng chức năng
+        # đó. Thiếu thì để trống, kho sẽ ghi "Chưa ghi lý do".  #Huynh
+        reason = (payload.reason or "").strip() or None
         if target == DealStage.ACTIVE:
             if not await self.repo.has_accepted_proposal(deal_id, user_id):
                 raise BusinessRuleError("Transitioning to active requires an accepted proposal")
@@ -579,6 +627,8 @@ class DealsService:
                 deal.actual_value = deal.estimated_value
 
         deal.stage = payload.stage
+        if target == DealStage.LOST:
+            deal.lost_reason = reason
         if target in TERMINAL_STAGES and hasattr(deal, "closed_at"):
             deal.closed_at = datetime.now(UTC)
             await self.repo.cancel_pending_reminders(deal_id, user_id)
@@ -587,7 +637,10 @@ class DealsService:
             deal_id=deal_id,
             owner_user_id=user_id,
             entry_type=DealActivityType.STAGE_CHANGE.value,
-            description=f"Stage changed from {current.value} to {target.value}",
+            description=(
+                f"Stage changed from {current.value} to {target.value}"
+                + (f" — Lý do: {reason}" if target == DealStage.LOST and reason else "")
+            ),
             previous_stage=current.value,
             new_stage=target.value,
         )
@@ -705,9 +758,14 @@ class DealsService:
         }
         confidence = _confidence_map.get(lead_level, AIConfidence.medium())
         reasoning = str(result.get("reasoning", ""))
-        # Trước ghi "gemma-4-31b-it" — SAI. Model chạy thật là llama-4-scout (xem
-        # lead_qualifier/chain.py). Ghi sai model là ghi sai bằng chứng.  #Huynh
-        model_version = "meta-llama/llama-4-scout-17b-16e-instruct"
+        # Ghi model THẬT đã chấm lượt này. Trước đây là chuỗi cứng (lúc là "gemma-4-31b-it", lúc là
+        # llama-4-scout) nên khi admin đổi sang Gemini/Groq thì lịch sử vẫn ghi sai mô hình — ghi
+        # sai model là ghi sai bằng chứng. Lấy từ provider đã chạy; provider có usage thì dùng
+        # đúng `model_used` mà bảng Chi phí AI đang ghi để hai nơi không nói khác nhau.  #Huynh
+        model_version = _resolve_model_version(
+            self.ai_facade.last_model("lead_qualifier"),  # type: ignore[union-attr]
+            self.ai_facade.last_usage("lead_qualifier"),  # type: ignore[union-attr]
+        )
 
         # Khả năng chốt deal — tính bằng CODE từ CHÍNH bảng phân rã ở trên, không hỏi AI
         # và không dò chuỗi trong câu văn của model.  #Huynh

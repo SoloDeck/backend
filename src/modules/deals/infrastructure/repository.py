@@ -19,7 +19,11 @@ from src.infrastructure.database.models import (
     ReminderModel,
     UserModel,
 )
-from src.modules.deals.domain.value_objects.deal_stage import ARCHIVE_AFTER_DAYS, DealStage
+from src.modules.deals.domain.value_objects.deal_stage import (
+    ARCHIVE_AFTER_DAYS,
+    TERMINAL_STAGES,
+    DealStage,
+)
 
 
 @dataclass
@@ -263,6 +267,46 @@ class DealsRepository:
             .values(status="cancelled")
         )
 
+    async def cancel_pending_reminders_of_deal_tree(
+        self, deal_id: uuid.UUID, owner_user_id: uuid.UUID
+    ) -> None:
+        """Huỷ MỌI lời nhắc đang chờ liên quan tới một deal: nhắm vào chính deal, vào hoá
+        đơn của nó, và vào hợp đồng của nó.
+
+        Khác `cancel_pending_reminders` (chỉ nhắm `target_type='deal'`) vì lời nhắc tự sinh
+        không nhắm vào deal: nhắc thanh toán nhắm vào HOÁ ĐƠN, nhắc ký nhắm vào HỢP ĐỒNG.
+        Chỉ huỷ theo deal thì xoá deal xong khách vẫn nhận thư đòi tiền của một dự án
+        không còn trên màn hình.
+
+        Hàm cho lúc XOÁ deal, không dùng cho lúc chốt `completed_and_billed`: deal đã xong mà
+        hoá đơn còn nợ thì vẫn phải nhắc khách trả tiền.  #Huynh
+        """
+        invoice_ids = select(InvoiceModel.id).where(
+            InvoiceModel.deal_id == deal_id, InvoiceModel.owner_user_id == owner_user_id
+        )
+        contract_ids = select(ContractModel.id).where(
+            ContractModel.deal_id == deal_id, ContractModel.owner_user_id == owner_user_id
+        )
+        await self.db.execute(
+            update(ReminderModel)
+            .where(
+                ReminderModel.owner_user_id == owner_user_id,
+                ReminderModel.status == "pending",
+                or_(
+                    and_(ReminderModel.target_type == "deal", ReminderModel.target_id == deal_id),
+                    and_(
+                        ReminderModel.target_type == "invoice",
+                        ReminderModel.target_id.in_(invoice_ids),
+                    ),
+                    and_(
+                        ReminderModel.target_type == "contract",
+                        ReminderModel.target_id.in_(contract_ids),
+                    ),
+                ),
+            )
+            .values(status="cancelled")
+        )
+
     async def create(self, **values):
         deal = DealModel(**values)
         self.db.add(deal)
@@ -315,6 +359,20 @@ class DealsRepository:
             .limit(page_size)
         )
         return list(result.scalars().all()), total
+
+    async def list_open_by_client(self, owner_user_id: uuid.UUID, client_id: uuid.UUID) -> list:
+        """Các deal CHƯA ĐÓNG của một khách: chưa hoàn thành, chưa mất, chưa xoá."""
+        result = await self.db.execute(
+            select(DealModel)
+            .where(
+                DealModel.owner_user_id == owner_user_id,
+                DealModel.client_id == client_id,
+                DealModel.deleted_at.is_(None),
+                DealModel.stage.notin_([stage.value for stage in TERMINAL_STAGES]),
+            )
+            .order_by(DealModel.created_at)
+        )
+        return list(result.scalars().all())
 
     @staticmethod
     def _archived_predicate():  # type: ignore[no-untyped-def]

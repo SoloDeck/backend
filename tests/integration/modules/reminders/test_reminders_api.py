@@ -338,6 +338,45 @@ class TestUpdateReminder:
         )
         assert resp.status_code == 422
 
+    async def test_sua_thi_luu_ca_anh_dinh_kem(self, client: AsyncClient) -> None:
+        """Trước khi sửa: PATCH vứt `attachments` im lặng, trả 200 "đã cập nhật" mà ảnh QR
+        chuyển khoản biến mất khỏi thư."""
+        headers = await _auth(client)
+        deal_id = await _make_deal_id(client, headers)
+        reminder = await _create_reminder(client, headers, deal_id)
+        anh = [{"key": "reminders/x/qr.png", "filename": "qr.png", "content_type": "image/png"}]
+
+        resp = await client.patch(
+            f"/api/v1/reminders/{reminder['id']}", json={"attachments": anh}, headers=headers
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["data"]["attachments"] == anh
+
+    async def test_loi_nhac_qua_gio_giu_nguyen_gio_van_sua_duoc(
+        self, client: AsyncClient, db_session
+    ) -> None:
+        from sqlalchemy import update
+
+        from src.infrastructure.database.models import ReminderModel
+
+        headers = await _auth(client)
+        deal_id = await _make_deal_id(client, headers)
+        reminder = await _create_reminder(client, headers, deal_id)
+        qua_gio = datetime.now(UTC) - timedelta(hours=3)
+        await db_session.execute(
+            update(ReminderModel)
+            .where(ReminderModel.id == uuid.UUID(reminder["id"]))
+            .values(scheduled_at=qua_gio)
+        )
+
+        resp = await client.patch(
+            f"/api/v1/reminders/{reminder['id']}",
+            json={"scheduled_at": qua_gio.isoformat(), "message_preview": "Sửa chữ thôi"},
+            headers=headers,
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["data"]["message_preview"] == "Sửa chữ thôi"
+
 
 # ---------------------------------------------------------------------------
 # DELETE /reminders/{id}
@@ -565,7 +604,7 @@ class TestReminderRules:
         assert by_type["payment_due"]["is_enabled"] is True
 
     async def test_moi_quy_tac_mac_dinh_CHO_DUYET(self, client: AsyncClient) -> None:
-        """Bật tự gửi phải là hành động có ý thức — nó cho phép email khách hàng thật."""
+        """Không có công tắc tự gửi: email thật không tới khách khi người dùng chưa duyệt."""
         headers = await _auth(client)
         rules = (await client.get("/api/v1/reminders/rules", headers=headers)).json()["data"]
 
@@ -582,15 +621,30 @@ class TestReminderRules:
         headers = await _auth(client)
         resp = await client.patch(
             "/api/v1/reminders/rules/payment_due",
-            json={"offset_days": 7, "auto_send": True, "channel": "email"},
+            json={"offset_days": 7, "channel": "email"},
             headers=headers,
         )
 
         assert resp.status_code == 200, resp.text
         data = resp.json()["data"]
         assert data["offset_days"] == 7
-        assert data["auto_send"] is True
         assert data["channel"] == "email"
+
+    async def test_gui_auto_send_bat_len_thi_bi_bo_qua(self, client: AsyncClient) -> None:
+        """Công tắc "tự gửi" đã bỏ. Client cũ vẫn gửi trường này lên: không lỗi, không tác dụng."""
+        headers = await _auth(client)
+        resp = await client.patch(
+            "/api/v1/reminders/rules/payment_due",
+            json={"auto_send": True, "offset_days": 4},
+            headers=headers,
+        )
+
+        assert resp.status_code == 200, resp.text
+        data = resp.json()["data"]
+        assert data["offset_days"] == 4  # phần còn lại của yêu cầu vẫn được lưu
+        assert data["auto_send"] is False
+        listed = (await client.get("/api/v1/reminders/rules", headers=headers)).json()["data"]
+        assert all(r["auto_send"] is False for r in listed)
 
     async def test_sua_duoc_ngay_ca_khi_chua_tung_GET(self, client: AsyncClient) -> None:
         """Đừng bắt người dùng GET một lần cho có rồi mới PATCH được."""
@@ -721,3 +775,147 @@ class TestXemTruocThu:
             },
         )
         assert resp.status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# Xoá deal — lời nhắc của nó phải dừng hẳn
+# ---------------------------------------------------------------------------
+
+
+async def _deal_va_hoa_don(client: AsyncClient, headers: dict) -> tuple[str, str]:
+    """Tạo khách có email → deal → hoá đơn đã gửi. Trả về (deal_id, invoice_id)."""
+    # Email riêng mỗi lần: email khách là duy nhất trong phạm vi một freelancer.
+    email = f"khach_{uuid.uuid4().hex[:6]}@example.com"
+    deal_id = await _make_deal_id(client, headers, client_email=email)
+    deal = (await client.get(f"/api/v1/deals/{deal_id}", headers=headers)).json()["data"]
+    inv = await client.post(
+        "/api/v1/invoices",
+        json={
+            "client_id": deal["client_id"],
+            "deal_id": deal_id,
+            "subtotal": "1000000",
+            "tax_rate": "0",
+            "due_date": (datetime.now(UTC) + timedelta(days=30)).date().isoformat(),
+        },
+        headers=headers,
+    )
+    assert inv.status_code == 201, inv.text
+    invoice_id = inv.json()["data"]["id"]
+    sent = await client.post(
+        f"/api/v1/invoices/{invoice_id}/send", json={"notify": False}, headers=headers
+    )
+    assert sent.status_code == 200, sent.text
+    return deal_id, invoice_id
+
+
+class TestXoaDealDungLoiNhac:
+    async def test_xoa_deal_huy_ca_loi_nhac_cua_deal_lan_cua_hoa_don(
+        self, client: AsyncClient
+    ) -> None:
+        """Nhắc thanh toán nhắm vào HOÁ ĐƠN chứ không nhắm vào deal. Trước khi sửa, xoá deal
+        không huỷ gì cả và beat vẫn gửi cả hai thư cho khách."""
+        headers = await _auth(client)
+        deal_id, invoice_id = await _deal_va_hoa_don(client, headers)
+        nhac_deal = await _create_reminder(client, headers, deal_id)
+        nhac_hoa_don = await _create_reminder(
+            client, headers, invoice_id, target_type="invoice", reminder_type="payment_due"
+        )
+
+        resp = await client.delete(f"/api/v1/deals/{deal_id}", headers=headers)
+        assert resp.status_code == 200, resp.text
+
+        for reminder in (nhac_deal, nhac_hoa_don):
+            got = await client.get(f"/api/v1/reminders/{reminder['id']}", headers=headers)
+            assert got.json()["data"]["status"] == "cancelled"
+
+    async def test_khong_dat_lich_duoc_cho_deal_da_xoa(self, client: AsyncClient) -> None:
+        headers = await _auth(client)
+        deal_id, invoice_id = await _deal_va_hoa_don(client, headers)
+        await client.delete(f"/api/v1/deals/{deal_id}", headers=headers)
+
+        vao_deal = await client.post(
+            "/api/v1/reminders", json=_reminder_payload(deal_id), headers=headers
+        )
+        vao_hoa_don = await client.post(
+            "/api/v1/reminders",
+            json=_reminder_payload(invoice_id, target_type="invoice", reminder_type="payment_due"),
+            headers=headers,
+        )
+        assert vao_deal.status_code == 404
+        assert vao_hoa_don.status_code == 404
+
+    async def test_quet_quy_tac_bo_qua_hoa_don_cua_deal_da_xoa(
+        self, client: AsyncClient, db_session
+    ) -> None:
+        """Hai hoá đơn quá hạn giống hệt nhau, chỉ khác một cái thuộc deal đã xoá. Lượt quét
+        quy tắc hằng ngày chỉ được sinh lời nhắc cho cái còn sống."""
+        from sqlalchemy import select, update
+
+        from src.infrastructure.database.models import InvoiceModel, ReminderModel
+        from src.modules.reminders.application.auto_scheduler import AutoReminderScheduler
+
+        headers = await _auth(client)
+        # Gọi một lần để sinh sẵn năm quy tắc mặc định (nhắc quá hạn bật sẵn).
+        assert (await client.get("/api/v1/reminders/rules", headers=headers)).status_code == 200
+        deal_xoa, hoa_don_xoa = await _deal_va_hoa_don(client, headers)
+        _, hoa_don_song = await _deal_va_hoa_don(client, headers)
+
+        qua_han = (datetime.now(UTC) - timedelta(days=20)).date()
+        await db_session.execute(
+            update(InvoiceModel)
+            .where(InvoiceModel.id.in_([uuid.UUID(hoa_don_xoa), uuid.UUID(hoa_don_song)]))
+            .values(status="overdue", due_date=qua_han)
+        )
+        await client.delete(f"/api/v1/deals/{deal_xoa}", headers=headers)
+
+        await AutoReminderScheduler(db=db_session).run()
+
+        targets = set(
+            (
+                await db_session.scalars(
+                    select(ReminderModel.target_id).where(
+                        ReminderModel.target_id.in_(
+                            [uuid.UUID(hoa_don_xoa), uuid.UUID(hoa_don_song)]
+                        )
+                    )
+                )
+            ).all()
+        )
+        assert targets == {uuid.UUID(hoa_don_song)}
+
+
+class TestChuTaiKhoanDaXoaKhongGuiThu:
+    async def test_loi_nhac_cua_tai_khoan_da_xoa_khong_nam_trong_danh_sach_gui(
+        self, client: AsyncClient, db_session
+    ) -> None:
+        """Tự xoá tài khoản xong thì beat không được nhặt lời nhắc tới giờ của người đó."""
+        from sqlalchemy import update
+
+        from src.infrastructure.database.models import ReminderModel
+        from src.modules.reminders.application.delivery_service import ReminderDeliveryService
+        from src.modules.reminders.infrastructure.repository import RemindersRepository
+
+        headers = await _auth(client)
+        deal_id = await _make_deal_id(client, headers, client_email="khach_xoa@example.com")
+        reminder = await _create_reminder(client, headers, deal_id)
+        # Dời về quá khứ để nó "tới giờ gửi".
+        await db_session.execute(
+            update(ReminderModel)
+            .where(ReminderModel.id == uuid.UUID(reminder["id"]))
+            .values(scheduled_at=datetime.now(UTC) - timedelta(minutes=5))
+        )
+        assert uuid.UUID(reminder["id"]) in {
+            r.id for r in await RemindersRepository(db_session).list_due()
+        }
+
+        assert (await client.delete("/api/v1/users/me", headers=headers)).status_code == 200
+
+        due = {r.id for r in await RemindersRepository(db_session).list_due()}
+        assert uuid.UUID(reminder["id"]) not in due
+
+        with patch(SEND_EMAIL, new=AsyncMock()) as send_email:
+            result = await ReminderDeliveryService(db=db_session).deliver(
+                uuid.UUID(reminder["id"])
+            )
+        send_email.assert_not_awaited()
+        assert result.status == "cancelled"

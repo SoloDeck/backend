@@ -46,6 +46,8 @@ class DealResponse(BaseModel):
     ai_qualification_price_range_min: int | None
     ai_qualification_price_range_max: int | None
     closed_at: datetime | None
+    # Lý do dự án không thành công — chỉ có ở deal `lost`.
+    lost_reason: str | None = None
     document_url: str | None
     document_filename: str | None
     created_at: datetime

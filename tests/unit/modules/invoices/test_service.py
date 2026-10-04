@@ -2,6 +2,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
@@ -42,9 +43,15 @@ def invoice_request(**overrides) -> InvoiceRequest:
 
 
 async def test_create_allows_contract_only_invoice() -> None:
+    """Hoá đơn chỉ gắn hợp đồng vẫn tạo được — và tự nhận deal của hợp đồng.
+
+    Mọi màn hình tìm hoá đơn theo deal (danh sách hoá đơn, lời nhắc tự sinh, thông báo quá
+    hạn). Để `deal_id` trống thì hoá đơn đó không hiện ở đâu cả.  #Huynh
+    """
+    deal_cua_hop_dong = uuid.uuid4()
     repo = AsyncMock()
     repo.get_client_by_id.return_value = object()
-    repo.get_contract_by_id.return_value = object()
+    repo.get_contract_by_id.return_value = SimpleNamespace(deal_id=deal_cua_hop_dong)
     repo.create.return_value = InvoiceStub(id=uuid.uuid4())
     repo.save.side_effect = lambda invoice: invoice
     service = InvoicesService(db=AsyncMock(), repo=repo)
@@ -54,6 +61,34 @@ async def test_create_allows_contract_only_invoice() -> None:
     )
 
     assert result.status == "draft"
+    assert repo.create.await_args.kwargs["deal_id"] == deal_cua_hop_dong
+
+
+async def test_create_giu_deal_da_gui_kem_khi_co_ca_hop_dong() -> None:
+    deal_gui_kem = uuid.uuid4()
+    repo = AsyncMock()
+    repo.get_client_by_id.return_value = object()
+    repo.get_deal_by_id.return_value = object()
+    repo.get_contract_by_id.return_value = SimpleNamespace(deal_id=uuid.uuid4())
+    repo.create.return_value = InvoiceStub(id=uuid.uuid4())
+    repo.save.side_effect = lambda invoice: invoice
+
+    await InvoicesService(db=AsyncMock(), repo=repo).create(
+        uuid.uuid4(), invoice_request(deal_id=deal_gui_kem, contract_id=uuid.uuid4())
+    )
+
+    assert repo.create.await_args.kwargs["deal_id"] == deal_gui_kem
+
+
+async def test_create_hop_dong_khong_thuoc_minh_thi_404() -> None:
+    repo = AsyncMock()
+    repo.get_client_by_id.return_value = object()
+    repo.get_contract_by_id.return_value = None
+
+    with pytest.raises(NotFoundError):
+        await InvoicesService(db=AsyncMock(), repo=repo).create(
+            uuid.uuid4(), invoice_request(deal_id=None, contract_id=uuid.uuid4())
+        )
 
 
 async def test_create_rejects_unowned_client() -> None:

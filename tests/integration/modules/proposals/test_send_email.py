@@ -477,3 +477,29 @@ class TestChotGiaSauKhiDoiThuTuKhoa:
         assert resp.status_code == 409, resp.text
         after = (await client.get(f"/api/v1/deals/{deal_id}", headers=headers)).json()["data"]
         assert after["estimated_value"] == before["estimated_value"]
+
+
+class TestChanGuiDonDap:
+    async def test_luot_thu_21_trong_muoi_phut_bi_chan_429_khong_co_thu_nao(
+        self, client: AsyncClient, gui_email_gia: AsyncMock
+    ) -> None:
+        """Mỗi lượt gửi là một lá thư thật dùng chung hạn mức Gmail của hệ thống, nên một tài khoản
+        bấm/bắn dồn dập bị cắt ở 20 lượt. Dùng khách KHÔNG có email để các lượt đầu trả 409 mà
+        không phải dựng PDF — chúng vẫn tính vào trần."""
+        headers = await _auth(client)
+        resp = await client.post(
+            "/api/v1/clients",
+            json={"name": "Khach khong email", "status": "prospect"},
+            headers=headers,
+        )
+        deal_id = await _create_deal(client, headers, resp.json()["data"]["id"])
+        proposal_id = await _create_draft_proposal(client, headers, deal_id)
+
+        codes = []
+        for _ in range(21):
+            sent = await client.post(f"/api/v1/proposals/{proposal_id}/send", headers=headers)
+            codes.append(sent.status_code)
+
+        assert codes[:20] == [409] * 20, codes
+        assert codes[20] == 429, codes
+        gui_email_gia.assert_not_awaited()

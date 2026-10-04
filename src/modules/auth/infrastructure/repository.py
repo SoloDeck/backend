@@ -29,6 +29,15 @@ class AuthRepository:
             )
         )
 
+    async def get_user_by_email_including_deleted(self, email: str):
+        """Tài khoản mang email này, KỂ CẢ đã xoá mềm.
+
+        Dùng cho những chỗ sắp TẠO tài khoản hoặc gắn danh tính mới theo email: ràng buộc
+        UNIQUE trên `users.email` không biết gì về `deleted_at`, nên kiểm trùng cũng không
+        được bỏ qua bản ghi đã xoá. Đăng nhập thì vẫn dùng `get_user_by_email`.  #Huynh
+        """
+        return await self.db.scalar(select(UserModel).where(UserModel.email == email))
+
     async def get_user_by_id(self, user_id: uuid.UUID):
         return await self.db.scalar(
             select(UserModel).where(

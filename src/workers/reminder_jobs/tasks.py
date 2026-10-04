@@ -140,6 +140,32 @@ def send_pending_reminders() -> None:
         log.info("send_pending_reminders.queued", count=len(reminder_ids))
 
 
+def overdue_invoices_stmt(today: Any) -> Any:
+    """Hoá đơn đã gửi mà quá hạn tính tới `today`, kèm tên khách và mốc xoá của deal/khách.
+
+    Nối NGOÀI với deal: hoá đơn chỉ gắn hợp đồng thì không có deal, `deleted_at` ra NULL.
+    Hai cột `deleted_at` để `mark_overdue_invoices` bỏ qua thông báo cho dữ liệu đã xoá.
+    """
+    from sqlalchemy import select
+
+    from src.infrastructure.database.models import ClientModel, DealModel, InvoiceModel
+
+    return (
+        select(
+            InvoiceModel,
+            ClientModel.name,
+            DealModel.deleted_at.label("deal_deleted_at"),
+            ClientModel.deleted_at.label("client_deleted_at"),
+        )
+        .join(ClientModel, ClientModel.id == InvoiceModel.client_id)
+        .outerjoin(DealModel, DealModel.id == InvoiceModel.deal_id)
+        .where(
+            InvoiceModel.due_date < today,
+            InvoiceModel.status.in_(("sent", "partially_paid")),
+        )
+    )
+
+
 @celery_app.task(name="src.workers.reminder_jobs.tasks.mark_overdue_invoices")
 def mark_overdue_invoices() -> None:
     """Chạy mỗi giờ: đánh dấu hoá đơn quá hạn và báo cho freelancer.
@@ -155,11 +181,11 @@ def mark_overdue_invoices() -> None:
     import asyncio
     from datetime import UTC, date, datetime
 
-    from sqlalchemy import select, update
+    from sqlalchemy import update
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
     from src.config.settings import settings
-    from src.infrastructure.database.models import ClientModel, InvoiceModel
+    from src.infrastructure.database.models import InvoiceModel
     from src.modules.notifications.application.service import NotificationService
 
     async def _run() -> int:
@@ -173,28 +199,23 @@ def mark_overdue_invoices() -> None:
                 # Lấy danh sách TRƯỚC khi cập nhật: sau khi UPDATE thì không còn phân biệt
                 # được hoá đơn nào vừa mới quá hạn với hoá đơn đã quá hạn từ tuần trước —
                 # mà chỉ hoá đơn VỪA quá hạn mới đáng bắn thông báo.  #Huynh
-                rows = (
-                    await session.execute(
-                        select(InvoiceModel, ClientModel.name)
-                        .join(ClientModel, ClientModel.id == InvoiceModel.client_id)
-                        .where(
-                            InvoiceModel.due_date < today,
-                            InvoiceModel.status.in_(("sent", "partially_paid")),
-                        )
-                    )
-                ).all()
+                rows = (await session.execute(overdue_invoices_stmt(today))).all()
 
                 if not rows:
                     return 0
 
                 await session.execute(
                     update(InvoiceModel)
-                    .where(InvoiceModel.id.in_([inv.id for inv, _ in rows]))
+                    .where(InvoiceModel.id.in_([row.InvoiceModel.id for row in rows]))
                     .values(status="overdue", updated_at=datetime.now(UTC))
                 )
 
                 notifications = NotificationService(db=session)
-                for invoice, client_name in rows:
+                for invoice, client_name, deal_deleted_at, client_deleted_at in rows:
+                    # Vẫn đánh dấu quá hạn ở trên (dữ liệu phải đúng), nhưng deal/khách đã xoá thì
+                    # KHÔNG reo chuông: bấm vào chỉ ra trang "Không tìm thấy dự án".  #Huynh
+                    if deal_deleted_at is not None or client_deleted_at is not None:
+                        continue
                     await notifications.notify_invoice_overdue(
                         owner_user_id=invoice.owner_user_id,
                         invoice_id=invoice.id,

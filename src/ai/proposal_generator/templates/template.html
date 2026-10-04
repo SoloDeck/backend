@@ -7,7 +7,10 @@
     @page { size: A4; margin: 2cm; }
     body { font-family: "Times New Roman", Times, serif; font-size: 12pt; line-height: 1.6; color: #222; max-width: 780px; margin: 0 auto; }
     h1 { text-align: center; margin-bottom: 4px; }
-    h2 { margin-top: 24px; padding-bottom: 4px; border-bottom: 1px solid #ccc; font-size: 13pt; }
+    /* Đường kẻ nằm TRÊN đầu mục, ngăn mục này với mục trước. Trước đây nó nằm DƯỚI đầu mục — chen
+       giữa tiêu đề và chính nội dung của nó — nên người đọc tưởng nội dung thuộc về đầu mục kế
+       tiếp.  #Huynh */
+    h2 { margin-top: 26px; padding-top: 14px; border-top: 1px solid #ccc; font-size: 13pt; }
     .subtitle { text-align: center; color: #666; margin-bottom: 26px; }
     .info-table { width: 100%; border-collapse: collapse; margin-bottom: 16px; }
     .info-table td { padding: 5px 0; vertical-align: top; }

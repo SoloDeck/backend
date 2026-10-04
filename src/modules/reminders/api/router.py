@@ -241,7 +241,9 @@ def _rule_response(rule: Any) -> ReminderRuleResponse:
         offset_days=rule.offset_days,
         repeat_every_days=rule.repeat_every_days,
         channel=rule.channel,
-        auto_send=rule.auto_send,
+        # Công tắc "tự gửi" đã bỏ — lời nhắc do quy tắc tạo luôn chờ duyệt. Trường giữ lại cho
+        # đúng hợp đồng API và luôn là False, kể cả khi cột của người dùng cũ còn True.
+        auto_send=False,
         send_at_hour=rule.send_at_hour,
         label=spec.label if spec else "",
         supports_repeat=rule_type in REPEATABLE_RULES,

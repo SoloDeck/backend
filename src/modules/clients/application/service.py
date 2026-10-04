@@ -14,6 +14,9 @@ from src.modules.clients.schemas.request import (
 )
 from src.shared.exceptions.domain import BusinessRuleError, NotFoundError
 
+# Lý do tự ghi vào các dự án bị đưa vào Kho lưu trữ khi khách bị lưu trữ.
+ARCHIVED_CLIENT_LOST_REASON = "Khách hàng bị hạn chế"
+
 # Tên tiếng Việt của từng loại chứng từ, theo đúng chữ đang hiện trên web.
 _TRANSACTION_LABELS = (("deals", "dự án"), ("invoices", "hóa đơn"), ("contracts", "hợp đồng"))
 
@@ -32,7 +35,7 @@ def _deletion_blocked_message(counts: dict[str, int]) -> str:
     return (
         f"Khách này còn {stuck} nên chưa xóa được. Dự án, hóa đơn, hợp đồng đã xóa vẫn tính "
         "vì hệ thống giữ lại làm lịch sử giao dịch. Bạn có thể chuyển khách sang trạng thái "
-        "Lưu trữ để ẩn khỏi danh sách."
+        "Lưu trữ; các dự án đang chạy của khách sẽ tự vào Kho lưu trữ."
     )
 
 
@@ -154,6 +157,7 @@ class ClientsService:
 
     async def update(self, user_id: uuid.UUID, client_id: uuid.UUID, payload: ClientUpdateRequest):  # type: ignore[return]
         client = await self._get_client(user_id, client_id)
+        was_archived = client.status == "archived"
         for field in (
             "name",
             "email",
@@ -170,7 +174,18 @@ class ClientsService:
             value = getattr(payload, field, None)
             if value is not None:
                 setattr(client, field, value)
-        return await self.repo.save(client)
+        saved = await self.repo.save(client)
+        # Khách vừa bị LƯU TRỮ: dự án đang chạy của họ không còn ai theo nữa nên tự vào Kho lưu trữ
+        # (giai đoạn "Không thành công", lý do cố định). Chỉ chạy đúng lúc CHUYỂN sang lưu trữ —
+        # lưu lại khách đã lưu trữ thì không làm gì, và bỏ lưu trữ cũng không hồi sinh các dự án
+        # đã đóng. Deal đã hoàn thành giữ nguyên.  #Huynh
+        if saved.status == "archived" and not was_archived:
+            from src.modules.deals.application.service import DealsService
+
+            await DealsService(db=self.db).lose_open_deals_of_client(
+                user_id, client_id, reason=ARCHIVED_CLIENT_LOST_REASON
+            )
+        return saved
 
     async def delete(self, user_id: uuid.UUID, client_id: uuid.UUID) -> None:
         client = await self._get_client(user_id, client_id)

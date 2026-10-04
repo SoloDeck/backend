@@ -103,6 +103,10 @@ class DealStageRequest(BaseModel):
     # nghĩa. 409 nghĩa là "xung đột trạng thái", còn đây là DỮ LIỆU KHÔNG HỢP LỆ → 422.
     # Để pydantic chặn ngay ở cửa, FastAPI tự trả 422 kèm danh sách giá trị hợp lệ.  #Huynh
     target_stage: DealStage = Field(validation_alias=AliasChoices("target_stage", "stage"))
+    # Lý do dự án không thành công, chỉ dùng khi `target_stage = lost` (giai đoạn khác thì bỏ
+    # qua). Không bắt buộc ở API để client cũ (app di động) không gửi vẫn chạy; web đòi nhập ở
+    # hộp thoại.
+    reason: str | None = Field(default=None, max_length=1000)
 
     @property
     def stage(self) -> str:

@@ -171,6 +171,68 @@ async def test_revenue_monthly_buckets_a_paid_invoice(client: AsyncClient) -> No
     assert float(july["invoiced"]) >= 700.0
 
 
+async def test_doanh_thu_bo_qua_hoa_don_nhap_va_da_huy(client: AsyncClient) -> None:
+    """Một hoá đơn gửi thật 300, một nháp 1.000, một đã huỷ 5.000 — cùng tháng 7/2026.
+
+    Cả tổng doanh thu lẫn biểu đồ theo tháng chỉ được thấy 300. Trước khi sửa, cột
+    "Đã xuất" ra 6.300 và "Còn nợ" ra 6.300: huỷ một hoá đơn rồi xuất lại là khoản đó
+    bị đếm hai lần, còn bản nháp thành món nợ khách chưa từng nhận.  #Huynh
+    """
+    headers = await _auth_headers(client)
+    client_obj = (
+        await client.post(
+            "/api/v1/clients",
+            json={"name": "Void Co", "email": "void@example.com", "type": "company"},
+            headers=headers,
+        )
+    ).json()["data"]
+    deal = (
+        await client.post(
+            "/api/v1/deals",
+            json={"client_id": client_obj["id"], "title": "Void deal"},
+            headers=headers,
+        )
+    ).json()["data"]
+
+    async def _tao_hoa_don(subtotal: str) -> str:
+        resp = await client.post(
+            "/api/v1/invoices",
+            json={
+                "client_id": client_obj["id"],
+                "deal_id": deal["id"],
+                "subtotal": subtotal,
+                "tax_rate": "0",
+                "issue_date": "2026-07-10",
+                "due_date": "2026-08-10",
+            },
+            headers=headers,
+        )
+        assert resp.status_code == 201, resp.text
+        return resp.json()["data"]["id"]
+
+    da_gui = await _tao_hoa_don("300.00")
+    await client.post(f"/api/v1/invoices/{da_gui}/send", json={"notify": False}, headers=headers)
+    await _tao_hoa_don("1000.00")  # để nguyên nháp
+    da_huy = await _tao_hoa_don("5000.00")
+    await client.post(f"/api/v1/invoices/{da_huy}/send", json={"notify": False}, headers=headers)
+    huy = await client.post(f"/api/v1/invoices/{da_huy}/void", headers=headers)
+    assert huy.status_code == 200, huy.text
+
+    tong = (
+        await client.get(
+            "/api/v1/analytics/revenue?from_date=2026-07-01&to_date=2026-07-31", headers=headers
+        )
+    ).json()["data"]
+    assert float(tong["total_invoiced"]) == 300.0
+    assert float(tong["total_outstanding"]) == 300.0
+
+    thang = (
+        await client.get("/api/v1/analytics/revenue/monthly?months=24", headers=headers)
+    ).json()["data"]
+    july = next(r for r in thang if r["month"] == "2026-07")
+    assert float(july["invoiced"]) == 300.0
+
+
 async def test_revenue_monthly_rejects_out_of_range_months(client: AsyncClient) -> None:
     headers = await _auth_headers(client)
     assert (await client.get("/api/v1/analytics/revenue/monthly?months=99", headers=headers)).status_code == 422
@@ -284,6 +346,8 @@ async def test_revenue_tinh_theo_moc_thanh_toan_cua_hop_dong_da_ky(client: Async
     assert float(before["milestone_collected"]) == 0
     assert float(before["milestone_outstanding"]) == 100_000_000
     assert before["milestones_pending"] == 2
+    # Một deal có HAI mốc vẫn chỉ là MỘT deal đã ký — đếm mốc là thẻ "Tổng" ghi 2 deal.
+    assert before["signed_deals"] == 1
 
     # Tick mốc đặt cọc → thu đúng một nửa.
     ticked = await client.patch(

@@ -36,6 +36,10 @@ from src.modules.reminders.application.attachments import (
     load_image_bytes,
     parse_attachments,
 )
+from src.modules.reminders.application.invoice_reminders import (
+    invoice_is_settled,
+    project_label_for,
+)
 from src.modules.reminders.application.payment_block import build_payment_section
 from src.modules.reminders.infrastructure.repository import RemindersRepository
 from src.shared.email.smtp import send_email as smtp_send_email
@@ -261,6 +265,36 @@ class ReminderDeliveryService:
                 detail="Lời nhắc này không còn ở trạng thái chờ gửi.",
             )
 
+        # Chủ lời nhắc đã XOÁ tài khoản (tự xoá hoặc bị admin xoá) thì không gửi gì nữa, và huỷ
+        # luôn cho khỏi bị quét lại. Trước đây không ai kiểm: khách của một tài khoản đã xoá vẫn
+        # nhận thư nhắc thanh toán mang tên, email và số tài khoản ngân hàng của người đó.
+        # `list_due` đã lọc sẵn; kiểm lại ở đây cho lượt "Gửi ngay" và lượt retry.  #Huynh
+        owner = await self.repo.get_owner(reminder.owner_user_id)
+        if owner is None or owner.deleted_at is not None:
+            reminder.status = "cancelled"
+            await self.db.flush()
+            log.info("reminder.cancelled_owner_deleted", reminder_id=str(reminder.id))
+            return DeliveryResult(
+                status="cancelled",
+                detail="Tài khoản gửi lời nhắc này đã bị xoá nên SoloDesk không gửi nữa.",
+            )
+
+        # Lời nhắc THANH TOÁN mà hóa đơn đã thu đủ / đã hủy thì không gửi: nhắc khách trả khoản
+        # họ đã trả là cách nhanh nhất để mất khách. Bình thường lời nhắc đã bị hủy ngay lúc ghi
+        # nhận thu (`retire_invoice_payment_reminders`); đây là chốt chặn cho đường nào lọt qua
+        # đó, và cho cả lượt "Gửi ngay".  #Huynh
+        if await invoice_is_settled(self.db, reminder):
+            reminder.status = "cancelled"
+            await self.db.flush()
+            log.info("reminder.cancelled_invoice_settled", reminder_id=str(reminder.id))
+            return DeliveryResult(
+                status="cancelled",
+                detail=(
+                    "Hóa đơn này đã được ghi nhận thanh toán (hoặc đã hủy) "
+                    "nên SoloDesk không gửi lời nhắc nữa."
+                ),
+            )
+
         try:
             detail = await self._dispatch(reminder, unattended=unattended)
         except PermanentDeliveryError as exc:
@@ -348,7 +382,8 @@ class ReminderDeliveryService:
             message,
             owner.full_name if owner else None,
             owner.email if owner else None,
-            label,
+            # Tiêu đề thư dùng `label` (với hóa đơn là mã INV-…), còn chân thư nói về DỰ ÁN.
+            await project_label_for(self.db, reminder, label),
             payment_html=payment_html,
             payment_plain=payment_plain,
         )

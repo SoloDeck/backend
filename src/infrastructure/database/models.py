@@ -667,6 +667,8 @@ class DealModel(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     ai_qualification_price_range_min: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     ai_qualification_price_range_max: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Vì sao dự án KHÔNG THÀNH CÔNG (`lost`): bắt buộc khi chuyển sang `lost`, trống ở deal khác.
+    lost_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     document_url: Mapped[str | None] = mapped_column(String(2048), nullable=True)
     document_filename: Mapped[str | None] = mapped_column(String(255), nullable=True)
 

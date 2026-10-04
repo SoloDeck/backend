@@ -52,6 +52,30 @@ async def test_create_requires_owned_client() -> None:
         await service.create(uuid.uuid4(), DealRequest(client_id=uuid.uuid4(), title="Deal"))
 
 
+class TestDelete:
+    async def test_xoa_deal_huy_loi_nhac_cua_ca_cay_deal(self) -> None:
+        deal = DealStub(id=uuid.uuid4(), stage="in_negotiation")
+        repo = AsyncMock()
+        repo.get_by_id.return_value = deal
+        owner = uuid.uuid4()
+        service = DealsService(db=AsyncMock(), repo=repo, usage=AsyncMock())
+
+        await service.delete(owner, deal.id)
+
+        assert getattr(deal, "deleted_at", None) is not None
+        repo.cancel_pending_reminders_of_deal_tree.assert_awaited_once_with(deal.id, owner)
+        repo.save.assert_awaited_once_with(deal)
+
+    async def test_xoa_deal_khong_ton_tai_thi_404_va_khong_huy_gi(self) -> None:
+        repo = AsyncMock()
+        repo.get_by_id.return_value = None
+        service = DealsService(db=AsyncMock(), repo=repo, usage=AsyncMock())
+
+        with pytest.raises(NotFoundError):
+            await service.delete(uuid.uuid4(), uuid.uuid4())
+        repo.cancel_pending_reminders_of_deal_tree.assert_not_awaited()
+
+
 async def test_transition_rejects_backward_stage() -> None:
     repo = AsyncMock()
     repo.get_by_id.return_value = DealStub(id=uuid.uuid4(), stage="in_negotiation")
@@ -675,6 +699,7 @@ def _make_qualify_service(
     # last_usage() là hàm ĐỒNG BỘ. Để AsyncMock thì nó trả coroutine không ai await,
     # pytest báo lỗi (filterwarnings = error).
     ai_facade.last_usage = MagicMock(return_value=None)
+    ai_facade.last_model = MagicMock(return_value="test-model")  # đồng bộ như last_usage
 
     service = DealsService(db=AsyncMock(), repo=repo, ai_facade=ai_facade, usage=AsyncMock())
     return service, intake, deal_model

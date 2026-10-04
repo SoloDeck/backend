@@ -376,6 +376,7 @@ def _mock_ai_facade(**overrides):
     # `ai_cost_records`). Để AsyncMock tự sinh thì nó trả về coroutine, và code gọi
     # `.get("input_tokens")` trên coroutine đó → AttributeError.  #Huynh
     facade.last_usage = MagicMock(return_value=None)
+    facade.last_model = MagicMock(return_value="test-model")  # đồng bộ như last_usage
     return facade
 
 

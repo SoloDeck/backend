@@ -8,6 +8,8 @@ from decimal import Decimal
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.modules.invoices.application.emails import format_vnd, strip_invoice_title_line
+from src.modules.invoices.domain.typed_amounts import mismatched_amounts
 from src.modules.invoices.infrastructure.repository import InvoicesRepository
 from src.modules.invoices.schemas.request import (
     InvoiceRequest,
@@ -43,11 +45,17 @@ class InvoicesService:
             and await self.repo.get_deal_by_id(payload.deal_id, user_id) is None
         ):
             raise NotFoundError(f"Deal {payload.deal_id} not found")
-        if (
-            payload.contract_id is not None
-            and await self.repo.get_contract_by_id(payload.contract_id, user_id) is None
-        ):
-            raise NotFoundError(f"Contract {payload.contract_id} not found")
+        # Hoá đơn chỉ gắn hợp đồng thì tự nhận deal của hợp đồng đó. Hợp đồng luôn thuộc đúng
+        # một deal (deal_id bất biến), mà mọi nơi khác đều tìm hoá đơn THEO DEAL: danh sách hoá
+        # đơn của deal, lời nhắc tự sinh, thông báo "quá hạn". Để trống thì hoá đơn đó tồn tại
+        # trong database mà không màn hình nào của deal thấy được.  #Huynh
+        deal_id = payload.deal_id
+        if payload.contract_id is not None:
+            contract = await self.repo.get_contract_by_id(payload.contract_id, user_id)
+            if contract is None:
+                raise NotFoundError(f"Contract {payload.contract_id} not found")
+            if deal_id is None:
+                deal_id = contract.deal_id
 
         subtotal = payload.subtotal
         if subtotal is None:
@@ -66,7 +74,7 @@ class InvoicesService:
             owner_user_id=user_id,
             client_id=payload.client_id,
             contract_id=payload.contract_id,
-            deal_id=payload.deal_id,
+            deal_id=deal_id,
             invoice_number=invoice_number,
             status="draft",
             issue_date=payload.issue_date or date.today(),
@@ -132,6 +140,17 @@ class InvoicesService:
         invoice = await self._get_invoice(user_id, invoice_id)
         if invoice.status != "draft":
             raise BusinessRuleError("Only draft invoices can be updated")
+
+        # Tính TRƯỚC số tiền sau khi sửa và kiểm HẾT rồi mới ghi: lỗi giữa chừng thì hóa đơn
+        # không bị sửa dở.
+        subtotal = self._subtotal_after(invoice, payload)
+        tax_rate = (
+            Decimal(payload.tax_rate) if payload.tax_rate is not None else Decimal(invoice.tax_rate)
+        )
+        await self._require_contract_price(invoice, subtotal, tax_rate)
+        if payload.notes is not None:
+            self._require_notes_match_price(payload.notes, subtotal, tax_rate, payload.line_items)
+
         if payload.line_items:
             payload.subtotal = sum(
                 (i.quantity * i.unit_price for i in payload.line_items), Decimal("0")
@@ -148,6 +167,63 @@ class InvoicesService:
         if payload.notes is not None:
             invoice.notes = payload.notes
         return await self.repo.save(invoice)
+
+    @staticmethod
+    def _subtotal_after(invoice, payload: InvoiceUpdateRequest) -> Decimal:  # type: ignore[no-untyped-def]
+        """Tạm tính của hóa đơn SAU khi áp `payload` — cùng thứ tự ưu tiên với phần ghi bên dưới."""
+        if payload.line_items:
+            return sum((i.quantity * i.unit_price for i in payload.line_items), Decimal("0"))
+        if payload.subtotal is not None:
+            return Decimal(payload.subtotal)
+        return Decimal(invoice.subtotal)
+
+    async def _require_contract_price(self, invoice, subtotal: Decimal, tax_rate: Decimal) -> None:  # type: ignore[no-untyped-def]
+        """Hóa đơn xuất theo MỘT MỐC của hợp đồng thì số tiền và thuế/VAT là của hợp đồng.
+
+        Giá đã chốt trong hợp đồng; gõ lại một con số khác ở bước soạn hóa đơn là hóa đơn lệch
+        hợp đồng — hợp đồng có cũng như không. Muốn đổi giá thì phải thỏa thuận lại hợp đồng,
+        không phải sửa hóa đơn. Chỉ cấm ĐỔI: hóa đơn cũ đã lệch từ trước vẫn lưu được hạn thanh
+        toán, lời nhắn... mà không bị kẹt (lưu lại đúng con số cũ thì qua).
+
+        Hóa đơn không thuộc mốc nào (không có task thu tiền nối tới) thì không có hợp đồng để bám,
+        giữ nguyên như trước.  #Huynh
+        """
+        if subtotal == Decimal(invoice.subtotal) and tax_rate == Decimal(invoice.tax_rate):
+            return
+        from src.modules.tasks.infrastructure.repository import TaskRepository  # tránh vòng import
+
+        if await TaskRepository(self.db).get_payment_task_by_invoice(invoice.id) is None:
+            return
+        raise BusinessRuleError(
+            "Giá của hóa đơn này lấy từ hợp đồng (mốc thanh toán đã chốt) nên không sửa được số "
+            "tiền hay thuế/VAT. Muốn đổi giá thì phải thỏa thuận lại hợp đồng."
+        )
+
+    @staticmethod
+    def _require_notes_match_price(
+        notes: str, subtotal: Decimal, tax_rate: Decimal, line_items: list | None
+    ) -> None:
+        """Lời nhắn gửi khách không được ghi số tiền khác số tiền của hóa đơn, kể cả lúc lưu nháp.
+
+        Trước đây chỉ chặn lúc GỬI, nên một bản nháp mang giá lệch vẫn nằm đó chờ ngày ai đó lỡ tay
+        bấm gửi. Số khớp một con số trên hóa đơn (tạm tính, thuế, tổng, từng hạng mục) thì cho qua;
+        chỉ số LẠ bị từ chối. Dòng tên nội bộ `Hóa đơn: <tên>` không phải lời nhắn nên bỏ ra
+        trước.  #Huynh
+        """
+        tax = subtotal * tax_rate
+        total = subtotal + tax
+        allowed = [round(subtotal), round(total)]
+        if tax > 0:
+            allowed.append(round(tax))
+        allowed += [round(i.quantity * i.unit_price) for i in line_items or []]
+        wrong = mismatched_amounts(strip_invoice_title_line(notes), allowed)
+        if wrong:
+            raise BusinessRuleError(
+                "Lời nhắn đang ghi số tiền "
+                + ", ".join(format_vnd(a) for a in wrong)
+                + f" khác với số tiền của hóa đơn ({format_vnd(total)}). Số tiền lấy từ hợp đồng "
+                "nên không ghi khác được — hãy sửa cho khớp."
+            )
 
     async def delete(self, user_id: uuid.UUID, invoice_id: uuid.UUID) -> None:
         """Xoá một hoá đơn NHÁP tạo nhầm.
@@ -187,13 +263,15 @@ class InvoicesService:
         lệch ở đây nghĩa là khách chuyển tiền nhầm chỗ.  #Huynh
         """
         from src.infrastructure.storage.object_storage import object_storage
-        from src.modules.invoices.application.emails import build_invoice_email
+        from src.modules.invoices.application.emails import (
+            build_invoice_email,
+            build_invoice_footer,
+        )
         from src.modules.reminders.application.attachments import (
             images_html,
             load_image_bytes,
             parse_attachments,
         )
-        from src.modules.reminders.application.delivery_service import build_footer
         from src.modules.reminders.application.payment_block import (
             build_payment_block,
             payment_info_from_owner,
@@ -202,6 +280,14 @@ class InvoicesService:
         client = await self.repo.get_client_by_id(invoice.client_id, invoice.owner_user_id)
         owner = await self.repo.get_owner(invoice.owner_user_id)
         items = await self.repo.list_line_items(invoice.id)
+        # Tên dự án của hóa đơn: thư phải nói hóa đơn này cho dự án nào (khách làm nhiều dự án với
+        # cùng một freelancer thì chỉ mã INV không đủ để nhận ra).
+        deal = (
+            await self.repo.get_deal_by_id(invoice.deal_id, invoice.owner_user_id)
+            if invoice.deal_id is not None
+            else None
+        )
+        project_name = (getattr(deal, "title", None) or "").strip() or None
 
         if client is None or not (client.email or "").strip():
             raise BusinessRuleError(
@@ -235,14 +321,15 @@ class InvoicesService:
             amount_due=amount_due,
             issue_date=invoice.issue_date,
             due_date=invoice.due_date,
+            project_name=project_name,
             notes=invoice.notes,
             payment_html=payment_html,
             payment_plain=payment_plain,
             images_html=images_html(images, {f"img{i}": f"cid:img{i}" for i in range(len(images))}),
-            footer=build_footer(
+            footer=build_invoice_footer(
                 getattr(owner, "full_name", None),
                 getattr(owner, "email", None),
-                f"Hóa đơn {invoice.invoice_number}",
+                project_name,
             ),
         )
         return content, inline_images, client.email
@@ -254,11 +341,16 @@ class InvoicesService:
         *,
         notify: bool = True,
         attachments: list[dict[str, str]] | None = None,
+        schedule_payment_reminder: bool = False,
     ):
         """Gửi hóa đơn cho khách và đánh dấu đã gửi.
 
         `notify=False` chỉ ĐÁNH DẤU, không gửi thư — dành cho freelancer đã tự gửi tay qua
         Zalo/Messenger rồi chỉ muốn hệ thống ghi nhận.
+
+        `schedule_payment_reminder=True` thì SAU KHI gửi xong, đặt sẵn một lời nhắc thanh toán ở tab
+        Nhắc nhở THEO quy tắc "tới hạn" của người dùng (xem `reminders.invoice_reminders`).
+        Kết quả (đặt được hay vì sao không) nằm ở `payment_reminder` của hóa đơn trả về.
 
         **Gửi hỏng thì KHÔNG đánh dấu đã gửi.** Trước đây hàm này chỉ đổi trạng thái và
         không hề gửi thư, nên nút "Gửi cho khách" là một lời nói dối: khách không nhận được
@@ -293,7 +385,24 @@ class InvoicesService:
         invoice.status = "sent"
         invoice.sent_at = datetime.now(UTC)
         invoice.share_token = share_token
-        return await self.repo.save(invoice)
+        saved = await self.repo.save(invoice)
+
+        if schedule_payment_reminder:
+            # Đặt SAU khi trạng thái "đã gửi" đã ghi: thư đã đi rồi thì lỗi đặt lời nhắc không được
+            # kéo hóa đơn quay về nháp (hàm bên dưới tự nuốt lỗi DB và ghi log).
+            from src.modules.reminders.application.invoice_reminders import (
+                schedule_invoice_payment_reminder,
+            )
+
+            outcome = await schedule_invoice_payment_reminder(
+                self.db,
+                invoice=saved,
+                client=await self.repo.get_client_by_id(saved.client_id, saved.owner_user_id),
+                owner=await self.repo.get_owner(saved.owner_user_id),
+            )
+            # Thuộc tính tạm (không phải cột): để phản hồi báo web biết lời nhắc đã được đặt chưa.
+            saved.payment_reminder = outcome.as_response()
+        return saved
 
     async def void(self, user_id: uuid.UUID, invoice_id: uuid.UUID):
         invoice = await self._get_invoice(user_id, invoice_id)
@@ -301,7 +410,9 @@ class InvoicesService:
             raise BusinessRuleError("Invoices with recorded payments cannot be voided")
         invoice.status = "void"
         invoice.voided_at = datetime.now(UTC)
-        return await self.repo.save(invoice)
+        saved = await self.repo.save(invoice)
+        await self._retire_payment_reminders(saved)
+        return saved
 
     async def record_payment(
         self, user_id: uuid.UUID, invoice_id: uuid.UUID, payload: PaymentRequest
@@ -313,6 +424,7 @@ class InvoicesService:
             raise BusinessRuleError("Cannot record payment for draft or void invoice")
         if invoice.amount_paid + payload.amount > invoice.total:
             raise BusinessRuleError("Payment would exceed invoice total")
+        old_remaining_text = self._remaining_text(invoice)
         await self.repo.add_payment(
             invoice_id=invoice_id,
             amount=payload.amount,
@@ -322,7 +434,47 @@ class InvoicesService:
         )
         invoice.amount_paid += payload.amount
         invoice.status = "paid" if invoice.amount_paid == invoice.total else "partially_paid"
-        return await self.repo.save(invoice)
+        saved = await self.repo.save(invoice)
+        if saved.status == "paid":
+            await self._retire_payment_reminders(saved)
+        else:
+            await self._refresh_reminder_amounts(saved, old_remaining_text)
+        return saved
+
+    @staticmethod
+    def _remaining_text(invoice) -> str:
+        from src.modules.reminders.application.invoice_reminders import remaining_amount_text
+
+        return remaining_amount_text(invoice)
+
+    async def _refresh_reminder_amounts(self, invoice, old_text: str) -> None:
+        """Thu một phần: số "còn lại" ghi trong chữ của lời nhắc đang chờ phải đi theo số mới."""
+        from src.modules.reminders.application.invoice_reminders import (
+            refresh_invoice_reminder_amounts,
+        )
+
+        await refresh_invoice_reminder_amounts(
+            self.db,
+            owner_user_id=invoice.owner_user_id,
+            invoice_id=invoice.id,
+            old_text=old_text,
+            new_text=self._remaining_text(invoice),
+        )
+
+    async def _retire_payment_reminders(self, invoice) -> None:
+        """Hóa đơn đã thu đủ / đã hủy thì hủy luôn lời nhắc thanh toán đang chờ của nó.
+
+        Thu một phần thì KHÔNG hủy: khoản còn lại vẫn cần nhắc (chữ trong lời nhắc được cập nhật
+        số mới ở `_refresh_reminder_amounts`, còn khối "Thanh toán cho tôi" luôn tính số còn nợ
+        lúc gửi).  #Huynh
+        """
+        from src.modules.reminders.application.invoice_reminders import (
+            retire_invoice_payment_reminders,
+        )
+
+        await retire_invoice_payment_reminders(
+            self.db, owner_user_id=invoice.owner_user_id, invoice_id=invoice.id
+        )
 
     async def list_payments(self, user_id: uuid.UUID, invoice_id: uuid.UUID) -> list:
         await self._get_invoice(user_id, invoice_id)

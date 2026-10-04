@@ -20,7 +20,10 @@
     .party-line { margin: 3px 0; }
     .party-line .label { display: inline-block; width: 170px; color: #555; }
     .fill { border-bottom: 1px dotted #999; display: inline-block; min-width: 150px; }
-    h2 { margin-top: 20px; margin-bottom: 6px; font-size: 12.5pt; border-bottom: 1px solid #ccc; padding-bottom: 3px; }
+    /* Đường kẻ nằm TRÊN điều, ngăn điều này với điều trước. Trước đây nó nằm DƯỚI tiêu đề — chen
+       giữa tiêu đề và chính nội dung của nó — nên người đọc tưởng nội dung thuộc về điều kế
+       tiếp.  #Huynh */
+    h2 { margin-top: 22px; margin-bottom: 6px; font-size: 12.5pt; border-top: 1px solid #ccc; padding-top: 12px; }
     p, li { text-align: justify; margin: 6px 0; }
     .clause { white-space: pre-line; margin: 0 0 4px; }
     ul { padding-left: 22px; }

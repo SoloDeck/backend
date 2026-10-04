@@ -94,6 +94,10 @@ class LeadQualifier(BaseAIChain):
             )
 
             self.last_usage = response.usage
+            # Tên model THẬT của lần gọi này, lấy từ chính provider đã chạy chứ không phải chuỗi
+            # cứng: `lead_scores.model_version` ghi vào đây. Không dựa vào `usage` vì có provider
+            # trả usage=None.  #Huynh
+            self.last_model = getattr(provider, "model", None)
 
             result = self._parse_output(response.text)
 

@@ -54,6 +54,22 @@ class TestRegisterEndpoint:
         assert body["success"] is False
         assert body["error"]["code"] == "CONFLICT"
 
+    async def test_email_cua_tai_khoan_da_xoa_thi_409_chu_khong_500(
+        self, client: AsyncClient
+    ) -> None:
+        """Tự xoá tài khoản rồi đăng ký lại đúng email đó. Trước khi sửa: 500, vì bước kiểm
+        trùng bỏ qua bản ghi đã xoá mà UNIQUE trên `users.email` thì không."""
+        payload = _register_payload()
+        token = (await _register(client, **payload))["data"]["access_token"]
+        xoa = await client.delete(
+            "/api/v1/users/me", headers={"Authorization": f"Bearer {token}"}
+        )
+        assert xoa.status_code == 200, xoa.text
+
+        resp = await client.post("/api/v1/auth/register", json=payload)
+        assert resp.status_code == 409, resp.text
+        assert resp.json()["error"]["message"] == "This email belongs to a deleted account"
+
     async def test_missing_password_returns_422(self, client: AsyncClient) -> None:
         resp = await client.post(
             "/api/v1/auth/register",

@@ -104,3 +104,7 @@ def reset_moi_bo_dem() -> None:
         _go_ma_theo_ip,
     ):
         bo_dem.reset()
+    # Bộ đếm gửi giấy tờ cho khách cũng là trạng thái cấp module, conftest chỉ gọi hàm này.
+    from src.shared.rate_limit import send_guards
+
+    send_guards.reset_bo_dem()

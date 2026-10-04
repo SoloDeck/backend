@@ -47,6 +47,11 @@ _google_transport_request = google_auth_requests.Request()
 # bài test và người đọc thấy ngay con số.  #Huynh
 SO_LAN_GO_SAI_TOI_DA = 5
 
+# Câu lỗi 409 khi email thuộc một tài khoản ĐÃ XOÁ MỀM. Web so khớp đúng chuỗi này để hiện
+# "liên hệ quản trị" thay vì "email đã được đăng ký" — đổi chữ ở đây thì sửa cả
+# `web/src/services/authService.ts` (DELETED_ACCOUNT_MARKER).  #Huynh
+DELETED_ACCOUNT_EMAIL_MESSAGE = "This email belongs to a deleted account"
+
 @dataclass
 class AuthService:
     db: AsyncSession
@@ -117,8 +122,14 @@ class AuthService:
         )
 
     async def register(self, payload: RegisterRequest) -> AuthTokenResponse:
-        existing = await self.repo.get_user_by_email(payload.email)
-        if existing:
+        # Tra CẢ tài khoản đã xoá mềm: cột `users.email` vẫn UNIQUE với chúng. Tra kiểu cũ
+        # (bỏ qua bản ghi đã xoá) thì lọt qua kiểm tra rồi nổ IntegrityError → 500.
+        # Email của tài khoản đã xoá vẫn bị giữ — cố ý, để người bị admin xoá không tự
+        # đăng ký lại được.  #Huynh
+        existing = await self.repo.get_user_by_email_including_deleted(payload.email)
+        if existing is not None:
+            if existing.deleted_at is not None:
+                raise AlreadyExistsError(DELETED_ACCOUNT_EMAIL_MESSAGE)
             raise AlreadyExistsError(f"Email '{payload.email}' is already registered")
 
         now = datetime.now(UTC)
@@ -302,9 +313,22 @@ class AuthService:
                 raise AuthenticationError("Account not available")
             return await self._issue_tokens(user_id=user.id, email=user.email, role=user.role)
 
-        existing_user = await self.repo.get_user_by_email(email)
+        # Từ đây trở xuống tài khoản được tìm THEO EMAIL (liên kết vào tài khoản sẵn có, hoặc
+        # tạo mới). Email chưa được Google xác thực thì ai cũng gõ được email của người
+        # khác vào tài khoản Google của mình — tin nó là trao luôn tài khoản SoloDesk.
+        if claims.get("email_verified") not in (True, "true"):
+            raise AuthenticationError("Google email is not verified")
+
+        # Tra cả tài khoản đã xoá mềm — cùng lẽ với `register`: bỏ qua chúng thì nhánh tạo
+        # mới bên dưới đụng UNIQUE trên `users.email` và nổ 500.
+        existing_user = await self.repo.get_user_by_email_including_deleted(email)
 
         if existing_user is not None:
+            # Chốt chặn nhánh liên kết từng thiếu: nhánh tìm theo `google_sub` phía trên có
+            # kiểm trạng thái, nhánh này thì không — tài khoản bị khoá chỉ cần bấm "Đăng
+            # nhập bằng Google" là vào lại được.  #Huynh
+            if existing_user.deleted_at is not None or existing_user.status != "active":
+                raise AuthenticationError("Account not available")
             new_identity = OAuthIdentityModel(
                 user_id=existing_user.id,
                 provider="google",

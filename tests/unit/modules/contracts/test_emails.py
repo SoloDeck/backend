@@ -40,7 +40,7 @@ class TestThanThu:
         assert "đăng nhập" not in mail.plain.lower()
 
     def test_neu_so_hop_dong_khi_co(self) -> None:
-        assert "(số HD-2026-001)" in _build().plain
+        assert "(số HD-2026-001/HĐDV)" in _build().plain
         assert "(số" not in _build(contract_number="").plain
 
     def test_chan_thu_co_ten_va_email_that_cua_freelancer(self) -> None:
@@ -52,3 +52,17 @@ class TestAnToanHtml:
         mail = _build(client_name="A & <B>", project_name="<img src=x>")
         assert "<img" not in mail.html
         assert "A &amp; &lt;B&gt;" in mail.html
+
+
+class TestSoHopDongKhopTrenGiay:
+    def test_hau_to_trong_thu_la_dung_hau_to_in_tren_to_hop_dong(self) -> None:
+        """Thư nêu "HD-2026-001/HĐDV" còn tờ giấy in "HD-2026-001" thì hai bên nhắc tới hai mã
+        khác nhau. Hằng số trong thư phải trùng với chữ nằm ngay sau số hợp đồng trong template."""
+        from pathlib import Path
+
+        from src.modules.contracts.application.emails import CONTRACT_NUMBER_SUFFIX
+
+        template = Path("src/ai/contract_generator/templates/contract.html").read_text(
+            encoding="utf-8"
+        )
+        assert "{{ contract_number or \"……\" }}" + CONTRACT_NUMBER_SUFFIX in template

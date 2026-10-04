@@ -53,7 +53,10 @@ class RemindersRepository:
         now = datetime.now(UTC)
         result = await self.db.execute(
             select(ReminderModel)
+            # Chủ tài khoản đã xoá thì không gửi thư nào cho khách của họ nữa — xem `deliver`.
+            .join(UserModel, UserModel.id == ReminderModel.owner_user_id)
             .where(
+                UserModel.deleted_at.is_(None),
                 ReminderModel.status == "pending",
                 ReminderModel.scheduled_at <= now,
                 # Quy tắc tự động soạn nháp rồi để đây chờ người duyệt. Bỏ điều kiện này
@@ -102,17 +105,24 @@ class RemindersRepository:
             invoice = await self._owned(InvoiceModel, target_id, owner_user_id)
             if invoice is None:
                 return None, None
+            # Hoá đơn không xoá mềm, nhưng deal của nó thì có. Deal đã xoá = coi như hoá đơn
+            # không còn để nhắc, kẻo khách nhận thư đòi tiền của dự án đã gỡ.  #Huynh
+            if invoice.deal_id is not None and (
+                await self._owned(DealModel, invoice.deal_id, owner_user_id) is None
+            ):
+                return None, None
             return await self._client(invoice.client_id, owner_user_id), invoice.invoice_number
 
         if target_type == "contract":
             contract = await self._owned(ContractModel, target_id, owner_user_id)
             if contract is None:
                 return None, None
-            # Hợp đồng không có cột tiêu đề — lấy tên dự án của deal nó thuộc về.
+            # Hợp đồng không có cột tiêu đề — lấy tên dự án của deal nó thuộc về. Không tìm
+            # thấy deal (đã xoá) thì cũng dừng luôn, cùng lẽ với nhánh hoá đơn ở trên.
             deal = await self._owned(DealModel, contract.deal_id, owner_user_id)
-            return await self._client(contract.client_id, owner_user_id), (
-                deal.title if deal else None
-            )
+            if deal is None:
+                return None, None
+            return await self._client(contract.client_id, owner_user_id), deal.title
 
         return None, None
 
@@ -135,9 +145,16 @@ class RemindersRepository:
         return record
 
     async def _owned(self, model: Any, target_id: uuid.UUID, owner_user_id: uuid.UUID) -> Any:
-        return await self.db.scalar(
-            select(model).where(model.id == target_id, model.owner_user_id == owner_user_id)
-        )
+        """Một bản ghi thuộc về người dùng này, và CHƯA bị xoá mềm nếu bảng đó có xoá mềm.
+
+        Thiếu lọc `deleted_at` là hai lỗ cùng lúc: tạo được lời nhắc cho deal/khách đã xoá,
+        và beat vẫn gửi thư cho khách của deal đã xoá. Chỉ `clients` và `deals` có cột
+        này; hoá đơn, hợp đồng thì không nên phải hỏi từng bảng.  #Huynh
+        """
+        conditions = [model.id == target_id, model.owner_user_id == owner_user_id]
+        if hasattr(model, "deleted_at"):
+            conditions.append(model.deleted_at.is_(None))
+        return await self.db.scalar(select(model).where(*conditions))
 
     async def _client(
         self, client_id: uuid.UUID | None, owner_user_id: uuid.UUID

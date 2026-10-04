@@ -10,7 +10,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from src.config.settings import settings
-from src.modules.auth.application.service import SO_LAN_GO_SAI_TOI_DA, AuthService
+from src.modules.auth.application.service import (
+    DELETED_ACCOUNT_EMAIL_MESSAGE,
+    SO_LAN_GO_SAI_TOI_DA,
+    AuthService,
+)
 from src.modules.auth.schemas.request import (
     GoogleAuthRequest,
     LoginRequest,
@@ -40,6 +44,7 @@ def _make_user(
         hashed_password=hash_password("Test@1234!"),
         status=status,
         role=role,
+        deleted_at=None,
     )
 
 
@@ -98,6 +103,19 @@ class TestRegister:
                 )
             )
 
+    async def test_email_cua_tai_khoan_da_xoa_thi_409_rieng_chu_khong_500(self) -> None:
+        """Trước khi sửa: bước kiểm bỏ qua tài khoản đã xoá, lọt xuống INSERT rồi đụng
+        UNIQUE trên `users.email` → 500."""
+        da_xoa = _make_user(status="deleted")
+        da_xoa.deleted_at = object()
+        db = _mock_db([da_xoa])
+        with pytest.raises(AlreadyExistsError) as exc_info:
+            await AuthService(db=db).register(
+                RegisterRequest(email=da_xoa.email, password="Test@1234!", full_name="Lại")
+            )
+        assert exc_info.value.message == DELETED_ACCOUNT_EMAIL_MESSAGE
+        db.add.assert_not_called()
+
 
 # ---------------------------------------------------------------------------
 # TestLogin
@@ -150,6 +168,7 @@ _VALID_CLAIMS = {
     "aud": _WEB_AUD,
     "sub": "google-sub-123",
     "email": "g@example.com",
+    "email_verified": True,
     "name": "G User",
 }
 
@@ -250,6 +269,40 @@ class TestGoogleAuth:
         result = await service.google_auth(GoogleAuthRequest(id_token="tok", platform="web"))
         assert result.access_token
         assert db.add.call_count == 2  # linked identity + refresh token record
+
+    @_patch(_VERIFY)
+    async def test_tai_khoan_bi_khoa_khong_vao_lai_duoc_bang_google(
+        self, mock_verify: MagicMock
+    ) -> None:
+        """Lỗ cũ: nhánh liên kết theo email không kiểm trạng thái — admin khoá xong, người đó
+        bấm "Đăng nhập bằng Google" là có token."""
+        mock_verify.return_value = dict(_VALID_CLAIMS)
+        db = _mock_db([None, _make_user(status="suspended")])
+        with pytest.raises(AuthenticationError):
+            await AuthService(db=db).google_auth(GoogleAuthRequest(id_token="tok", platform="web"))
+        db.add.assert_not_called()
+
+    @_patch(_VERIFY)
+    async def test_email_cua_tai_khoan_da_xoa_thi_401_chu_khong_500(
+        self, mock_verify: MagicMock
+    ) -> None:
+        mock_verify.return_value = dict(_VALID_CLAIMS)
+        da_xoa = _make_user(status="deleted")
+        da_xoa.deleted_at = object()
+        db = _mock_db([None, da_xoa])
+        with pytest.raises(AuthenticationError):
+            await AuthService(db=db).google_auth(GoogleAuthRequest(id_token="tok", platform="web"))
+        db.add.assert_not_called()
+
+    @_patch(_VERIFY)
+    async def test_email_google_chua_xac_thuc_thi_khong_lien_ket_khong_tao(
+        self, mock_verify: MagicMock
+    ) -> None:
+        mock_verify.return_value = {**_VALID_CLAIMS, "email_verified": False}
+        db = _mock_db([None])  # chỉ một lượt tra danh tính, không được tra tới email
+        with pytest.raises(AuthenticationError):
+            await AuthService(db=db).google_auth(GoogleAuthRequest(id_token="tok", platform="web"))
+        db.add.assert_not_called()
 
 
 def _ma_dat_lai(user_id, otp: str, *, attempts: int = 0) -> SimpleNamespace:

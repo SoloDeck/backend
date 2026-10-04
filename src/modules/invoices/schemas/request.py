@@ -68,6 +68,11 @@ class InvoiceSendRequest(BaseModel):
     #
     # Có ảnh thì thư KHÔNG kèm QR tự sinh nữa (xem `build_payment_block(with_qr=…)`).
     attachments: list[dict[str, str]] = Field(default_factory=list)
+    # `True` = đặt sẵn lời nhắc thanh toán ở tab Nhắc nhở, THEO quy tắc "Nhắc trước khi hóa đơn tới
+    # hạn" của chính người dùng (số ngày, giờ, kênh, tự gửi/chờ duyệt, nội dung mẫu, công tắc
+    # bật/tắt — xem `reminders.invoice_reminders`). Mặc định `False`: client cũ gọi trần vẫn chạy y
+    # như trước, không tự nhiên sinh lời nhắc gửi khách. Web luôn gửi `True`.  #Huynh
+    schedule_payment_reminder: bool = False
 
 
 class PaymentRequest(BaseModel):
