@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from decimal import Decimal
+from typing import Any
 
 import httpx
 from google import genai
@@ -13,7 +13,7 @@ from google.genai.types import GenerateContentConfig
 from groq import Groq
 
 from src.ai.shared.constants import SUPPORTED_LLM_MODELS
-from src.ai.shared.token_usage import extract_usage
+from src.ai.shared.token_usage import extract_gemini_usage, extract_usage, usage_record
 from src.config.settings import settings
 from src.shared.exceptions.domain import AIGenerationError, DomainError
 
@@ -23,17 +23,10 @@ from src.shared.exceptions.domain import AIGenerationError, DomainError
 # ==========================================================
 
 @dataclass
-class LLMUsage:
-    model_used: str
-    input_tokens: int
-    output_tokens: int
-    estimated_cost_usd: Decimal
-
-
-@dataclass
 class LLMResponse:
     text: str
-    usage: LLMUsage | None = None
+    # Luôn là dict dựng bằng `token_usage.usage_record` — xem lý do ở docstring hàm đó.
+    usage: dict[str, Any] | None = None
 
 
 # ==========================================================
@@ -194,7 +187,7 @@ class GeminiProvider(BaseLLMProvider):
 
         return LLMResponse(
             text=response.text,
-            usage=None,
+            usage=extract_gemini_usage(response, model=self.model),
         )
 
 
@@ -241,14 +234,11 @@ class OllamaProvider(BaseLLMProvider):
             response.raise_for_status()
             data = response.json()
 
-        input_tokens = int(data.get("prompt_eval_count", 0))
-        output_tokens = int(data.get("eval_count", 0))
-
-        usage = LLMUsage(
-            model_used=data.get("model", self.model),
-            input_tokens=input_tokens,
-            output_tokens=output_tokens,
-            estimated_cost_usd=Decimal("0"),
+        # Ollama chạy trên máy mình, không tốn tiền: đơn giá mặc định 0.
+        usage = usage_record(
+            model=data.get("model", self.model),
+            input_tokens=int(data.get("prompt_eval_count", 0)),
+            output_tokens=int(data.get("eval_count", 0)),
         )
 
         return LLMResponse(
