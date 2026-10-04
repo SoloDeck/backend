@@ -1549,7 +1549,7 @@ class TestAdminPayments:
         resp = await client.get("/api/v1/admin/payments", headers=headers)
         assert resp.status_code == 200
         body = resp.json()["data"]
-        assert set(body) == {"data", "total", "page", "page_size"}
+        assert set(body) == {"data", "total", "page", "page_size", "totals"}
         assert body["page"] == 1
         assert body["page_size"] == 20
 
@@ -2023,6 +2023,92 @@ class TestAdminListTemplates:
         assert resp.status_code == 401
 
 
+class TestAdminListTemplatesOrder:
+    """Mẫu mới tạo phải nằm ĐẦU danh sách, và thứ tự không nhảy khi sửa một mẫu cũ."""
+
+    async def _tao(
+        self,
+        client: AsyncClient,
+        db_session: AsyncSession,
+        headers: dict,
+        name: str,
+        age_days: int,
+        template_type: str = "proposal",
+    ) -> str:
+        resp = await client.post(
+            "/api/v1/admin/templates",
+            json={"name": name, "template_type": template_type, "content": {"body": name}},
+            headers=headers,
+        )
+        assert resp.status_code == 201, resp.text
+        template_id = resp.json()["data"]["id"]
+        # Cùng một giao dịch kiểm thử thì `now()` của Postgres đứng yên, nên phải gán tuổi thủ công.
+        await db_session.execute(
+            update(SystemTemplateModel)
+            .where(SystemTemplateModel.id == uuid.UUID(template_id))
+            .values(created_at=datetime.now(UTC) - timedelta(days=age_days))
+        )
+        await db_session.flush()
+        return template_id
+
+    async def _ten(self, client: AsyncClient, headers: dict, query: str = "") -> list[str]:
+        resp = await client.get(f"/api/v1/admin/templates{query}", headers=headers)
+        assert resp.status_code == 200, resp.text
+        return [t["name"] for t in resp.json()["data"]]
+
+    async def test_mau_moi_tao_nam_dau_danh_sach(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        headers = await _admin_headers(client, db_session)
+        await self._tao(client, db_session, headers, "Cũ nhất", 10)
+        await self._tao(client, db_session, headers, "Giữa", 5)
+        await self._tao(client, db_session, headers, "Mới nhất", 0)
+
+        assert await self._ten(client, headers) == ["Mới nhất", "Giữa", "Cũ nhất"]
+
+    async def test_sua_mau_cu_khong_lam_no_nhay_vi_tri(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        headers = await _admin_headers(client, db_session)
+        cu = await self._tao(client, db_session, headers, "Cũ nhất", 10)
+        await self._tao(client, db_session, headers, "Mới nhất", 0)
+
+        patched = await client.patch(
+            f"/api/v1/admin/templates/{cu}", json={"name": "Cũ nhất (đã sửa)"}, headers=headers
+        )
+        assert patched.status_code == 200, patched.text
+
+        assert await self._ten(client, headers) == ["Mới nhất", "Cũ nhất (đã sửa)"]
+
+    async def test_loc_theo_loai_van_giu_thu_tu_moi_nhat_truoc(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        headers = await _admin_headers(client, db_session)
+        await self._tao(client, db_session, headers, "Báo giá cũ", 9)
+        await self._tao(client, db_session, headers, "Hợp đồng", 5, template_type="contract")
+        await self._tao(client, db_session, headers, "Báo giá mới", 1)
+
+        ten = await self._ten(client, headers, "?template_type=proposal")
+
+        assert ten == ["Báo giá mới", "Báo giá cũ"]
+
+    async def test_hai_mau_cung_thoi_diem_luon_dung_cung_mot_cho(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        headers = await _admin_headers(client, db_session)
+        for name in ("A", "B", "C"):
+            await self._tao(client, db_session, headers, name, 0)
+        moc = datetime.now(UTC) - timedelta(days=1)
+        await db_session.execute(update(SystemTemplateModel).values(created_at=moc))
+        await db_session.flush()
+
+        lan_1 = await self._ten(client, headers)
+        lan_2 = await self._ten(client, headers)
+
+        assert sorted(lan_1) == ["A", "B", "C"]
+        assert lan_1 == lan_2
+
+
 # ---------------------------------------------------------------------------
 # POST /admin/templates
 # ---------------------------------------------------------------------------
@@ -2224,6 +2310,73 @@ class TestAdminCreateTemplate:
         assert "Bảo hành sản phẩm" in html
         so_muc = [int(n) for n in re.findall(r"<h2>(\d+)\.", html)]
         assert so_muc == list(range(1, len(so_muc) + 1)), so_muc
+
+    async def test_dau_muc_tu_soan_in_theo_dung_thu_tu_trong_danh_sach(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """Nút lên/xuống ở màn soạn mẫu chỉ đổi thứ tự trong `extra_sections`; giấy in theo đó."""
+        headers = await _admin_headers(client, db_session)
+
+        async def thu_tu_tren_giay(ten: list[str], template_type: str) -> list[str]:
+            resp = await client.post(
+                "/api/v1/admin/templates/preview",
+                json={
+                    "template_type": template_type,
+                    "content": {
+                        "extra_sections": [{"title": t, "body": f"Nội dung {t}"} for t in ten]
+                    },
+                },
+                headers=headers,
+            )
+            assert resp.status_code == 200, resp.text
+            html = resp.json()["data"]["html"]
+            return sorted(ten, key=html.index)
+
+        for loai in ("proposal", "contract"):
+            assert await thu_tu_tren_giay(["Alpha", "Beta", "Gamma"], loai) == [
+                "Alpha", "Beta", "Gamma",
+            ]
+            assert await thu_tu_tren_giay(["Gamma", "Alpha", "Beta"], loai) == [
+                "Gamma", "Alpha", "Beta",
+            ]
+
+    async def test_thu_tu_dau_muc_tu_soan_con_nguyen_sau_khi_luu_va_doc_lai(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        headers = await _admin_headers(client, db_session)
+        created = await client.post(
+            "/api/v1/admin/templates",
+            json={
+                "name": "Mẫu thứ tự",
+                "template_type": "proposal",
+                "content": {
+                    "extra_sections": [
+                        {"title": "Alpha", "body": "a"},
+                        {"title": "Beta", "body": "b"},
+                        {"title": "Gamma", "body": "c"},
+                    ]
+                },
+            },
+            headers=headers,
+        )
+        assert created.status_code == 201, created.text
+        template_id = created.json()["data"]["id"]
+
+        moi = [
+            {"title": "Gamma", "body": "c"},
+            {"title": "Alpha", "body": "a"},
+            {"title": "Beta", "body": "b"},
+        ]
+        patched = await client.patch(
+            f"/api/v1/admin/templates/{template_id}",
+            json={"content": {"extra_sections": moi}},
+            headers=headers,
+        )
+        assert patched.status_code == 200, patched.text
+
+        listed = await client.get("/api/v1/admin/templates", headers=headers)
+        saved = next(t for t in listed.json()["data"] if t["id"] == template_id)
+        assert saved["content"]["extra_sections"] == moi
 
     async def test_xem_truoc_giu_muc_chua_dat_ten_de_admin_go_vao(
         self, client: AsyncClient, db_session: AsyncSession

@@ -30,6 +30,7 @@ from src.modules.admin.schemas.response import (
     AdminLLMProviderResponse,
     AdminPaymentPagedResponse,
     AdminPaymentResponse,
+    AdminPaymentTotals,
     AdminPlanResponse,
     AdminPlatformMetricsResponse,
     AdminSubscriptionResponse,
@@ -303,6 +304,13 @@ async def list_payments(
         page=page,
         page_size=page_size,
     )
+    totals = await AdminService(db=db).get_payment_totals(
+        status=status,
+        provider=provider,
+        search=search,
+        from_date=from_date,
+        to_date=to_date,
+    )
     return ApiResponse.ok(
         AdminPaymentPagedResponse(
             # Mỗi hàng là (payment, user, plan) do repo outerjoin — user/plan có thể None.
@@ -327,6 +335,7 @@ async def list_payments(
             total=total,
             page=page,
             page_size=page_size,
+            totals=AdminPaymentTotals(**totals),
         )
     )
 
@@ -346,6 +355,8 @@ async def list_ai_costs(
     ) = Query(default=None),
     from_date: datetime | None = Query(default=None),
     to_date: datetime | None = Query(default=None),
+    # Tìm theo email hoặc tên của người đã gọi AI.
+    search: str | None = Query(default=None, max_length=100),
     sort_by: str = Query(default="occurred_at"),
     sort_order: str = Query(default="desc"),
     page: int = Query(default=1, ge=1),
@@ -354,6 +365,7 @@ async def list_ai_costs(
     svc = AdminService(db=db)
     records, total = await svc.list_ai_costs_paginated(
         ai_module=ai_module,
+        search=search,
         from_date=from_date,
         to_date=to_date,
         sort_by=sort_by,
@@ -363,6 +375,7 @@ async def list_ai_costs(
     )
     totals = await svc.get_ai_cost_totals(
         ai_module=ai_module,
+        search=search,
         from_date=from_date,
         to_date=to_date,
     )

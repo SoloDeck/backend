@@ -80,7 +80,10 @@ class TestSoanHopDongTuKhung:
         # Điều 1 và Điều 3 là hai chỗ trống nặng nhất của tờ hợp đồng: bộ khoá chế độ AI cố ý
         # không chạm tới, nên nếu khung cũng không với tới thì đường không-AI vô dụng.
         assert content["scope_of_work"] == KHUNG_HOP_DONG["scope_of_work"]
-        assert content["payment_terms"] == KHUNG_HOP_DONG["payment_terms"]
+        # Điều 3: lời admin viết trong mẫu vẫn còn nguyên, nay nằm SAU câu về tổng giá trị lấy từ báo
+        # giá đã chốt (xem test_contract_money_from_proposal).
+        assert content["payment_terms"].endswith(KHUNG_HOP_DONG["payment_terms"])
+        assert content["payment_terms"].startswith("Tổng giá trị hợp đồng là 5.000.000 VND")
         assert content["ip_ownership"] == KHUNG_HOP_DONG["ip_ownership"]
         assert content["termination_clause"] == KHUNG_HOP_DONG["termination_clause"]
         assert content["custom_clauses"] == KHUNG_HOP_DONG["custom_clauses"]
@@ -91,7 +94,12 @@ class TestSoanHopDongTuKhung:
 
         resp = await client.post(f"/api/v1/contracts/{cid}/from-template", headers=headers)
         assert resp.status_code == 200, resp.text
-        assert resp.json()["data"]["content"] == {}
+        # Khung trắng không mang chữ nào của mẫu, nhưng tiền của báo giá đã chốt thì vẫn phải có:
+        # hợp đồng ký xong mà không ghi số tiền nào là lỗi đã đo được. Báo giá của bài này chỉ có
+        # một hạng mục và không có danh sách phạm vi nên Điều 1 vẫn để trống cho freelancer.
+        content = resp.json()["data"]["content"]
+        assert list(content) == ["payment_terms"]
+        assert content["payment_terms"].startswith("Tổng giá trị hợp đồng là 5.000.000 VND")
 
     async def test_cung_mot_user_ai_chan_402_nhung_khung_di_lot(
         self, client: AsyncClient

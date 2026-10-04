@@ -1080,12 +1080,44 @@ async def test_list_ai_costs_paginated_passes_filters_through() -> None:
 
     repo.list_ai_costs_paginated.assert_awaited_once_with(
         ai_module="lead_qualifier",
+        search=None,
         from_date=None,
         to_date=None,
         sort_by="occurred_at",
         sort_order="desc",
         page=1,
         page_size=20,
+    )
+
+
+async def test_list_ai_costs_paginated_passes_search_through() -> None:
+    repo = _repo(list_ai_costs_paginated=([], 0))
+    service = AdminService(db=AsyncMock(), repo=repo)
+
+    await service.list_ai_costs_paginated(search="hoa")
+
+    assert repo.list_ai_costs_paginated.await_args.kwargs["search"] == "hoa"
+
+
+async def test_get_ai_cost_totals_passes_search_through() -> None:
+    repo = _repo(get_ai_cost_totals={})
+    service = AdminService(db=AsyncMock(), repo=repo)
+
+    await service.get_ai_cost_totals(search="hoa")
+
+    assert repo.get_ai_cost_totals.await_args.kwargs["search"] == "hoa"
+
+
+async def test_get_payment_totals_passes_every_filter_through() -> None:
+    totals = {"collected_amount": Decimal("1000"), "currency": "VND"}
+    repo = _repo(get_payment_totals=totals)
+    service = AdminService(db=AsyncMock(), repo=repo)
+
+    result = await service.get_payment_totals(status="succeeded", provider="momo", search="an")
+
+    assert result == totals
+    repo.get_payment_totals.assert_awaited_once_with(
+        status="succeeded", provider="momo", search="an", from_date=None, to_date=None
     )
 
 
