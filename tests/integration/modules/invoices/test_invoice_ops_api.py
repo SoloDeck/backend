@@ -94,3 +94,56 @@ async def test_public_invoice_view_via_share_token(client: AsyncClient) -> None:
     # Invalid token → 404
     bad_resp = await client.get("/api/v1/invoices/public/invalid_token_xyz")
     assert bad_resp.status_code == 404
+
+
+async def test_invoice_send_blocked_when_typed_amount_differs_from_invoice(
+    client: AsyncClient,
+) -> None:
+    """Lời nhắn ghi 511.900.000 ₫ nhưng hóa đơn 521.900.000 ₫: KHÔNG gửi, hóa đơn vẫn là nháp.
+
+    Thư mang hai tổng khác nhau thì khách chuyển theo chữ và hóa đơn thành "thanh toán một
+    phần". Chặn ở backend nên gửi từ đâu (hàng ở tab Tài liệu, cửa sổ soạn, gọi API) cũng không
+    lọt.  #Huynh
+    """
+    headers = await _auth_headers(client)
+    client_obj = await _create_client(client, headers)
+    deal = await _create_deal(client, headers, client_obj["id"])
+    created = await client.post(
+        "/api/v1/invoices",
+        json={
+            "client_id": client_obj["id"],
+            "deal_id": deal["id"],
+            "subtotal": "521900000",
+            "tax_rate": "0",
+            "due_date": date(2026, 1, 31).isoformat(),
+            "notes": "Hóa đơn: Thanh toán đợt 1\n\nTổng số tiền cần thanh toán là 511.900.000 ₫.",
+        },
+        headers=headers,
+    )
+    assert created.status_code == 201, created.text
+    invoice = created.json()["data"]
+
+    with patch(SEND_EMAIL, new=AsyncMock()) as send_email:
+        blocked = await client.post(f"/api/v1/invoices/{invoice['id']}/send", headers=headers)
+    assert blocked.status_code == 409, blocked.text
+    assert "511.900.000" in blocked.json()["error"]["message"]
+    send_email.assert_not_awaited()
+    still = await client.get(f"/api/v1/invoices/{invoice['id']}", headers=headers)
+    assert still.json()["data"]["status"] == "draft"
+
+    # Bản nháp cũ còn chỗ giữ chỗ `{{tong_tien}}` (web từng sinh) vẫn được điền đúng số, không
+    # bao giờ gửi nguyên chữ ấy tới khách.
+    fixed = await client.patch(
+        f"/api/v1/invoices/{invoice['id']}",
+        json={
+            "notes": "Hóa đơn: Thanh toán đợt 1\n\nTổng số tiền cần thanh toán là {{tong_tien}}."
+        },
+        headers=headers,
+    )
+    assert fixed.status_code == 200, fixed.text
+    with patch(SEND_EMAIL, new=AsyncMock()) as send_email:
+        sent = await client.post(f"/api/v1/invoices/{invoice['id']}/send", headers=headers)
+    assert sent.status_code == 200, sent.text
+    send_email.assert_awaited_once()
+    body = send_email.await_args.kwargs.get("html") or str(send_email.await_args)
+    assert "521.900.000" in body

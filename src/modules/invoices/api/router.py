@@ -138,7 +138,11 @@ async def send_invoice(
     """
     options = payload or InvoiceSendRequest()
     invoice = await InvoicesService(db=db).send(
-        user_id, invoice_id, notify=options.notify, attachments=options.attachments
+        user_id,
+        invoice_id,
+        notify=options.notify,
+        attachments=options.attachments,
+        schedule_payment_reminder=options.schedule_payment_reminder,
     )
     return ApiResponse.ok(InvoiceResponse.model_validate(invoice))
 

@@ -53,6 +53,10 @@ class Candidate:
     rule: ReminderRuleModel
     message: str
     client_name: str
+    # Deal / khách mà lời nhắc thuộc về — để thông báo "chờ duyệt" dẫn thẳng tới đúng trang.
+    # Lời nhắc hoá đơn/hợp đồng không nhắm vào deal, nên phải mang theo riêng.  #Huynh
+    deal_id: uuid.UUID | None = None
+    client_id: uuid.UUID | None = None
 
 
 @dataclass
@@ -116,6 +120,8 @@ class AutoReminderScheduler:
                 ProposalModel.status == "sent",
                 ProposalModel.responded_at.is_(None),
                 ProposalModel.sent_at.is_not(None),
+                DealModel.deleted_at.is_(None),
+                ClientModel.deleted_at.is_(None),
             ),
             ProposalModel.owner_user_id,
         )
@@ -130,6 +136,7 @@ class AutoReminderScheduler:
                     target_id=proposal.deal_id,
                     rule=rule,
                     client_name=client_name,
+                    deal_id=proposal.deal_id,
                     message=self._render(
                         RuleType.PROPOSAL_FOLLOW_UP,
                         rule,
@@ -149,6 +156,8 @@ class AutoReminderScheduler:
             .where(
                 ContractModel.status == "pending_signatures",
                 ContractModel.signed_by_client_at.is_(None),
+                DealModel.deleted_at.is_(None),
+                ClientModel.deleted_at.is_(None),
             ),
             ContractModel.owner_user_id,
         )
@@ -163,6 +172,8 @@ class AutoReminderScheduler:
                     target_id=contract.id,
                     rule=rule,
                     client_name=client_name,
+                    deal_id=contract.deal_id,
+                    client_id=contract.client_id,
                     message=self._render(
                         RuleType.CONTRACT_SIGNING_NUDGE,
                         rule,
@@ -181,9 +192,7 @@ class AutoReminderScheduler:
         """
         rows = await self._join_rule(
             RuleType.PAYMENT_DUE,
-            select(InvoiceModel, ClientModel.name, ReminderRuleModel).join(
-                ClientModel, ClientModel.id == InvoiceModel.client_id
-            ),
+            self._invoices_of_live_deals(),
             InvoiceModel.owner_user_id,
             extra=InvoiceModel.status.in_(("sent", "partially_paid")),
         )
@@ -215,9 +224,7 @@ class AutoReminderScheduler:
         """Hoá đơn đã quá hạn N ngày. `mark_overdue_invoices` lo phần chuyển trạng thái."""
         rows = await self._join_rule(
             RuleType.PAYMENT_OVERDUE,
-            select(InvoiceModel, ClientModel.name, ReminderRuleModel).join(
-                ClientModel, ClientModel.id == InvoiceModel.client_id
-            ),
+            self._invoices_of_live_deals(),
             InvoiceModel.owner_user_id,
             extra=InvoiceModel.status == "overdue",
         )
@@ -257,7 +264,10 @@ class AutoReminderScheduler:
             RuleType.RE_ENGAGEMENT,
             select(ClientModel, ClientModel.name, ReminderRuleModel),
             ClientModel.owner_user_id,
-            extra=ClientModel.status.in_(("active", "prospect")),
+            extra=and_(
+                ClientModel.status.in_(("active", "prospect")),
+                ClientModel.deleted_at.is_(None),
+            ),
         )
         out = []
         for client, client_name, rule in rows:
@@ -279,6 +289,7 @@ class AutoReminderScheduler:
                     target_id=client.id,
                     rule=rule,
                     client_name=client_name,
+                    client_id=client.id,
                     message=self._render(
                         RuleType.RE_ENGAGEMENT,
                         rule,
@@ -365,9 +376,9 @@ class AutoReminderScheduler:
             status="pending",
             scheduled_at=self._scheduled_at(c.rule),
             message_preview=c.message,
-            # Chưa bật "tự gửi" thì lời nhắc phải nằm im chờ người duyệt. `list_due()` lọc
-            # đúng cột này — không có nó thì beat gửi thẳng cho khách.
-            requires_approval=not c.rule.auto_send,
+            # Lời nhắc do quy tắc tạo luôn nằm im chờ người duyệt (không còn công tắc "tự gửi").
+            # `list_due()` lọc đúng cột này — không có nó thì beat gửi thẳng cho khách.
+            requires_approval=True,
             created_by_rule=True,
         )
 
@@ -410,29 +421,89 @@ class AutoReminderScheduler:
             return ZoneInfo("Asia/Ho_Chi_Minh")
 
     async def _notify_owners(self, created: list[Candidate]) -> None:
-        """Gộp một thông báo cho mỗi người, không bắn từng cái một.
+        """Gộp thông báo "chờ duyệt": mỗi DEAL một thông báo, không bắn từng lời nhắc một.
 
-        Năm lời nhắc chờ duyệt mà reo năm tiếng chuông thì người dùng tắt thông báo luôn.
+        Trước đây gộp cả người dùng làm một ("5 lời nhắc đang chờ bạn duyệt") và không gắn
+        `entity_id`, nên bấm vào không đi đâu được — năm lời nhắc có thể nằm ở năm deal khác
+        nhau. Gộp theo deal vẫn tránh được năm tiếng chuông cho năm lời nhắc cùng một dự án,
+        mà mỗi thông báo mở thẳng được tab Nhắc nhở của đúng deal đó.  #Huynh
+
+        Lời nhắc KHÔNG thuộc deal nào (nhắc "nối lại liên lạc") thì gộp hết về MỘT thông báo
+        cho mỗi người. Tách theo từng khách là bật quy tắc đó với 40 khách im lặng thì chuông
+        reo 40 lần, đẩy trôi thông báo khách mới gửi yêu cầu. Chỉ một khách thì vẫn gắn khách.
         """
-        pending: dict[uuid.UUID, int] = {}
+        deal_groups: dict[tuple[uuid.UUID, uuid.UUID], list[Candidate]] = {}
+        loose: dict[uuid.UUID, list[Candidate]] = {}
         for c in created:
-            if not c.rule.auto_send:
-                pending[c.owner_user_id] = pending.get(c.owner_user_id, 0) + 1
+            entity_type, entity_id = self._notification_target(c)
+            if entity_type == "deal" and entity_id is not None:
+                deal_groups.setdefault((c.owner_user_id, entity_id), []).append(c)
+            else:
+                loose.setdefault(c.owner_user_id, []).append(c)
 
         notifications = NotificationService(db=self.db)
-        for owner_user_id, count in pending.items():
+        for (owner_user_id, deal_id), items in deal_groups.items():
             await notifications.notify(
                 user_id=owner_user_id,
                 type=TYPE_REMINDER_DRAFTED,
-                title=f"{count} lời nhắc đang chờ bạn duyệt",
-                body="SoloDesk đã soạn sẵn nội dung. Bạn xem lại rồi bấm Gửi ngay nhé.",
-                entity_type="reminder",
-                entity_id=None,
+                title=f"{len(items)} lời nhắc đang chờ bạn duyệt",
+                body=(
+                    f"Khách {items[0].client_name}: SoloDesk đã soạn sẵn nội dung. "
+                    "Bạn xem lại rồi bấm Gửi ngay nhé."
+                ),
+                entity_type="deal",
+                entity_id=deal_id,
             )
+        for owner_user_id, items in loose.items():
+            client_ids = {c.client_id for c in items}
+            one_client = len(client_ids) == 1 and None not in client_ids
+            names = sorted({c.client_name for c in items})
+            who = names[0] if len(names) == 1 else f"{names[0]} và {len(names) - 1} khách khác"
+            await notifications.notify(
+                user_id=owner_user_id,
+                type=TYPE_REMINDER_DRAFTED,
+                title=f"{len(items)} lời nhắc đang chờ bạn duyệt",
+                body=(
+                    f"Khách {who}: SoloDesk đã soạn sẵn nội dung. "
+                    "Bạn xem lại rồi bấm Gửi ngay nhé."
+                ),
+                # Nhiều khách: không có một trang nào chứa hết — để trống, web tự dẫn tới lời
+                # nhắc chờ duyệt lâu nhất (cùng đường với thông báo kiểu cũ).
+                entity_type="client" if one_client else "reminder",
+                entity_id=items[0].client_id if one_client else None,
+            )
+
+    @staticmethod
+    def _notification_target(candidate: Candidate) -> tuple[str, uuid.UUID | None]:
+        """Trang mà thông báo chờ duyệt nên mở: deal nếu có, không thì trang khách.
+
+        Nhắc hoá đơn chỉ gắn hợp đồng (không gắn deal) và nhắc "nối lại liên lạc" không có
+        deal nào — hai trường hợp đó dẫn về trang khách, nơi vẫn thấy được việc cần làm.
+        """
+        if candidate.deal_id is not None:
+            return "deal", candidate.deal_id
+        if candidate.client_id is not None:
+            return "client", candidate.client_id
+        return "reminder", None
 
     # ------------------------------------------------------------------------------
     # Phụ trợ
     # ------------------------------------------------------------------------------
+
+    @staticmethod
+    def _invoices_of_live_deals() -> Any:
+        """Hoá đơn kèm tên khách, CHỈ của khách và deal chưa bị xoá mềm.
+
+        Hoá đơn không có cột xoá mềm, nên phải nhìn sang deal và khách của nó. Nối NGOÀI
+        (outer join) với deal vì hoá đơn có thể chỉ gắn hợp đồng, không gắn deal: khi đó
+        `DealModel.deleted_at` ra NULL và hoá đơn vẫn được xét như thường.  #Huynh
+        """
+        return (
+            select(InvoiceModel, ClientModel.name, ReminderRuleModel)
+            .join(ClientModel, ClientModel.id == InvoiceModel.client_id)
+            .outerjoin(DealModel, DealModel.id == InvoiceModel.deal_id)
+            .where(ClientModel.deleted_at.is_(None), DealModel.deleted_at.is_(None))
+        )
 
     async def _join_rule(
         self,
@@ -453,6 +524,10 @@ class AutoReminderScheduler:
                 ReminderRuleModel.rule_type == rule_type.value,
                 ReminderRuleModel.is_enabled.is_(True),
             ),
+        ).join(
+            # Tài khoản đã xoá thì quy tắc của họ thôi đẻ lời nhắc — đẻ ra rồi cũng bị huỷ lúc gửi.
+            UserModel,
+            and_(UserModel.id == owner_column, UserModel.deleted_at.is_(None)),
         )
         if extra is not None:
             stmt = stmt.where(extra)
@@ -476,6 +551,8 @@ class AutoReminderScheduler:
             rule=rule,
             client_name=client_name,
             message=message,
+            deal_id=invoice.deal_id,
+            client_id=invoice.client_id,
         )
 
     def _is_older_than(self, moment: datetime | None, days: int) -> bool:

@@ -40,6 +40,8 @@ def make_candidate(rule: MagicMock, **overrides) -> Candidate:  # type: ignore[n
         rule=rule,
         message=overrides.get("message", "Chào anh/chị, em nhắc hoá đơn ạ."),
         client_name=overrides.get("client_name", "Quán cà phê Nắng"),
+        deal_id=overrides.get("deal_id"),
+        client_id=overrides.get("client_id"),
     )
 
 
@@ -81,20 +83,22 @@ class TestDanhMucQuyTac:
 
 
 class TestDungLoiNhac:
-    def test_chua_bat_tu_gui_thi_phai_cho_duyet(self) -> None:
+    def test_loi_nhac_do_quy_tac_tao_luon_cho_duyet(self) -> None:
         """Cột `requires_approval` là thứ DUY NHẤT chặn beat gửi thẳng cho khách."""
         scheduler = AutoReminderScheduler(db=MagicMock())
-        reminder = scheduler._build_reminder(make_candidate(make_rule(auto_send=False)))
+        reminder = scheduler._build_reminder(make_candidate(make_rule()))
 
         assert reminder.requires_approval is True
         assert reminder.created_by_rule is True
         assert reminder.status == "pending"
 
-    def test_bat_tu_gui_thi_di_thang(self) -> None:
+    def test_cot_tu_gui_cu_con_bat_van_phai_cho_duyet(self) -> None:
+        """Công tắc "tự gửi" đã bỏ. Người dùng cũ từng bật nó (cột trong CSDL còn True) cũng
+        không được để email bay thẳng tới khách mà chưa qua tay họ."""
         scheduler = AutoReminderScheduler(db=MagicMock())
         reminder = scheduler._build_reminder(make_candidate(make_rule(auto_send=True)))
 
-        assert reminder.requires_approval is False
+        assert reminder.requires_approval is True
 
     def test_noi_dung_va_kenh_lay_tu_quy_tac(self) -> None:
         scheduler = AutoReminderScheduler(db=MagicMock())
@@ -234,3 +238,87 @@ class TestSoSanhMoc:
         scheduler = AutoReminderScheduler(db=MagicMock())
         naive = (datetime.now(UTC) - timedelta(days=10)).replace(tzinfo=None)
         assert scheduler._is_older_than(naive, 3) is True
+
+
+class TestThongBaoChoDuyet:
+    """Thông báo "N lời nhắc đang chờ bạn duyệt" phải bấm vào được.
+
+    Bản cũ gộp cả người dùng làm một thông báo và để `entity_id = None`: năm lời nhắc có thể
+    nằm ở năm deal, nên chuông không biết mở trang nào — bấm vào chỉ đóng chuông lại.
+    """
+
+    async def _chay(self, candidates: list[Candidate]) -> list[dict]:  # type: ignore[type-arg]
+        from unittest.mock import patch
+
+        notify = AsyncMock()
+        with patch(
+            "src.modules.reminders.application.auto_scheduler.NotificationService"
+        ) as service:
+            service.return_value.notify = notify
+            await AutoReminderScheduler(db=AsyncMock())._notify_owners(candidates)
+        return [call.kwargs for call in notify.await_args_list]
+
+    async def test_moi_deal_mot_thong_bao_gan_dung_deal(self) -> None:
+        owner = uuid.uuid4()
+        deal_a, deal_b = uuid.uuid4(), uuid.uuid4()
+        rule = make_rule(owner_user_id=owner)
+        candidates = [
+            make_candidate(rule, deal_id=deal_a, target_type="invoice"),
+            make_candidate(rule, deal_id=deal_a, target_type="contract"),
+            make_candidate(rule, deal_id=deal_b, target_type="deal"),
+        ]
+
+        sent = await self._chay(candidates)
+
+        by_deal = {(n["entity_type"], n["entity_id"]): n for n in sent}
+        assert set(by_deal) == {("deal", deal_a), ("deal", deal_b)}
+        assert by_deal[("deal", deal_a)]["title"] == "2 lời nhắc đang chờ bạn duyệt"
+        assert by_deal[("deal", deal_b)]["title"] == "1 lời nhắc đang chờ bạn duyệt"
+
+    async def test_khong_co_deal_thi_dan_ve_trang_khach(self) -> None:
+        """Nhắc "nối lại liên lạc" không thuộc deal nào."""
+        owner = uuid.uuid4()
+        client_id = uuid.uuid4()
+        rule = make_rule("re_engagement", owner_user_id=owner)
+
+        sent = await self._chay(
+            [make_candidate(rule, target_type="client", target_id=client_id, client_id=client_id)]
+        )
+
+        assert [(n["entity_type"], n["entity_id"]) for n in sent] == [("client", client_id)]
+
+    async def test_nhieu_khach_khong_co_deal_thi_gop_mot_thong_bao(self) -> None:
+        """Bật "nối lại liên lạc" với nhiều khách im lặng không được làm chuông reo từng cái."""
+        owner = uuid.uuid4()
+        rule = make_rule("re_engagement", owner_user_id=owner)
+        candidates = [
+            make_candidate(
+                rule, target_type="client", client_id=uuid.uuid4(), client_name=f"Khách {i}"
+            )
+            for i in range(40)
+        ]
+
+        sent = await self._chay(candidates)
+
+        assert len(sent) == 1
+        assert sent[0]["title"] == "40 lời nhắc đang chờ bạn duyệt"
+        assert (sent[0]["entity_type"], sent[0]["entity_id"]) == ("reminder", None)
+        assert "39 khách khác" in sent[0]["body"]
+
+    async def test_cot_tu_gui_cu_con_bat_van_bao_cho_duyet(self) -> None:
+        """Công tắc "tự gửi" đã bỏ: lời nhắc nào do quy tắc tạo cũng chờ duyệt nên cũng phải báo."""
+        rule = make_rule(auto_send=True)
+
+        sent = await self._chay([make_candidate(rule, deal_id=uuid.uuid4())])
+
+        assert [n["title"] for n in sent] == ["1 lời nhắc đang chờ bạn duyệt"]
+
+    async def test_hai_nguoi_cung_mot_deal_id_khong_gop_nham(self) -> None:
+        deal = uuid.uuid4()
+        a, b = make_rule(owner_user_id=uuid.uuid4()), make_rule(owner_user_id=uuid.uuid4())
+
+        sent = await self._chay([make_candidate(a, deal_id=deal), make_candidate(b, deal_id=deal)])
+
+        assert sorted(str(n["user_id"]) for n in sent) == sorted(
+            [str(a.owner_user_id), str(b.owner_user_id)]
+        )

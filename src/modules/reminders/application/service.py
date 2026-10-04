@@ -2,12 +2,13 @@
 
 import uuid
 from dataclasses import dataclass
+from datetime import UTC, datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.modules.reminders.infrastructure.repository import RemindersRepository
 from src.modules.reminders.schemas.request import CreateReminderRequest, UpdateReminderRequest
-from src.shared.exceptions.domain import NotFoundError
+from src.shared.exceptions.domain import NotFoundError, ValidationError
 
 # Nhãn tiếng Việt cho câu báo lỗi. "Không tìm thấy hoá đơn…" đọc ra nghĩa ngay, còn
 # "Không tìm thấy invoice…" thì người dùng phải tự dịch.
@@ -17,6 +18,22 @@ _TARGET_LABELS = {
     "invoice": "hoá đơn",
     "contract": "hợp đồng",
 }
+
+
+def _as_utc(value: datetime) -> datetime:
+    """Giờ không kèm múi thì coi là UTC — cùng quy ước với schema tạo lời nhắc."""
+    return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+
+
+def _cung_thoi_diem(a: datetime, b: datetime | None) -> bool:
+    """Hai mốc giờ có trùng nhau không, bỏ qua khác biệt múi giờ khi so."""
+    return b is not None and _as_utc(a) == _as_utc(b)
+
+
+def _bat_buoc_o_tuong_lai(value: datetime) -> None:
+    """Chặn dời lời nhắc về quá khứ. Câu lỗi giữ nguyên câu cũ của schema để web khỏi đổi."""
+    if _as_utc(value) <= datetime.now(UTC):
+        raise ValidationError("scheduled_at must be in the future")
 
 
 @dataclass
@@ -83,13 +100,18 @@ class RemindersService:
         return await self._get_reminder(user_id, reminder_id)
 
     async def update(self, user_id: uuid.UUID, reminder_id: uuid.UUID, payload: UpdateReminderRequest):  # type: ignore[return]
+        """Sửa giờ hẹn / nội dung / kênh / ảnh đính kèm. Trường nào không gửi thì giữ nguyên."""
         reminder = await self._get_reminder(user_id, reminder_id)
         if payload.scheduled_at is not None:
+            if not _cung_thoi_diem(payload.scheduled_at, reminder.scheduled_at):
+                _bat_buoc_o_tuong_lai(payload.scheduled_at)
             reminder.scheduled_at = payload.scheduled_at
         if payload.message_preview is not None:
             reminder.message_preview = payload.message_preview
         if payload.channel is not None:
             reminder.channel = payload.channel
+        if payload.attachments is not None:
+            reminder.attachments = payload.attachments
         return await self.repo.save(reminder)
 
     async def cancel(self, user_id: uuid.UUID, reminder_id: uuid.UUID) -> None:

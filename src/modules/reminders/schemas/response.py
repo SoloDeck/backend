@@ -42,6 +42,7 @@ class ReminderRuleResponse(BaseModel):
     offset_days: int
     repeat_every_days: int | None
     channel: str
+    # Luôn False: công tắc "tự gửi" đã bỏ, lời nhắc do quy tắc tạo luôn chờ người duyệt.
     auto_send: bool
     send_at_hour: int
     # Câu mô tả lấy từ danh mục ở backend thay vì để frontend tự chế — hai nơi viết hai

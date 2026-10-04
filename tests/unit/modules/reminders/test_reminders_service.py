@@ -13,8 +13,8 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from src.modules.reminders.application.service import RemindersService
-from src.modules.reminders.schemas.request import CreateReminderRequest
-from src.shared.exceptions.domain import NotFoundError
+from src.modules.reminders.schemas.request import CreateReminderRequest, UpdateReminderRequest
+from src.shared.exceptions.domain import NotFoundError, ValidationError
 
 
 def make_payload(target_type: str = "deal", target_id: uuid.UUID | None = None):  # type: ignore[no-untyped-def]
@@ -81,3 +81,56 @@ class TestCreateKiemChuSoHuu:
         await service.create(uuid.uuid4(), make_payload())
 
         repo.create.assert_awaited_once()
+
+
+def make_update_service(scheduled_at: datetime):  # type: ignore[no-untyped-def]
+    reminder = MagicMock()
+    reminder.scheduled_at = scheduled_at
+    reminder.attachments = [{"key": "reminders/u/cu.png", "filename": "cu.png"}]
+    repo = AsyncMock()
+    repo.get_by_id.return_value = reminder
+    repo.save.side_effect = lambda r: r
+    return RemindersService(db=AsyncMock(), repo=repo), reminder
+
+
+class TestUpdate:
+    async def test_loi_nhac_qua_gio_van_sua_duoc_noi_dung_khi_giu_nguyen_gio(self) -> None:
+        """Lời nhắc tự sinh nằm chờ duyệt quá giờ hẹn. Web gửi lại đúng giờ cũ kèm nội dung
+        mới — trước khi sửa, schema chặn "phải ở tương lai" nên không bao giờ lưu được."""
+        qua_gio = datetime.now(UTC) - timedelta(hours=5)
+        service, reminder = make_update_service(qua_gio)
+
+        await service.update(
+            uuid.uuid4(),
+            uuid.uuid4(),
+            UpdateReminderRequest(scheduled_at=qua_gio, message_preview="Nội dung mới"),
+        )
+
+        assert reminder.message_preview == "Nội dung mới"
+
+    async def test_doi_gio_ve_qua_khu_thi_van_bi_chan(self) -> None:
+        service, _ = make_update_service(datetime.now(UTC) + timedelta(days=1))
+
+        with pytest.raises(ValidationError):
+            await service.update(
+                uuid.uuid4(),
+                uuid.uuid4(),
+                UpdateReminderRequest(scheduled_at=datetime.now(UTC) - timedelta(minutes=1)),
+            )
+
+    async def test_sua_thi_luu_anh_dinh_kem(self) -> None:
+        service, reminder = make_update_service(datetime.now(UTC) + timedelta(days=1))
+        moi = [{"key": "reminders/u/qr.png", "filename": "qr.png", "content_type": "image/png"}]
+
+        await service.update(uuid.uuid4(), uuid.uuid4(), UpdateReminderRequest(attachments=moi))
+
+        assert reminder.attachments == moi
+
+    async def test_khong_gui_anh_thi_giu_anh_cu(self) -> None:
+        service, reminder = make_update_service(datetime.now(UTC) + timedelta(days=1))
+
+        await service.update(
+            uuid.uuid4(), uuid.uuid4(), UpdateReminderRequest(message_preview="Chỉ đổi chữ")
+        )
+
+        assert reminder.attachments == [{"key": "reminders/u/cu.png", "filename": "cu.png"}]

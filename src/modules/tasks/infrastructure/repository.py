@@ -120,6 +120,15 @@ class TaskRepository:
         )
         return found is not None
 
+    async def get_payment_task_by_invoice(self, invoice_id: uuid.UUID) -> TaskModel | None:
+        """Task THU TIỀN đang nối với hóa đơn này, nếu có — tức hóa đơn xuất theo một mốc của hợp
+        đồng. Khóa nối nằm ở `tasks.invoice_id` (phía hóa đơn không có cột trỏ về task).  #Huynh"""
+        return await self.db.scalar(  # type: ignore[no-any-return]
+            select(TaskModel)
+            .where(TaskModel.invoice_id == invoice_id, TaskModel.billing_amount.is_not(None))
+            .limit(1)
+        )
+
     async def get_by_id(self, task_id: uuid.UUID) -> TaskModel | None:
         return await self.db.scalar(select(TaskModel).where(TaskModel.id == task_id))  # type: ignore[no-any-return]
 

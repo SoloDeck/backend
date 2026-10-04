@@ -62,6 +62,8 @@ class ReminderRulesService:
         offset_days: int | None = None,
         repeat_every_days: int | None = None,
         channel: str | None = None,
+        # Công tắc "tự gửi" đã bỏ: lời nhắc do quy tắc tạo luôn chờ duyệt. Giữ tham số (và cột
+        # trong CSDL) để client cũ còn gửi trường này lên không bị lỗi, nhưng KHÔNG ghi gì cả.
         auto_send: bool | None = None,
         send_at_hour: int | None = None,
         message_template: str | None = None,
@@ -111,8 +113,6 @@ class ReminderRulesService:
 
         if is_enabled is not None:
             rule.is_enabled = is_enabled
-        if auto_send is not None:
-            rule.auto_send = auto_send
 
         if message_template is not None:
             trimmed = message_template.strip()

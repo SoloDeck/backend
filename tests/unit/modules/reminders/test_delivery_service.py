@@ -76,6 +76,9 @@ def make_owner(**overrides):  # type: ignore[no-untyped-def]
     owner.bank_account_holder = overrides.get("bank_account_holder")
     owner.momo_phone_number = overrides.get("momo_phone_number")
     owner.bank_account_info = overrides.get("bank_account_info")
+    # Khai tường minh: để MagicMock tự sinh thì `deleted_at` là một mock (khác None), mọi chủ
+    # tài khoản trong test đều bị coi là đã xoá.
+    owner.deleted_at = overrides.get("deleted_at")
     return owner
 
 
@@ -501,6 +504,7 @@ def make_zalo_service(reminder, *, oa_token, zalo_user_id, zalo_client=None):  #
     owner.full_name = "Huỳnh Hoa"
     owner.email = "huynhhoa@example.com"
     owner.zalo_oa_access_token = oa_token
+    owner.deleted_at = None
     repo.get_owner.return_value = owner
     service = ReminderDeliveryService(
         db=make_db(),
@@ -701,3 +705,39 @@ class TestChuongHongKhongDuocHuyLuotGuiDaThanhCong:
 
         name = notifications.notify_reminder_failed.await_args.kwargs["client_name"]
         assert len(name) <= NOTIFICATION_NAME_MAX
+
+
+class TestChuTaiKhoanDaXoa:
+    """Tài khoản đã xoá (tự xoá hoặc bị admin xoá) thì KHÔNG gửi gì cho khách của họ nữa.
+
+    Trước đây bước gửi không kiểm chủ lời nhắc: khách vẫn nhận thư nhắc thanh toán mang tên,
+    email và số tài khoản ngân hàng của một người đã rời hệ thống.
+    """
+
+    async def test_khong_gui_va_huy_luon_loi_nhac(self, notifications: MagicMock) -> None:
+        from datetime import UTC, datetime
+
+        reminder = make_reminder()
+        send_email = AsyncMock()
+        service, _ = make_service(
+            reminder, send_email=send_email, owner=make_owner(deleted_at=datetime.now(UTC))
+        )
+
+        result = await service.deliver(reminder.id)
+
+        send_email.assert_not_awaited()
+        assert reminder.status == "cancelled"
+        assert result.status == "cancelled"
+        assert result.delivered is False
+        notifications.notify_reminder_failed.assert_not_awaited()
+
+    async def test_khong_tim_thay_chu_cung_khong_gui(self, notifications: MagicMock) -> None:
+        reminder = make_reminder()
+        send_email = AsyncMock()
+        service, repo = make_service(reminder, send_email=send_email)
+        repo.get_owner.return_value = None
+
+        result = await service.deliver(reminder.id)
+
+        send_email.assert_not_awaited()
+        assert result.status == "cancelled"

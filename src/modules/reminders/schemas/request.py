@@ -43,21 +43,26 @@ class CreateReminderRequest(BaseModel):
 
 
 class UpdateReminderRequest(BaseModel):
-    """target_type/target_id/reminder_type/attachments deliberately NOT accepted here
+    """target_type/target_id/reminder_type deliberately NOT accepted here
     — a reminder isn't meant to be re-pointed at a different target or type via
     update, only rescheduled/re-messaged/re-channeled. Previously this reused the
     full create schema, so every field was required (PATCH with anything less than
     the complete object 422'd) and update() unconditionally overwrote all of them,
-    including target_type/target_id, with no None-guard at all."""
+    including target_type/target_id, with no None-guard at all.
+
+    `attachments` THÌ NHẬN: web vẫn gửi ảnh lên khi sửa, còn pydantic lặng lẽ vứt trường lạ
+    — sửa lời nhắc xong là mất ảnh QR chuyển khoản mà màn hình vẫn báo "Đã cập nhật".
+    `reminder_type` vẫn không nhận: nó nằm trong khoá chống trùng của bộ tự sinh lời nhắc,
+    đổi loại là lượt quét sau đẻ lại đúng lời nhắc vừa bị đổi.
+
+    Không kiểm "phải ở tương lai" ở đây như bản Create: schema không biết giờ hẹn hiện tại.
+    Lời nhắc do quy tắc tự sinh nằm chờ duyệt quá giờ hẹn thì sửa nội dung cũng bị chặn
+    theo. Việc kiểm dời sang service, chỉ áp khi giờ hẹn THẬT SỰ đổi.  #Huynh"""
 
     scheduled_at: datetime | None = None
     message_preview: str | None = None
     channel: NotificationChannel | None = None
-
-    @field_validator("scheduled_at")
-    @classmethod
-    def scheduled_at_must_be_future(cls, v: datetime | None) -> datetime | None:
-        return _must_be_future(v) if v is not None else v
+    attachments: list[dict[str, str]] | None = None
 
 
 class ReminderRuleUpdate(BaseModel):
@@ -68,6 +73,7 @@ class ReminderRuleUpdate(BaseModel):
     offset_days: int | None = None
     repeat_every_days: int | None = None
     channel: NotificationChannel | None = None
+    # Đã bỏ: server bỏ qua giá trị này (client cũ gửi lên cũng không lỗi).
     auto_send: bool | None = None
     send_at_hour: int | None = None
     # Nội dung mẫu tự soạn. Gửi chuỗi rỗng để trả lời nhắc về template mặc định.
