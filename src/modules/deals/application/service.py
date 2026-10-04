@@ -439,6 +439,26 @@ class DealsService:
             page_size=page_size,
         )
 
+    async def lose_open_deals_of_client(
+        self, user_id: uuid.UUID, client_id: uuid.UUID, *, reason: str
+    ) -> int:
+        """Đưa mọi deal CHƯA ĐÓNG của một khách sang KHÔNG THÀNH CÔNG, kèm `reason`. Trả số deal.
+
+        Dùng khi khách bị lưu trữ: không còn ai theo dự án của họ nữa. Đi qua đúng
+        `transition_stage` nên có đủ nhật ký, ngày đóng và việc huỷ lời nhắc đang chờ — không
+        có đường tắt ghi thẳng cột `stage`. Deal ĐÃ hoàn thành thì để nguyên: nó là một thương
+        vụ thắng, biến nó thành thất bại là sai sự thật (và vòng đời cũng không cho đi ra khỏi
+        giai đoạn cuối).  #Huynh
+        """
+        deals = await self.repo.list_open_by_client(user_id, client_id)
+        for deal in deals:
+            await self.transition_stage(
+                user_id,
+                deal.id,
+                DealStageRequest(target_stage=DealStage.LOST, reason=reason),
+            )
+        return len(deals)
+
     async def list_intakes(
         self, user_id: uuid.UUID, page: int = 1, page_size: int = 20
     ) -> tuple[list, int]:
@@ -501,8 +521,14 @@ class DealsService:
         return await self.repo.save(deal)
 
     async def delete(self, user_id: uuid.UUID, deal_id: uuid.UUID) -> None:
+        """Xoá mềm một deal, kèm huỷ mọi lời nhắc đang chờ gửi của nó.
+
+        Xoá mềm chỉ gán `deleted_at`, còn beat gửi lời nhắc không biết deal đã bị xoá. Không
+        huỷ ở đây thì khách vẫn nhận thư nhắc về một dự án freelancer đã gỡ đi.  #Huynh
+        """
         deal = await self._get_deal(user_id, deal_id)
         deal.deleted_at = datetime.now(UTC)
+        await self.repo.cancel_pending_reminders_of_deal_tree(deal_id, user_id)
         await self.repo.save(deal)
 
     async def upload_document(
@@ -549,6 +575,11 @@ class DealsService:
             raise BusinessRuleError("Invalid deal stage") from exc
         if target not in STAGE_TRANSITIONS.get(current, frozenset()):
             raise InvalidStateTransitionError("deal", deal.stage, payload.stage)
+        # Lý do dự án KHÔNG THÀNH CÔNG: chỗ duy nhất ghi lại "vì sao mất deal", Kho lưu trữ
+        # liệt kê nó ra. Web BẮT BUỘC nhập (hộp "Loại bỏ dự án"), còn API cố ý KHÔNG bắt: app
+        # di động vốn cho bấm "Đã mất" mà không gửi lý do nào, đòi ở đây là làm hỏng chức năng
+        # đó. Thiếu thì để trống, kho sẽ ghi "Chưa ghi lý do".  #Huynh
+        reason = (payload.reason or "").strip() or None
         if target == DealStage.ACTIVE:
             if not await self.repo.has_accepted_proposal(deal_id, user_id):
                 raise BusinessRuleError("Transitioning to active requires an accepted proposal")
@@ -596,6 +627,8 @@ class DealsService:
                 deal.actual_value = deal.estimated_value
 
         deal.stage = payload.stage
+        if target == DealStage.LOST:
+            deal.lost_reason = reason
         if target in TERMINAL_STAGES and hasattr(deal, "closed_at"):
             deal.closed_at = datetime.now(UTC)
             await self.repo.cancel_pending_reminders(deal_id, user_id)
@@ -604,7 +637,10 @@ class DealsService:
             deal_id=deal_id,
             owner_user_id=user_id,
             entry_type=DealActivityType.STAGE_CHANGE.value,
-            description=f"Stage changed from {current.value} to {target.value}",
+            description=(
+                f"Stage changed from {current.value} to {target.value}"
+                + (f" — Lý do: {reason}" if target == DealStage.LOST and reason else "")
+            ),
             previous_stage=current.value,
             new_stage=target.value,
         )
