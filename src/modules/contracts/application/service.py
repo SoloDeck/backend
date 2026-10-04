@@ -7,6 +7,10 @@ from datetime import UTC, datetime, timedelta
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.modules.contracts.application.proposal_terms import (
+    apply_payment_from_proposal,
+    apply_scope_from_proposal,
+)
 from src.modules.contracts.domain.value_objects.contract_status import (
     CONTRACT_TRANSITIONS,
     TERMINAL_CONTRACT_STATUSES,
@@ -432,6 +436,15 @@ class ContractsService:
             content, template_id, user, template_type="contract"
         )
 
+        # Tiền KHÔNG do AI quyết. Model từng tự viết lại các đợt thanh toán nên số từng đợt lệch
+        # bảng hạng mục của báo giá (trong khi task thu tiền và hoá đơn bám đúng báo giá). Đoạn
+        # thanh toán của model bị thay bằng câu dựng từ chính hạng mục chi phí; bảng các đợt do
+        # `_build_document` suy ra từ cùng nguồn. Báo giá không có hạng mục nào thì giữ nguyên
+        # chữ của model.  #Huynh
+        content = apply_payment_from_proposal(
+            content, proposal.content if proposal else None, replace_text=True
+        )
+
         contract.content = content
         contract.ai_generated = True
         return await self.repo.save(contract)
@@ -492,6 +505,15 @@ class ContractsService:
             if template is None:
                 raise ValidationError("Mẫu điều khoản không hợp lệ hoặc không dùng được.")
             content = build_skeleton_content(template.content, "contract")
+
+        # Mẫu là văn bản chung cho cả nghề, không biết dự án này làm gì và giá bao nhiêu. Phần đó
+        # lấy từ BÁO GIÁ ĐÃ CHỐT bằng code (không cần AI): phạm vi công việc vào Điều 1, tổng
+        # giá trị vào Điều 3. Bản trước bỏ qua báo giá nên hợp đồng ký xong không ghi số tiền
+        # nào.  #Huynh
+        proposal = await self.repo.get_proposal(contract.proposal_id)
+        proposal_content = proposal.content if proposal else None
+        content = apply_scope_from_proposal(content, proposal_content)
+        content = apply_payment_from_proposal(content, proposal_content, replace_text=False)
 
         contract.content = content
         contract.ai_generated = False
@@ -672,9 +694,15 @@ class ContractsService:
         client = await self.repo.get_client(contract.client_id)
         user = await self.repo.get_user(user_id)
         milestones = await self.repo.get_milestones(contract.id)
+        proposal = await self.repo.get_proposal(contract.proposal_id)
 
         return build_contract_document(
-            contract, deal=deal, client=client, user=user, milestones=milestones
+            contract,
+            deal=deal,
+            client=client,
+            user=user,
+            milestones=milestones,
+            proposal_content=proposal.content if proposal else None,
         )
 
     async def render_preview_html(

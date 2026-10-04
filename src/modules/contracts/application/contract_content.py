@@ -17,6 +17,7 @@ from src.ai.contract_generator.schemas.contract_document import (
     ContractDocument,
     ContractMilestoneLine,
 )
+from src.modules.contracts.application.proposal_terms import schedule_from_proposal
 from src.shared.domain.template_blocks import (
     collect_clause_texts,
     collect_extra_sections,
@@ -61,8 +62,13 @@ def build_contract_document(
     client: Any = None,
     user: Any = None,
     milestones: list[Any] | None = None,
+    proposal_content: dict[str, Any] | None = None,
 ) -> ContractDocument:
-    """Dựng ContractDocument từ một ContractModel + các thực thể liên quan.  #Huynh"""
+    """Dựng ContractDocument từ một ContractModel + các thực thể liên quan.
+
+    `proposal_content`: nội dung báo giá đã chốt. Hợp đồng chưa có đợt thanh toán nào do người dùng
+    tự thêm thì lịch thanh toán được suy từ hạng mục chi phí của báo giá — cùng nguồn với bảng báo
+    giá, task thu tiền và hoá đơn, nên các con số không thể lệch nhau.  #Huynh"""
     content = _dict(getattr(contract, "content", None))
     parties = _dict(content.get("parties"))
     p_free = _dict(parties.get("freelancer"))
@@ -126,6 +132,10 @@ def build_contract_document(
             )
         )
     total_amount = _money(total) if lines else ""
+
+    # Đợt thanh toán người dùng tự thêm (nếu có) được ưu tiên; không có thì lấy từ báo giá.
+    if not lines:
+        lines, total_amount = schedule_from_proposal(proposal_content)
 
     # governing_law lưu trong DB là "Vietnam" (theo openapi.yaml). Hiển thị cho khách VN
     # thì viết đúng tiếng Việt.  #Huynh
