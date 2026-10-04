@@ -91,6 +91,35 @@ async def _luot_ai_da_dung(db_session, user_id: str) -> int:
     return sum(rows.scalars().all())
 
 
+class TestThuTuDauMucTuSoan:
+    async def test_baogia_tu_khung_mang_dau_muc_tu_soan_theo_dung_thu_tu_cua_mau(
+        self, client: AsyncClient, db_session
+    ) -> None:
+        headers, uid = await _auth_with_profession(client, db_session, "ui-ux-design")
+        thu_tu = [
+            {"title": "Gamma", "body": "c"},
+            {"title": "Alpha", "body": "a"},
+            {"title": "Beta", "body": "b"},
+        ]
+        tid = await _seed(
+            db_session,
+            admin_id=uid,
+            content={**KHUNG_BAO_GIA, "extra_sections": thu_tu},
+        )
+        deal_id = await _make_deal(client, headers)
+
+        resp = await client.post(
+            f"/api/v1/proposals/from-template/{deal_id}?template_id={tid}", headers=headers
+        )
+        assert resp.status_code == 201, resp.text
+        data = resp.json()["data"]
+
+        assert data["content"]["extra_sections"] == thu_tu
+        preview = await client.get(f"/api/v1/proposals/{data['id']}/preview", headers=headers)
+        html = preview.json()["data"]["html"]
+        assert sorted(["Alpha", "Beta", "Gamma"], key=html.index) == ["Gamma", "Alpha", "Beta"]
+
+
 class TestSoanBaoGiaTuKhung:
     async def test_khung_dien_ca_phan_dac_thu_du_an(
         self, client: AsyncClient, db_session

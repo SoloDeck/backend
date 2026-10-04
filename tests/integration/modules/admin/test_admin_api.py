@@ -2311,6 +2311,73 @@ class TestAdminCreateTemplate:
         so_muc = [int(n) for n in re.findall(r"<h2>(\d+)\.", html)]
         assert so_muc == list(range(1, len(so_muc) + 1)), so_muc
 
+    async def test_dau_muc_tu_soan_in_theo_dung_thu_tu_trong_danh_sach(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """Nút lên/xuống ở màn soạn mẫu chỉ đổi thứ tự trong `extra_sections`; giấy in theo đó."""
+        headers = await _admin_headers(client, db_session)
+
+        async def thu_tu_tren_giay(ten: list[str], template_type: str) -> list[str]:
+            resp = await client.post(
+                "/api/v1/admin/templates/preview",
+                json={
+                    "template_type": template_type,
+                    "content": {
+                        "extra_sections": [{"title": t, "body": f"Nội dung {t}"} for t in ten]
+                    },
+                },
+                headers=headers,
+            )
+            assert resp.status_code == 200, resp.text
+            html = resp.json()["data"]["html"]
+            return sorted(ten, key=html.index)
+
+        for loai in ("proposal", "contract"):
+            assert await thu_tu_tren_giay(["Alpha", "Beta", "Gamma"], loai) == [
+                "Alpha", "Beta", "Gamma",
+            ]
+            assert await thu_tu_tren_giay(["Gamma", "Alpha", "Beta"], loai) == [
+                "Gamma", "Alpha", "Beta",
+            ]
+
+    async def test_thu_tu_dau_muc_tu_soan_con_nguyen_sau_khi_luu_va_doc_lai(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        headers = await _admin_headers(client, db_session)
+        created = await client.post(
+            "/api/v1/admin/templates",
+            json={
+                "name": "Mẫu thứ tự",
+                "template_type": "proposal",
+                "content": {
+                    "extra_sections": [
+                        {"title": "Alpha", "body": "a"},
+                        {"title": "Beta", "body": "b"},
+                        {"title": "Gamma", "body": "c"},
+                    ]
+                },
+            },
+            headers=headers,
+        )
+        assert created.status_code == 201, created.text
+        template_id = created.json()["data"]["id"]
+
+        moi = [
+            {"title": "Gamma", "body": "c"},
+            {"title": "Alpha", "body": "a"},
+            {"title": "Beta", "body": "b"},
+        ]
+        patched = await client.patch(
+            f"/api/v1/admin/templates/{template_id}",
+            json={"content": {"extra_sections": moi}},
+            headers=headers,
+        )
+        assert patched.status_code == 200, patched.text
+
+        listed = await client.get("/api/v1/admin/templates", headers=headers)
+        saved = next(t for t in listed.json()["data"] if t["id"] == template_id)
+        assert saved["content"]["extra_sections"] == moi
+
     async def test_xem_truoc_giu_muc_chua_dat_ten_de_admin_go_vao(
         self, client: AsyncClient, db_session: AsyncSession
     ) -> None:
