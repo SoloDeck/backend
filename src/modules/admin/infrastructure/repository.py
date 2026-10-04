@@ -546,6 +546,11 @@ class AdminRepository:
             q = q.where(SystemTemplateModel.profession == profession)
         if is_active is not None:
             q = q.where(SystemTemplateModel.is_active == is_active)
+        # Mới nhất lên đầu, và có khoá phụ để hai mẫu cùng lúc tạo luôn đứng cùng một chỗ. Trước đây
+        # truy vấn KHÔNG có ORDER BY nên Postgres trả theo thứ tự lưu trữ vật lý: mẫu vừa tạo nằm
+        # cuối danh sách, và sửa một mẫu cũ là nó nhảy sang vị trí khác. Có chia trang thì thứ tự
+        # phải ổn định, nếu không cùng một mẫu có thể hiện ở cả hai trang hoặc không ở trang nào.
+        q = q.order_by(SystemTemplateModel.created_at.desc(), SystemTemplateModel.id)
         result = await self.db.execute(q)
         return list(result.scalars().all())
 
