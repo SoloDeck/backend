@@ -9,6 +9,7 @@ cũ) — test của nó nằm ở `tests/unit/modules/proposals/test_payment_mil
 đã nằm sẵn trên task, chỉ còn cộng.
 """
 
+import uuid
 from decimal import Decimal
 
 from src.modules.analytics.application.milestone_money import MilestoneMoney, totals
@@ -57,3 +58,88 @@ class TestCongTien:
             [MilestoneMoney(label="một cái tên khác hẳn", amount=_PRICE, collected=True)]
         )
         assert money.collected == _PRICE
+
+
+class TestSoDealDaKy:
+    """Thẻ "Tổng" ghi "N deal đã ký": N phải là số DEAL, không phải số mốc, và phải cùng
+    phạm vi với số tiền (kể cả deal đã hoàn thành — tiền của nó vẫn nằm trong tổng)."""
+
+    def test_mot_deal_nhieu_moc_chi_tinh_mot(self) -> None:
+        deal = uuid.uuid4()
+        money = totals(
+            [
+                MilestoneMoney("Đặt cọc", Decimal(50_000_000), True, deal_id=deal),
+                MilestoneMoney("Bàn giao", Decimal(50_000_000), False, deal_id=deal),
+            ]
+        )
+        assert money.signed_deals == 1
+        assert money.contracted == _PRICE
+
+    def test_nhieu_deal_khac_nhau_thi_dem_du(self) -> None:
+        a, b, c = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+        money = totals(
+            [
+                MilestoneMoney("A1", Decimal(10), True, deal_id=a),
+                MilestoneMoney("A2", Decimal(10), True, deal_id=a),
+                MilestoneMoney("B1", Decimal(10), False, deal_id=b),
+                MilestoneMoney("C1", Decimal(10), True, deal_id=c),
+            ]
+        )
+        assert money.signed_deals == 3
+
+    def test_khong_co_mot_nao_thi_bang_khong(self) -> None:
+        assert totals([]).signed_deals == 0
+
+    def test_nguoi_goi_khong_khai_deal_thi_khong_tinh(self) -> None:
+        """Chỗ chỉ cần cộng tiền (vd khối thanh toán của lời nhắc) không phải khai deal."""
+        money = totals([MilestoneMoney("A", Decimal(10), False)])
+        assert money.signed_deals == 0
+        assert money.outstanding == Decimal(10)
+
+
+class TestGiaTriTrungBinhMoiDeal:
+    """Thẻ "Giá trị deal trung bình" = tiền các mốc ÷ số deal đã chốt. Deal không thành công không
+    tham gia: một khoản cọc lẻ của deal đổ vỡ sẽ kéo trung bình xuống vô lý."""
+
+    def test_chia_tien_cac_moc_cho_so_deal(self) -> None:
+        a, b = uuid.uuid4(), uuid.uuid4()
+        money = totals(
+            [
+                MilestoneMoney("A1", Decimal(100_000_000), True, deal_id=a),
+                MilestoneMoney("A2", Decimal(50_000_000), False, deal_id=a),
+                MilestoneMoney("B1", Decimal(30_000_000), False, deal_id=b),
+            ]
+        )
+        assert money.average_deal_value == Decimal("90000000.00")  # (150 + 30) triệu ÷ 2 deal
+
+    def test_deal_that_bai_khong_tham_gia_trung_binh(self) -> None:
+        song, hong = uuid.uuid4(), uuid.uuid4()
+        money = totals(
+            [
+                MilestoneMoney("S1", Decimal(200_000_000), True, deal_id=song),
+                MilestoneMoney("H1", Decimal(10_000_000), True, deal_id=hong, lost=True),
+            ]
+        )
+        assert money.average_deal_value == Decimal("200000000.00")
+        # Nhưng khoản cọc ĐÃ thu của deal hỏng vẫn là tiền thật, nằm trong tổng.
+        assert money.collected == Decimal(210_000_000)
+        assert money.signed_deals == 2
+
+    def test_toan_deal_that_bai_thi_trung_binh_bang_khong(self) -> None:
+        money = totals([MilestoneMoney("H1", Decimal(10), True, deal_id=uuid.uuid4(), lost=True)])
+        assert money.average_deal_value == Decimal(0)
+
+    def test_khong_co_mot_nao_thi_bang_khong(self) -> None:
+        assert totals([]).average_deal_value == Decimal(0)
+
+    def test_nguoi_goi_khong_khai_deal_thi_khong_co_trung_binh(self) -> None:
+        assert totals([MilestoneMoney("A", Decimal(10), True)]).average_deal_value == Decimal(0)
+
+    def test_lam_tron_den_dong_le_hai_chu_so(self) -> None:
+        a, b, c = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+        moc = [
+            MilestoneMoney(x, Decimal(100), False, deal_id=d)
+            for x, d in zip("abc", (a, b, c), strict=True)
+        ]
+        money = totals([*moc, MilestoneMoney("a2", Decimal(1), False, deal_id=a)])
+        assert money.average_deal_value == Decimal("100.33")  # 301 ÷ 3

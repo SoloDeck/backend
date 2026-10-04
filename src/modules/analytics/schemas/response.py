@@ -32,6 +32,12 @@ class RevenueResponse(BaseModel):
     milestone_collected: Decimal = Decimal(0)
     milestone_outstanding: Decimal = Decimal(0)
     milestones_pending: int = 0
+    # Số deal đã ký hợp đồng (có task thu tiền), tính cả deal đã hoàn thành — đúng phạm vi của
+    # `total_contracted`. KHÁC `DashboardResponse.active_deals` (deal chưa hoàn thành/chưa mất,
+    # kể cả deal còn ở bước báo giá chưa ký).
+    signed_deals: int = 0
+    # Giá trị trung bình mỗi deal đã chốt: tiền các mốc ÷ số deal, không tính deal không thành công.
+    average_deal_value: Decimal = Decimal(0)
 
 
 class PipelineStageResponse(BaseModel):

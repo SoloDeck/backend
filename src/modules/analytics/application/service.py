@@ -62,6 +62,8 @@ class AnalyticsService:
             milestone_collected=money.collected,
             milestone_outstanding=money.outstanding,
             milestones_pending=money.milestones_pending,
+            signed_deals=money.signed_deals,
+            average_deal_value=money.average_deal_value,
         )
 
     async def _milestone_money(self, user_id: uuid.UUID) -> MoneyTotals:
@@ -70,14 +72,22 @@ class AnalyticsService:
         Bản cũ phải đọc báo giá đã chốt, chia % ra tiền rồi khớp mốc với TÊN TASK. Bỏ được cả
         ba bước từ khi có `tasks.billing_amount`, và cũng bỏ luôn nguy cơ đổi tên task là bảng
         doanh thu âm thầm coi mốc đó chưa thu.  #Huynh"""
-        rows = [
-            MilestoneMoney(
-                label=row["label"],
-                amount=Decimal(row["amount"] or 0),
-                collected=row["collected"],
+        rows: list[MilestoneMoney] = []
+        for row in await self.repo.milestone_rows(user_id):
+            lost = row.get("deal_stage") == "lost"
+            # Deal KHÔNG THÀNH CÔNG: khoản CHƯA thu sẽ không bao giờ về nên không phải "còn phải
+            # thu" (cũng không nằm trong "Tổng"). Khoản ĐÃ thu thì vẫn là tiền thật.  #Huynh
+            if lost and not row["collected"]:
+                continue
+            rows.append(
+                MilestoneMoney(
+                    label=row["label"],
+                    amount=Decimal(row["amount"] or 0),
+                    collected=row["collected"],
+                    deal_id=row["deal_id"],
+                    lost=lost,
+                )
             )
-            for row in await self.repo.milestone_rows(user_id)
-        ]
         return totals(rows)
 
     async def get_pipeline(
@@ -151,6 +161,9 @@ class AnalyticsService:
         by_client: dict[uuid.UUID, dict] = {}
         deals_by_client: dict[uuid.UUID, set[uuid.UUID]] = {}
         for row in await self.repo.milestone_rows(user_id):
+            # Cùng luật với `_milestone_money`: khoản chưa thu của deal thất bại không còn là nợ.
+            if row.get("deal_stage") == "lost" and not row["collected"]:
+                continue
             client_id = row["client_id"]
             entry = by_client.setdefault(
                 client_id,

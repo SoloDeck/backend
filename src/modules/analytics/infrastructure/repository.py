@@ -15,6 +15,13 @@ from src.infrastructure.database.models import (
     UsageRecordModel,
 )
 
+# Hoá đơn ĐÃ XUẤT cho khách — thứ được cộng vào cột "Đã xuất" và kéo theo "Còn nợ".
+# Bỏ `draft` (chưa gửi ai, nháp có thể xoá) và `void` (đã huỷ). Không bỏ thì một khoản
+# huỷ rồi xuất lại bị đếm HAI lần, còn nháp thì đẻ ra số nợ khách chưa từng thấy.
+# Loại hai trạng thái này không làm lệch cột "Đã thu": `void` bị chặn khi đã có tiền
+# (invoices service) và `draft` không ghi nhận thanh toán được.  #Huynh
+ISSUED_INVOICE_STATUSES = ("sent", "partially_paid", "paid", "overdue")
+
 
 @dataclass
 class AnalyticsRepository:
@@ -65,7 +72,10 @@ class AnalyticsRepository:
     async def revenue(
         self, owner_user_id: uuid.UUID, from_date: date | None = None, to_date: date | None = None
     ) -> dict:
-        conditions = [InvoiceModel.owner_user_id == owner_user_id]
+        conditions = [
+            InvoiceModel.owner_user_id == owner_user_id,
+            InvoiceModel.status.in_(ISSUED_INVOICE_STATUSES),
+        ]
         if from_date is not None:
             conditions.append(InvoiceModel.issue_date >= from_date)
         if to_date is not None:
@@ -146,7 +156,7 @@ class AnalyticsRepository:
 
         deals = (
             await self.db.execute(
-                select(DealModel.id, DealModel.client_id, ClientModel.name)
+                select(DealModel.id, DealModel.client_id, ClientModel.name, DealModel.stage)
                 .join(ClientModel, ClientModel.id == DealModel.client_id)
                 .where(
                     DealModel.owner_user_id == owner_user_id,
@@ -155,7 +165,7 @@ class AnalyticsRepository:
                 )
             )
         ).all()
-        client_by_deal = {row[0]: (row[1], row[2]) for row in deals}
+        client_by_deal = {row[0]: (row[1], row[2], row[3]) for row in deals}
         if not client_by_deal:
             return []
 
@@ -170,6 +180,8 @@ class AnalyticsRepository:
                     "deal_id": deal_id,
                     "client_id": client[0],
                     "client_name": client[1],
+                    # Giai đoạn của deal: người gọi cần biết deal đã KHÔNG THÀNH CÔNG hay chưa.
+                    "deal_stage": client[2],
                     "label": title,
                     "amount": amount,
                     "collected": status == "done",
@@ -194,6 +206,7 @@ class AnalyticsRepository:
                 )
                 .where(
                     InvoiceModel.owner_user_id == owner_user_id,
+                    InvoiceModel.status.in_(ISSUED_INVOICE_STATUSES),
                     InvoiceModel.issue_date >= since,
                 )
                 .group_by(month)
