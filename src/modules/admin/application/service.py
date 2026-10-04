@@ -552,6 +552,23 @@ class AdminService:
             page_size=page_size,
         )
 
+    async def get_payment_totals(
+        self,
+        *,
+        status: str | None = None,
+        provider: str | None = None,
+        search: str | None = None,
+        from_date: datetime | None = None,
+        to_date: datetime | None = None,
+    ) -> dict:
+        return await self.repo.get_payment_totals(
+            status=status,
+            provider=provider,
+            search=search,
+            from_date=from_date,
+            to_date=to_date,
+        )
+
     # -------------------------------------------------------------------------
     # AI Costs
     # -------------------------------------------------------------------------
@@ -560,6 +577,7 @@ class AdminService:
         self,
         *,
         ai_module: str | None = None,
+        search: str | None = None,
         from_date: datetime | None = None,
         to_date: datetime | None = None,
         sort_by: str = "occurred_at",
@@ -569,6 +587,7 @@ class AdminService:
     ) -> tuple[list, int]:
         return await self.repo.list_ai_costs_paginated(
             ai_module=ai_module,
+            search=search,
             from_date=from_date,
             to_date=to_date,
             sort_by=sort_by,
@@ -581,11 +600,13 @@ class AdminService:
         self,
         *,
         ai_module: str | None = None,
+        search: str | None = None,
         from_date: datetime | None = None,
         to_date: datetime | None = None,
     ) -> dict:
         return await self.repo.get_ai_cost_totals(
             ai_module=ai_module,
+            search=search,
             from_date=from_date,
             to_date=to_date,
         )

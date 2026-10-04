@@ -1549,7 +1549,7 @@ class TestAdminPayments:
         resp = await client.get("/api/v1/admin/payments", headers=headers)
         assert resp.status_code == 200
         body = resp.json()["data"]
-        assert set(body) == {"data", "total", "page", "page_size"}
+        assert set(body) == {"data", "total", "page", "page_size", "totals"}
         assert body["page"] == 1
         assert body["page_size"] == 20
 

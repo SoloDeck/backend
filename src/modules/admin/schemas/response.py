@@ -140,11 +140,22 @@ class AdminPaymentResponse(BaseModel):
     created_at: datetime
 
 
+class AdminPaymentTotals(BaseModel):
+    """Con số tổng của TOÀN BỘ tập đang lọc (mọi trang), không chỉ trang đang xem."""
+
+    collected_amount: Decimal
+    currency: str = "VND"
+    succeeded_count: int
+    # Chờ thanh toán + đang xử lý.
+    pending_count: int
+
+
 class AdminPaymentPagedResponse(BaseModel):
     data: list[AdminPaymentResponse]
     total: int
     page: int
     page_size: int
+    totals: AdminPaymentTotals
 
 
 class AdminAuditLogResponse(BaseModel):

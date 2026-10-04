@@ -242,6 +242,82 @@ class AdminRepository:
     # Subscription Payments
     # -------------------------------------------------------------------------
 
+    @staticmethod
+    def _payment_conditions(
+        *,
+        status: str | None,
+        provider: str | None,
+        search: str | None,
+        from_date: datetime | None,
+        to_date: datetime | None,
+    ) -> list:
+        """Điều kiện lọc giao dịch — DÙNG CHUNG cho danh sách và tổng, để hai thứ không lệch."""
+        conditions: list = []
+        if status is not None:
+            conditions.append(SubscriptionPaymentModel.status == status)
+        if provider is not None:
+            conditions.append(SubscriptionPaymentModel.provider == provider)
+        if search is not None:
+            conditions.append(
+                or_(
+                    UserModel.email.ilike(f"%{search}%"),
+                    UserModel.full_name.ilike(f"%{search}%"),
+                )
+            )
+        # Lọc theo created_at (lúc khởi tạo giao dịch), KHÔNG phải paid_at —
+        # để giao dịch pending/failed vẫn nằm trong khoảng ngày đang xem.
+        if from_date is not None:
+            conditions.append(SubscriptionPaymentModel.created_at >= from_date)
+        if to_date is not None:
+            conditions.append(SubscriptionPaymentModel.created_at <= to_date)
+        return conditions
+
+    async def get_payment_totals(
+        self,
+        *,
+        status: str | None = None,
+        provider: str | None = None,
+        search: str | None = None,
+        from_date: datetime | None = None,
+        to_date: datetime | None = None,
+    ) -> dict:
+        """Tổng của TOÀN BỘ tập đang lọc: tiền đã thu, số giao dịch thành công, số đang chờ.
+
+        Chỉ cộng tiền VND: nền tảng chỉ thu bằng đồng (MoMo/VNPay/chuyển khoản), cộng lẫn đơn vị
+        tiền thì con số vô nghĩa.
+        """
+        succeeded = SubscriptionPaymentModel.status == "succeeded"
+        agg_q = (
+            select(
+                func.coalesce(
+                    func.sum(SubscriptionPaymentModel.amount).filter(
+                        succeeded, SubscriptionPaymentModel.currency == "VND"
+                    ),
+                    Decimal("0"),
+                ),
+                func.count().filter(succeeded),
+                func.count().filter(SubscriptionPaymentModel.status.in_(["pending", "processing"])),
+            )
+            .select_from(SubscriptionPaymentModel)
+            .outerjoin(UserModel, UserModel.id == SubscriptionPaymentModel.user_id)
+            .where(
+                *self._payment_conditions(
+                    status=status,
+                    provider=provider,
+                    search=search,
+                    from_date=from_date,
+                    to_date=to_date,
+                )
+            )
+        )
+        collected, succeeded_count, pending_count = (await self.db.execute(agg_q)).one()
+        return {
+            "collected_amount": Decimal(str(collected)),
+            "currency": "VND",
+            "succeeded_count": int(succeeded_count),
+            "pending_count": int(pending_count),
+        }
+
     async def list_payments_paginated(
         self,
         *,
@@ -261,24 +337,16 @@ class AdminRepository:
             select(SubscriptionPaymentModel, UserModel, PlanModel)
             .outerjoin(UserModel, UserModel.id == SubscriptionPaymentModel.user_id)
             .outerjoin(PlanModel, PlanModel.id == SubscriptionPaymentModel.plan_id)
-        )
-        if status is not None:
-            base_q = base_q.where(SubscriptionPaymentModel.status == status)
-        if provider is not None:
-            base_q = base_q.where(SubscriptionPaymentModel.provider == provider)
-        if search is not None:
-            base_q = base_q.where(
-                or_(
-                    UserModel.email.ilike(f"%{search}%"),
-                    UserModel.full_name.ilike(f"%{search}%"),
+            .where(
+                *self._payment_conditions(
+                    status=status,
+                    provider=provider,
+                    search=search,
+                    from_date=from_date,
+                    to_date=to_date,
                 )
             )
-        # Lọc theo created_at (lúc khởi tạo giao dịch), KHÔNG phải paid_at —
-        # để giao dịch pending/failed vẫn nằm trong khoảng ngày đang xem.
-        if from_date is not None:
-            base_q = base_q.where(SubscriptionPaymentModel.created_at >= from_date)
-        if to_date is not None:
-            base_q = base_q.where(SubscriptionPaymentModel.created_at <= to_date)
+        )
 
         total = await self.db.scalar(
             select(func.count()).select_from(base_q.subquery())
@@ -356,10 +424,22 @@ class AdminRepository:
     # AI Cost Records
     # -------------------------------------------------------------------------
 
+    @staticmethod
+    def _ai_cost_search_clause(search: str | None):  # type: ignore[no-untyped-def]
+        """Điều kiện "người gọi AI có email hoặc tên chứa `search`"; None nếu không tìm gì."""
+        term = (search or "").strip()
+        if not term:
+            return None
+        return or_(
+            UserModel.email.ilike(f"%{term}%"),
+            UserModel.full_name.ilike(f"%{term}%"),
+        )
+
     async def list_ai_costs_paginated(
         self,
         *,
         ai_module: str | None = None,
+        search: str | None = None,
         from_date: datetime | None = None,
         to_date: datetime | None = None,
         sort_by: str = "occurred_at",
@@ -374,6 +454,9 @@ class AdminRepository:
         )
         if ai_module is not None:
             base_q = base_q.where(AiCostRecordModel.ai_module == ai_module)
+        search_clause = self._ai_cost_search_clause(search)
+        if search_clause is not None:
+            base_q = base_q.where(search_clause)
         if from_date is not None:
             base_q = base_q.where(AiCostRecordModel.occurred_at >= from_date)
         if to_date is not None:
@@ -395,6 +478,7 @@ class AdminRepository:
         self,
         *,
         ai_module: str | None = None,
+        search: str | None = None,
         from_date: datetime | None = None,
         to_date: datetime | None = None,
     ) -> dict:
@@ -407,6 +491,12 @@ class AdminRepository:
         )
         if ai_module is not None:
             agg_q = agg_q.where(AiCostRecordModel.ai_module == ai_module)
+        # Tổng phải theo ĐÚNG tập đang lọc, nên tìm theo người dùng thì cũng phải nối bảng users.
+        search_clause = self._ai_cost_search_clause(search)
+        if search_clause is not None:
+            agg_q = agg_q.select_from(AiCostRecordModel).outerjoin(
+                UserModel, UserModel.id == AiCostRecordModel.user_id
+            ).where(search_clause)
         if from_date is not None:
             agg_q = agg_q.where(AiCostRecordModel.occurred_at >= from_date)
         if to_date is not None:
