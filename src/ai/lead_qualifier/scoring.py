@@ -334,6 +334,77 @@ def compute_readiness(raw_breakdown: Any) -> tuple[int, list[dict[str, Any]]]:
     return _clamp(total, 0, 100), breakdown
 
 
+# Hai tiêu chí mà freelancer bổ sung được bằng MỘT ô ngắn do chính họ gõ (ngân sách, mốc thời
+# gian). Tiêu chí → tên cột trên deal. `scope` / `detail` / `context` không có trong đây vì chúng
+# đo CHẤT LƯỢNG đoạn mô tả — phải có người (hoặc AI) đọc mới chấm được, code không đoán hộ.
+SUPPLEMENT_FIELDS: dict[str, str] = {
+    "budget": "client_budget",
+    "timeline": "desired_timeline",
+}
+
+
+def apply_supplement(
+    breakdown: list[dict[str, Any]] | None,
+    *,
+    client_budget: str | None,
+    desired_timeline: str | None,
+) -> tuple[int, list[dict[str, Any]], list[str]]:
+    """Tính lại điểm sau khi freelancer BỔ SUNG ngân sách / mốc thời gian — KHÔNG gọi AI.
+
+    Vì sao làm được mà không cần AI: hai tiêu chí này có nấc điểm viết sẵn trong barem (xem
+    ``RUBRIC_LEVELS``), và điều kiện lên nấc cao nhất là "khách nêu CON SỐ / MỐC cụ thể". Ô do
+    freelancer gõ là một câu ngắn nên chuyện "có con số hay không" nhìn là biết, không cần đọc
+    hiểu: có chữ số (``120 triệu``, ``30/09/2026``, ``6 tuần``) = cụ thể = nấc cao nhất; có chữ
+    mà không có chữ số (``tầm vài chục triệu``, ``càng sớm càng tốt``) = nói mơ hồ = nấc giữa.
+
+    Bài học cũ (xem ``compute_win_likelihood``) là đừng dò chuỗi trong câu văn của LLM. Ở đây
+    khác: chuỗi do CHÍNH người dùng gõ vào một ô có nhãn rõ ràng, không phải văn xuôi model viết
+    ra, nên không có chỗ để model diễn đạt lệch.
+
+    Chỉ NÂNG điểm, không bao giờ hạ: bổ sung thông tin thì không thể làm yêu cầu của khách tệ
+    đi. Tiêu chí nào đã bằng hoặc cao hơn nấc mới thì giữ nguyên lý do/dữ kiện AI đã viết.
+
+    Trả về ``(score, breakdown_đã_chuẩn_hoá, các_tiêu_chí_đã_đổi)``; danh sách rỗng nghĩa là
+    không có gì đổi (lúc đó điểm cũng không đổi).  #Huynh
+    """
+    supplied = {
+        "budget": (client_budget or "").strip(),
+        "timeline": (desired_timeline or "").strip(),
+    }
+    raw: dict[str, Any] = {}
+    for item in breakdown or []:
+        key = str(item.get("key") or "")
+        if key in READINESS_CRITERIA:
+            raw[key] = {
+                "points": item.get("points"),
+                "reason": item.get("reason"),
+                "evidence": item.get("evidence"),
+                "question": item.get("ask"),
+            }
+
+    changed: list[str] = []
+    for key, text in supplied.items():
+        if not text:
+            continue
+        top, middle = RUBRIC_LEVELS[key][0], RUBRIC_LEVELS[key][1]
+        concrete = any(char.isdigit() for char in text)
+        new_points = top.points if concrete else middle.points
+        current = _clamp((raw.get(key) or {}).get("points"), 0, READINESS_CRITERIA[key])
+        if new_points <= current:
+            continue
+        label = "ngân sách" if key == "budget" else "mốc thời gian"
+        raw[key] = {
+            "points": new_points,
+            "reason": f"Bạn đã bổ sung {label} khách nêu — điểm tính theo barem, không dùng AI.",
+            "evidence": text,
+            "question": None,
+        }
+        changed.append(key)
+
+    score, normalized = compute_readiness(raw)
+    return score, normalized, changed
+
+
 def build_gap_summary(score: int, breakdown: list[dict[str, Any]]) -> dict[str, Any]:
     """Gộp phần thiếu của cả 5 tiêu chí thành một bản tóm tắt cho giao diện.
 

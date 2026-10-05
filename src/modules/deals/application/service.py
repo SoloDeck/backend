@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.ai.facade import AIFacade
 from src.ai.lead_qualifier.scoring import (
+    apply_supplement,
     build_gap_summary,
     compute_readiness,
     compute_win_likelihood,
@@ -222,7 +223,7 @@ class DealsService:
 
         # Báo cho freelancer biết có khách mới. Thiếu bước này thì deal nằm im trong cột
         # "Deal Mới" cho tới khi freelancer tự mở ra xem — deal nóng để vài ngày là mất
-        # khách, mà cả điểm mạnh của sản phẩm là "AI chấm điểm NGAY khi khách gửi form".
+        # khách. (Điểm AI không tự chạy: freelancer tự bấm "Đánh giá Deal" sau khi đọc brief.)
         #
         # Ghi vào cùng transaction với deal: hoặc cả hai cùng có, hoặc cả hai cùng không.
         # Không thể có deal mà không có thông báo.  #Huynh
@@ -254,27 +255,16 @@ class DealsService:
             owner.id, deal.id, declared_attachments=payload.attachment_count
         )
 
-        from src.workers.ai_jobs.tasks import qualify_deal_async_by_id
-
-        # Xếp lệnh chấm điểm AI — BEST-EFFORT, đúng cách đã xử lý thư ở ngay trên.
+        # KHÔNG tự chấm điểm AI ở đây.
         #
-        # Đây là lời gọi CUỐI CÙNG của luồng và là lời gọi DUY NHẤT chạm tới broker. Để nó
-        # ném lên thì route ném theo, `get_db_session` rollback SẠCH mọi thứ vừa ghi: không
-        # client, không deal, không phiếu, không thông báo — trong khi thư "Khách hàng mới
-        # gửi yêu cầu" ĐÃ đi và không thu hồi được. Freelancer mở app không thấy deal nào,
-        # loại lỗi mất cả ngày mới lần ra.
+        # Trước đây khách vừa gửi form là hệ thống xếp ngay một lệnh chấm điểm AI. Mỗi lần chấm
+        # là một lượt AI bị trừ khỏi hạn mức của FREELANCER — mà họ chưa hề bấm gì, thậm chí chưa
+        # biết có khách mới. Khách gửi bao nhiêu form là hạn mức hao bấy nhiêu, kể cả form rác
+        # hay form spam.
         #
-        # Redis chết thì cùng lắm mất điểm AI, mà freelancer vẫn bấm "Đánh giá deal" tay
-        # được. Mất phiếu của khách thì không có đường lấy lại.  #Huynh
-        try:
-            qualify_deal_async_by_id.delay(str(owner.id), str(deal.id))
-        except Exception as exc:  # noqa: BLE001 — best-effort, không chặn luồng intake
-            log.warning(
-                "intake.qualify_dispatch_failed",
-                owner_id=str(owner.id),
-                deal_id=str(deal.id),
-                error=str(exc),
-            )
+        # Giờ deal vào cột "Deal Mới" ở trạng thái CHƯA CHẤM; freelancer đọc brief rồi tự bấm
+        # "Đánh giá Deal" khi thấy đáng tốn một lượt. Tin báo (chuông + email) ở trên vẫn đi,
+        # nên không ai bị bỏ sót.  #Huynh
 
         return intake
 
@@ -857,6 +847,141 @@ class DealsService:
         return {
             **result,
             "detected_signals": detected_signals,
+            "ai_qualification_score": score,
+            "ai_qualification_recommendation": aggregate.deal.ai_recommendation,
+        }
+
+    async def rescore_with_supplement(self, user_id: uuid.UUID, deal_id: uuid.UUID) -> dict:
+        """Cập nhật điểm NGAY sau khi freelancer bổ sung ngân sách / mốc thời gian — KHÔNG gọi AI.
+
+        Trước đây bổ sung xong phải bấm "Đánh giá lại", tức mất thêm một lượt AI chỉ để máy ghi
+        nhận lại đúng cái người dùng vừa tự gõ. Hai ô này có nấc điểm viết sẵn trong barem nên
+        tính được bằng code (xem ``apply_supplement``); phần mô tả nội dung (phạm vi, độ chi
+        tiết, bối cảnh) thì vẫn cần AI đọc.
+
+        Đẻ một dòng ``lead_scores`` MỚI chứ không sửa dòng cũ: bảng này là lịch sử chỉ thêm, và
+        bản cũ phải còn để so ("63 → 73"). Dòng mới mang ``model_version`` ghi rõ là bản cập
+        nhật theo bổ sung, nên không ai tưởng đó là AI chấm.
+
+        Không có gì thay đổi (đã đạt nấc đó, hoặc chỉ bổ sung phần mô tả) thì không ghi gì và
+        trả ``{"changed": False}`` để giao diện biết cần đánh giá lại bằng AI.  #Huynh
+        """
+        deal_model = await self._get_deal(user_id, deal_id)
+        latest = await self.repo.get_latest_lead_score(deal_id, user_id)  # type: ignore[union-attr]
+        if latest is None:
+            raise NotFoundError("Deal chưa có bản đánh giá nào để cập nhật")
+
+        score, breakdown, changed = apply_supplement(
+            latest.breakdown,
+            client_budget=deal_model.client_budget,
+            desired_timeline=deal_model.desired_timeline,
+        )
+        if not changed:
+            return {"changed": False}
+
+        lead_level = level_from_score(score)
+        points = {item["key"]: item["points"] for item in breakdown}
+        win_likelihood = compute_win_likelihood(
+            budget_points=points.get("budget", 0),
+            timeline_points=points.get("timeline", 0),
+            detail_points=points.get("detail", 0),
+            estimated_value=deal_model.estimated_value,
+            price_range_min=deal_model.ai_qualification_price_range_min,
+            source=deal_model.source,
+        )
+
+        confidence = {
+            "HOT": AIConfidence.high(),
+            "WARM": AIConfidence.medium(),
+            "COLD": AIConfidence.low(),
+        }.get(lead_level, AIConfidence.medium())
+        labels = {"budget": "ngân sách", "timeline": "mốc thời gian"}
+        updated = " và ".join(labels[key] for key in changed)
+        reasoning = (
+            f"{latest.reasoning}\n\n[Cập nhật theo thông tin bạn bổ sung ({updated}) — điểm "
+            "tính theo barem, không dùng AI. Phần mô tả nội dung giữ nguyên như lần AI chấm "
+            "trước.]"
+        )
+        model_version = f"{latest.model_version.split('+')[0]}+bo-sung"[:100]
+
+        deal_domain = Deal(
+            id=deal_model.id,
+            owner_user_id=deal_model.owner_user_id,
+            client_id=deal_model.client_id,
+            title=deal_model.title,
+            stage=DealStage(deal_model.stage),
+            value=None,
+            source=deal_model.source,
+            expected_close_date=None,
+            ai_score=deal_model.ai_qualification_score,
+            ai_confidence=None,
+            ai_recommendation=deal_model.ai_qualification_recommendation,
+            closed_at=deal_model.closed_at,
+            created_at=deal_model.created_at,
+            updated_at=deal_model.updated_at,
+            deleted_at=deal_model.deleted_at,
+        )
+        aggregate = DealAggregate(deal=deal_domain)
+        lead_score = aggregate.score_lead(
+            score=score,
+            confidence=confidence.value,
+            reasoning=reasoning,
+            model_version=model_version,
+        )
+
+        budget_signal = (
+            deal_model.client_budget[:200] if "budget" in changed else latest.budget_signal
+        )
+        timeline_signal = (
+            deal_model.desired_timeline[:200] if "timeline" in changed else latest.timeline_signal
+        )
+        await self.repo.create_lead_score(  # type: ignore[union-attr]
+            id=lead_score.id,
+            deal_id=lead_score.deal_id,
+            score=lead_score.score,
+            confidence=lead_score.confidence.value,
+            reasoning=lead_score.reasoning,
+            model_version=lead_score.model_version,
+            generated_at=lead_score.generated_at,
+            project_type=latest.project_type,
+            budget_signal=budget_signal,
+            timeline_signal=timeline_signal,
+            urgency_signal=latest.urgency_signal,
+            red_flags=latest.red_flags,
+            breakdown=breakdown,
+            next_step=latest.next_step,
+            detected_signals=latest.detected_signals,
+            prompt_version=latest.prompt_version,
+        )
+
+        deal_model.ai_qualification_score = lead_score.score
+        deal_model.ai_qualification_confidence = lead_score.confidence.value
+        deal_model.ai_qualification_recommendation = aggregate.deal.ai_recommendation
+        deal_model.ai_qualification_reasoning = reasoning
+        deal_model.ai_qualification_budget_signal = budget_signal
+        deal_model.ai_qualification_timeline_signal = timeline_signal
+        await self.repo.save(deal_model)  # type: ignore[union-attr]
+
+        return {
+            "changed": True,
+            "changed_criteria": changed,
+            "qualification_id": str(lead_score.id),
+            "project_type": latest.project_type,
+            "budget_signal": budget_signal,
+            "timeline_signal": timeline_signal,
+            "urgency_signal": latest.urgency_signal,
+            "red_flags": latest.red_flags,
+            "reasoning": reasoning,
+            "next_step": latest.next_step,
+            "detected_signals": latest.detected_signals,
+            "suggested_actions": deal_model.ai_qualification_suggested_actions,
+            "suggested_lead_score": lead_level,
+            "score_breakdown": breakdown,
+            "score_gaps": build_gap_summary(score, breakdown),
+            "win_likelihood": win_likelihood,
+            "price_range_min": deal_model.ai_qualification_price_range_min or 0,
+            "price_range_max": deal_model.ai_qualification_price_range_max or 0,
+            "prompt_version": latest.prompt_version,
             "ai_qualification_score": score,
             "ai_qualification_recommendation": aggregate.deal.ai_recommendation,
         }

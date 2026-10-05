@@ -233,6 +233,23 @@ async def save_deal_qualification(
     return ApiResponse.ok(LeadScoreHistoryResponse.model_validate(row))
 
 
+@router.post("/{deal_id}/qualifications/rescore")
+async def rescore_deal_qualification(
+    deal_id: uuid.UUID,
+    user_id: CurrentUserId,
+    db: DBSession,
+):
+    """Tính lại điểm sau khi bổ sung ngân sách / mốc thời gian — KHÔNG tốn lượt AI.
+
+    Gọi sau khi `PATCH /deals/{id}` đã lưu `client_budget` / `desired_timeline`. Ghi một bản
+    chấm MỚI (lịch sử chỉ thêm, bản cũ còn nguyên) với điểm tính theo barem. Trả
+    `{"changed": false}` khi không có gì để cập nhật (ví dụ chỉ bổ sung phần mô tả — cái đó
+    phải để AI đọc lại qua `/ai/jobs`).  #Huynh
+    """
+    result = await DealsService(db=db).rescore_with_supplement(user_id, deal_id)
+    return ApiResponse.ok(result)
+
+
 @router.post("/{deal_id}/qualify")
 async def qualify_deal(
     deal_id: uuid.UUID,
