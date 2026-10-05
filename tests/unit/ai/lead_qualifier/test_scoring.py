@@ -9,6 +9,7 @@ from src.ai.lead_qualifier.scoring import (
     HOT_THRESHOLD,
     READINESS_CRITERIA,
     RUBRIC_LEVELS,
+    apply_supplement,
     build_gap_summary,
     compute_readiness,
     compute_win_likelihood,
@@ -384,3 +385,104 @@ class TestNormalizePriceRange:
 
     def test_model_tra_rac_thi_ve_0_chu_khong_no(self) -> None:
         assert normalize_price_range("ba muoi trieu", []) == (0, 0)
+
+
+class TestApplySupplement:
+    """Bổ sung ngân sách / mốc thời gian thì điểm lên NGAY, không cần AI chấm lại."""
+
+    @staticmethod
+    def _breakdown(**points: int) -> list[dict[str, Any]]:
+        base = {**DEAL_27, **points}
+        return compute_readiness(base)[1]
+
+    def test_them_moc_cu_the_thi_thoi_gian_len_20_diem(self) -> None:
+        # DEAL_27: timeline mới 10 (mơ hồ). Khách chốt ngày cụ thể → nấc cao nhất.
+        score, breakdown, changed = apply_supplement(
+            self._breakdown(timeline=0), client_budget=None, desired_timeline="20/11/2026"
+        )
+
+        timeline = next(item for item in breakdown if item["key"] == "timeline")
+        assert changed == ["timeline"]
+        assert timeline["points"] == 20
+        assert timeline["evidence"] == "20/11/2026"
+        assert timeline["gap"] is None
+        assert score == 12 + 0 + 20 + 0 + 5
+
+    def test_them_con_so_ngan_sach_thi_len_25_diem(self) -> None:
+        score, breakdown, changed = apply_supplement(
+            self._breakdown(), client_budget="120 triệu", desired_timeline=None
+        )
+
+        budget = next(item for item in breakdown if item["key"] == "budget")
+        assert changed == ["budget"]
+        assert budget["points"] == 25
+        assert score == 27 + 25
+
+    def test_noi_mo_ho_khong_co_chu_so_chi_duoc_nac_giua(self) -> None:
+        _, breakdown, changed = apply_supplement(
+            self._breakdown(timeline=0, budget=0),
+            client_budget="tầm vài chục triệu",
+            desired_timeline="càng sớm càng tốt",
+        )
+
+        points = {item["key"]: item["points"] for item in breakdown}
+        assert sorted(changed) == ["budget", "timeline"]
+        assert points["budget"] == 15
+        assert points["timeline"] == 10
+
+    def test_chi_nang_diem_khong_bao_gio_ha(self) -> None:
+        # Ngân sách đã 25/25 từ lần AI chấm. Gõ thêm chữ mơ hồ không được kéo xuống 15.
+        score, breakdown, changed = apply_supplement(
+            self._breakdown(budget=25), client_budget="khoảng vài chục triệu", desired_timeline=None
+        )
+
+        budget = next(item for item in breakdown if item["key"] == "budget")
+        assert changed == []
+        assert budget["points"] == 25
+        assert score == 27 + 25
+
+    def test_khong_bo_sung_gi_thi_khong_doi_gi(self) -> None:
+        before = self._breakdown()
+        score, breakdown, changed = apply_supplement(
+            before, client_budget="", desired_timeline="  "
+        )
+
+        assert changed == []
+        assert score == 27
+        assert breakdown == before
+
+    def test_phan_mo_ta_khong_bao_gio_duoc_tinh_lai_bang_code(self) -> None:
+        """scope / detail / context đo chất lượng mô tả — phải để AI đọc, code không đoán hộ."""
+        score, breakdown, _ = apply_supplement(
+            self._breakdown(scope=12, detail=0, context=0),
+            client_budget=None,
+            desired_timeline=None,
+        )
+
+        points = {item["key"]: item["points"] for item in breakdown}
+        assert (points["scope"], points["detail"], points["context"]) == (12, 0, 0)
+        assert score == 12 + 0 + 10 + 0 + 0
+
+    def test_giu_nguyen_ly_do_cua_ai_o_tieu_chi_khong_doi(self) -> None:
+        raw = [
+            {
+                "key": "scope",
+                "points": 20,
+                "reason": "AI: biết vài hạng mục",
+                "evidence": "5 hạng mục",
+            },
+        ]
+        _, breakdown, _ = apply_supplement(raw, client_budget="50 triệu", desired_timeline=None)
+
+        scope = next(item for item in breakdown if item["key"] == "scope")
+        assert scope["reason"] == "AI: biết vài hạng mục"
+        assert scope["evidence"] == "5 hạng mục"
+
+    def test_bang_can_cu_cu_thieu_khoa_van_chay(self) -> None:
+        score, breakdown, changed = apply_supplement(
+            None, client_budget="100 triệu", desired_timeline="trong 6 tuần"
+        )
+
+        assert sorted(changed) == ["budget", "timeline"]
+        assert score == 25 + 20
+        assert len(breakdown) == len(READINESS_CRITERIA)

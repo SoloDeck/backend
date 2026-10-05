@@ -390,13 +390,11 @@ async def test_thu_bao_deal_moi_gui_NGAY_va_neu_so_tep_khach_khai() -> None:
     assert "2 tệp" in body
 
 
-async def test_broker_chet_van_khong_lam_mat_phieu_cua_khach() -> None:
-    """Redis chết thì mất điểm AI thôi, KHÔNG được mất phiếu khách vừa gửi.
+async def test_gui_form_cong_khai_khong_tu_cham_diem_ai() -> None:
+    """Khách gửi form thì deal vào ở trạng thái CHƯA CHẤM — không xếp lệnh AI, không trừ lượt.
 
-    `.delay()` là lời gọi cuối luồng và là lời gọi DUY NHẤT chạm tới broker. Trước đây nó
-    ném lên thì route ném theo, `get_db_session` rollback sạch client + deal + phiếu +
-    thông báo — trong khi thư "Khách hàng mới gửi yêu cầu" ĐÃ đi và không thu hồi được.
-    Freelancer mở app không thấy deal nào.  #Huynh
+    Mỗi lần chấm là một lượt AI bị trừ khỏi hạn mức của FREELANCER. Tự chấm ngay khi khách gửi
+    form nghĩa là hạn mức hao theo số form (kể cả form rác) mà freelancer chưa hề bấm gì.  #Huynh
     """
     owner = OwnerStub(id=uuid.uuid4(), email="owner@example.com")
     client_id = uuid.uuid4()
@@ -414,27 +412,27 @@ async def test_broker_chet_van_khong_lam_mat_phieu_cua_khach() -> None:
 
     db = AsyncMock()
     db.add = MagicMock()
-
-    def _broker_died(*_args: object) -> None:
-        raise ConnectionError("Error 111 connecting to redis:6379. Connection refused.")
+    usage = AsyncMock()
+    dispatched = MagicMock()
 
     with pytest.MonkeyPatch().context() as mp:
-        mp.setattr("src.workers.ai_jobs.tasks.qualify_deal_async_by_id.delay", _broker_died)
+        mp.setattr("src.workers.ai_jobs.tasks.qualify_deal_async_by_id.delay", dispatched)
         mp.setattr("src.shared.email.smtp.send_email", AsyncMock())
         mp.setattr(
             "src.modules.deals.application.attachment_service.DealAttachmentService.list_for_deal",
             AsyncMock(return_value=[]),
         )
-        result = await DealsService(db=db, repo=repo, usage=AsyncMock()).create_public_intake(
+        result = await DealsService(db=db, repo=repo, usage=usage).create_public_intake(
             f"tok-{uuid.uuid4().hex}", _intake_payload()
         )
 
-    # Phiếu vẫn về được tới người gọi -> route không ném -> không bị rollback.
+    # Phiếu vẫn về tới người gọi và deal vẫn được tạo...
     assert result is intake
-    repo.create_client.assert_awaited_once()
     repo.create.assert_awaited_once()
-    repo.create_intake.assert_awaited_once()
-    # Thông báo trong app vẫn được ghi cùng transaction với deal.
+    # ...nhưng KHÔNG có lệnh chấm điểm nào được xếp, và không lượt AI nào bị trừ.
+    dispatched.assert_not_called()
+    usage.consume.assert_not_awaited()
+    # Freelancer vẫn được báo có khách mới (chuông trong app).
     assert db.add.call_args.args[0].type == "intake_submitted"
 
 
@@ -1112,3 +1110,77 @@ class TestSaveLatestQualification:
         assert cu.saved_at == "2026-08-01T00:00:00Z", "dấu chốt cũ phải còn nguyên"
         assert moi.saved_at is not None
         assert repo.save.await_count == 1, "chỉ ghi ĐÚNG bản vừa chốt"
+
+
+# --- rescore_with_supplement: bổ sung ngân sách / mốc thời gian thì điểm lên, KHÔNG tốn AI ----
+
+
+@dataclass
+class LatestScoreStub:
+    """Dòng `lead_scores` mới nhất — chỉ những cột service đọc."""
+
+    reasoning: str = "Khách nêu phạm vi nhưng chưa nói thời gian."
+    model_version: str = "gemini-test"
+    project_type: str | None = "Website"
+    budget_signal: str | None = None
+    timeline_signal: str | None = None
+    urgency_signal: str | None = None
+    red_flags: list | None = None
+    next_step: str | None = "Hỏi khách mốc thời gian."
+    detected_signals: list | None = None
+    prompt_version: str | None = "v1"
+    breakdown: list | None = None
+
+
+def _latest_80(**over) -> LatestScoreStub:
+    from src.ai.lead_qualifier.scoring import compute_readiness
+
+    # 80/100: đủ phạm vi, ngân sách, chi tiết, bối cảnh; THIẾU mốc thời gian (0/20).
+    _, breakdown = compute_readiness(_breakdown(30, 25, 0, 15, 10))
+    return LatestScoreStub(breakdown=breakdown, **over)
+
+
+async def test_rescore_bo_sung_moc_thoi_gian_thi_diem_len_khong_goi_ai() -> None:
+    service, _, deal_model = _make_qualify_service(_AI_RESULT, desired_timeline="20/11/2026")
+    service.repo.get_latest_lead_score.return_value = _latest_80()
+
+    result = await service.rescore_with_supplement(deal_model.owner_user_id, deal_model.id)
+
+    assert result["changed"] is True
+    assert result["changed_criteria"] == ["timeline"]
+    assert result["ai_qualification_score"] == 100
+    assert result["suggested_lead_score"] == "HOT"
+    assert result["score_gaps"]["lost_points"] == 0
+    # Điểm mới được ghi cả vào lịch sử (dòng MỚI) lẫn vào deal.
+    service.repo.create_lead_score.assert_awaited_once()
+    created = service.repo.create_lead_score.await_args.kwargs
+    assert created["score"] == 100
+    assert created["model_version"] == "gemini-test+bo-sung"
+    assert "không dùng AI" in created["reasoning"]
+    assert deal_model.ai_qualification_score == 100
+    assert deal_model.ai_qualification_timeline_signal == "20/11/2026"
+    # KHÔNG gọi AI, KHÔNG trừ lượt dùng.
+    service.ai_facade.qualify_lead.assert_not_awaited()
+    service.usage.consume.assert_not_awaited()
+
+
+async def test_rescore_khong_co_gi_moi_thi_khong_ghi_gi() -> None:
+    # Deal chưa điền ô nào → không có gì để tính lại; giao diện phải biết để mời chấm bằng AI.
+    service, _, deal_model = _make_qualify_service(_AI_RESULT)
+    service.repo.get_latest_lead_score.return_value = _latest_80()
+
+    result = await service.rescore_with_supplement(deal_model.owner_user_id, deal_model.id)
+
+    assert result == {"changed": False}
+    service.repo.create_lead_score.assert_not_awaited()
+    service.ai_facade.qualify_lead.assert_not_awaited()
+
+
+async def test_rescore_deal_chua_cham_lan_nao_thi_404() -> None:
+    from src.shared.exceptions.domain import NotFoundError
+
+    service, _, deal_model = _make_qualify_service(_AI_RESULT, desired_timeline="20/11/2026")
+    service.repo.get_latest_lead_score.return_value = None
+
+    with pytest.raises(NotFoundError):
+        await service.rescore_with_supplement(deal_model.owner_user_id, deal_model.id)
